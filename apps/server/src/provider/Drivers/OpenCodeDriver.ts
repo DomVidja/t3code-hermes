@@ -27,6 +27,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
+import { readOpenCodeGoUsageLimits } from "../Layers/openCodeUsageLimits.ts";
 import {
   checkOpenCodeProviderStatus,
   makePendingOpenCodeProvider,
@@ -42,7 +43,7 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
-import { readOpenCodeGoUsageLimits } from "../openCodeGoUsageLimits.ts";
+import { readOpenCodeGoUsageLimits as readForkOpenCodeGoUsageLimits } from "../openCodeGoUsageLimits.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -149,23 +150,45 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
       );
 
-      const checkProvider = checkOpenCodeProviderStatus(
-        effectiveConfig,
-        serverConfig.cwd,
-        processEnv,
+      const checkProvider = Effect.all(
+        {
+          provider: checkOpenCodeProviderStatus(effectiveConfig, serverConfig.cwd, processEnv),
+          usageLimits: readOpenCodeGoUsageLimits({
+            enabled: effectiveConfig.enabled,
+            serverUrl: effectiveConfig.serverUrl,
+            environment: processEnv,
+          }),
+        },
+        { concurrency: "unbounded" },
       ).pipe(
-        Effect.flatMap((snapshot) =>
-          !enabled
-            ? Effect.succeed(snapshot)
-            : readOpenCodeGoUsageLimits({
-                environment: processEnv,
-                isExternalServer: effectiveConfig.serverUrl.trim().length > 0,
-              }).pipe(
-                Effect.provideService(HttpClient.HttpClient, httpClient),
-                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
-              ),
-        ),
+        Effect.flatMap(({ provider, usageLimits }) => {
+          const hasDashboardOverride =
+            Boolean(processEnv.OPENCODE_GO_AUTH_COOKIE?.trim()) &&
+            Boolean(processEnv.OPENCODE_GO_WORKSPACE_ID?.trim());
+          if (
+            !enabled ||
+            (!hasDashboardOverride &&
+              (usageLimits.unavailable === undefined ||
+                effectiveConfig.serverUrl.trim().length > 0))
+          ) {
+            return Effect.succeed({ provider, usageLimits });
+          }
+          return readForkOpenCodeGoUsageLimits({
+            environment: processEnv,
+            isExternalServer: effectiveConfig.serverUrl.trim().length > 0,
+          }).pipe(
+            Effect.map((fallback) => ({
+              provider,
+              usageLimits:
+                hasDashboardOverride || fallback.unavailable === undefined ? fallback : usageLimits,
+            })),
+          );
+        }),
+        Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
         Effect.map(stampIdentity),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         Effect.provideService(OpenCodeRuntime, openCodeRuntime),
       );

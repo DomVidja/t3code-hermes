@@ -12,7 +12,7 @@ import { SettingsSection } from "./components/SettingsSection";
 export function EnvironmentHubSettings() {
   const { environments } = useEnvironments();
   return (
-    <SettingsSection title="CLIProxyAPI hubs" card>
+    <SettingsSection title="CLIProxyAPI hubs">
       {environments.length === 0 ? (
         <Text className="p-4 text-sm text-foreground-muted">
           Connect an environment to add a hub.
