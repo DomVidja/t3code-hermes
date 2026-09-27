@@ -248,6 +248,15 @@ export class AcpSessionRuntime extends Context.Service<
       options?: { readonly dispatched?: Deferred.Deferred<void> },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
     /**
+     * Delivers a follow-up while `prompt` is still pending. Only call for agents
+     * that accept overlapping `session/prompt` requests (Hermes redirects the
+     * message into its active turn). The original prompt retains cancellation
+     * and assistant-segment ownership.
+     */
+    readonly promptWhileRunning: (
+      payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
+    ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
+    /**
      * Sends a real ACP `session/cancel` notification for the active session.
      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
      */
@@ -1068,6 +1077,19 @@ export const make = (
               }),
           ),
         ),
+      promptWhileRunning: (payload) =>
+        Effect.gen(function* () {
+          const started = yield* getStartedState;
+          const requestPayload = {
+            sessionId: started.sessionId,
+            ...payload,
+          } satisfies EffectAcpSchema.PromptRequest;
+          return yield* runLoggedRequest(
+            "session/prompt",
+            requestPayload,
+            acp.agent.prompt(requestPayload),
+          );
+        }),
       cancel:
         options.cancelBehavior === "wait-for-prompt"
           ? promptDispatchSemaphore.withPermit(cancel)

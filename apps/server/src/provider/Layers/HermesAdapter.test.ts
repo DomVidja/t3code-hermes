@@ -242,6 +242,81 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
     }),
   );
 
+  it.effect("sends steering to Hermes while the original ACP prompt is still running", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-live-steer");
+      const requestLogDir = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hermes-live-steer-"))),
+        (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
+      );
+      const requestLogPath = NodePath.join(requestLogDir, "requests.jsonl");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockHermesWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_COMPLETE_FIRST_PROMPT_ON_SECOND: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const firstTurnStarted = yield* Deferred.make<TurnId>();
+      const toolStarted = yield* Deferred.make<void>();
+      const turnCompleted = yield* Deferred.make<void>();
+      const events: ProviderRuntimeEvent[] = [];
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (event.type === "turn.started" && event.turnId !== undefined) {
+            yield* Deferred.succeed(firstTurnStarted, event.turnId);
+          }
+          if (event.type === "item.updated" && event.payload.itemType === "command_execution") {
+            yield* Deferred.succeed(toolStarted, undefined);
+          }
+          if (event.type === "turn.completed") {
+            yield* Deferred.succeed(turnCompleted, undefined);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("hermes"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const firstPrompt = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "original task",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+      const turnId = yield* Deferred.await(firstTurnStarted);
+      yield* Deferred.await(toolStarted);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "change the task while the tool runs",
+        attachments: [],
+      });
+      yield* Fiber.join(firstPrompt);
+      yield* Deferred.await(turnCompleted);
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const prompts = requests.filter((request) => request.method === "session/prompt");
+      assert.equal(prompts.length, 2);
+      const secondPrompt = prompts[1];
+      if (!secondPrompt) throw new Error("Missing Hermes steering prompt");
+      const secondPromptParts = (secondPrompt.params as { prompt: unknown[] }).prompt;
+      assert.deepStrictEqual(secondPromptParts[0], {
+        type: "text",
+        text: "change the task while the tool runs",
+      });
+      assert.equal(secondPromptParts.length, 1);
+      assert.equal(events.filter((event) => event.type === "turn.started").length, 1);
+      assert.equal(events.filter((event) => event.type === "turn.completed").length, 1);
+      assert.equal(events.find((event) => event.type === "turn.completed")?.turnId, turnId);
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
   it.effect("maps ACP usage_update and Hermes compaction onto thread runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("hermes-usage-thread");

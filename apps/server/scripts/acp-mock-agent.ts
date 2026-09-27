@@ -44,6 +44,7 @@ const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TA
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
+const completeFirstPromptOnSecond = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_SECOND === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
@@ -398,6 +399,7 @@ const program = Effect.gen(function* () {
   const resumeRelease = yield* Deferred.make<void>();
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
+  const firstPromptRelease = yield* Deferred.make<void>();
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
       sessionId: targetSessionId,
@@ -648,6 +650,33 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+
+      if (completeFirstPromptOnSecond && promptCount === 1) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "await-live-steer",
+            title: "Waiting for steering message",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
+        yield* Deferred.await(firstPromptRelease);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "await-live-steer",
+            status: "completed",
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+      if (completeFirstPromptOnSecond && promptCount === 2) {
+        yield* Deferred.succeed(firstPromptRelease, undefined);
+        return { stopReason: "end_turn" };
+      }
 
       if (completeFirstPromptOnCancel && promptCount === 1) {
         yield* agent.client.sessionUpdate({
