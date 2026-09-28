@@ -20,7 +20,11 @@ const HERMES_DRIVER_KIND = ProviderDriverKind.make("hermes");
 
 /**
  * The environment whose Hermes the panel talks to, or `null` when no connected
- * environment has one.
+ * environment has Hermes enabled.
+ *
+ * Hermes is a built-in driver, so every environment reports a snapshot for it
+ * — disabled by default. Matching on presence alone would always pick the
+ * primary environment and never reach the remote box actually running Hermes.
  *
  * Hermes usually lives on exactly one machine — the always-on box — which is
  * frequently not the environment a browser opened first. Resolving across every
@@ -42,7 +46,7 @@ const hermesEnvironmentIdAtom = Atom.make((get): EnvironmentId | null => {
     if (
       providers !== undefined &&
       deriveProviderInstanceEntries(providers).some(
-        (entry) => entry.driverKind === HERMES_DRIVER_KIND,
+        (entry) => entry.driverKind === HERMES_DRIVER_KIND && entry.enabled,
       )
     ) {
       return environmentId;
@@ -52,7 +56,7 @@ const hermesEnvironmentIdAtom = Atom.make((get): EnvironmentId | null => {
 }).pipe(Atom.withLabel("web-hermes-environment-id"));
 
 /**
- * Whether any connected environment has a Hermes instance at all.
+ * Whether any connected environment has Hermes enabled.
  *
  * Drives the sidebar entry point: with no Hermes there is nothing to schedule,
  * so the button never appears rather than leading to an explanatory page.

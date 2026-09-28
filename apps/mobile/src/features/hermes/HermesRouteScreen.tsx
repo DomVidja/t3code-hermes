@@ -67,7 +67,10 @@ export function useHermesEnvironmentOptions(): ReadonlyArray<HermesEnvironmentOp
   return useMemo(() => {
     const options: HermesEnvironmentOption[] = [];
     for (const [environmentId, config] of configs) {
-      if (config.providers.some((provider) => provider.driver === HERMES_DRIVER)) {
+      // Hermes is built in, so every environment lists it; only enabled ones count.
+      if (
+        config.providers.some((provider) => provider.driver === HERMES_DRIVER && provider.enabled)
+      ) {
         options.push({ environmentId, label: config.environment.label });
       }
     }

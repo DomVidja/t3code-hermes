@@ -57,6 +57,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ServerConfig } from "../config.ts";
+import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { spawnAndCollect } from "../provider/providerSnapshot.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
@@ -69,6 +70,7 @@ import {
   groupRunsByJob,
   parseHermesCronJobs,
   readHermesCronRuns,
+  resolveEnabledHermesInstance,
   resolveHermesCronPaths,
   type ParsedHermesCronJob,
   type ParsedHermesCronRun,
@@ -245,21 +247,29 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const hermesSettings = Effect.map(
+  /** The enabled instance, with its env overrides already merged over `process.env`. */
+  const hermesInstance = Effect.map(
     settingsService.getSettings.pipe(Effect.orElseSucceed(() => null)),
-    (settings) => settings?.providers.hermes ?? null,
+    (settings) => {
+      const instance = settings === null ? null : resolveEnabledHermesInstance(settings);
+      if (instance === null) return null;
+      return {
+        settings: instance.settings,
+        env: mergeProviderInstanceEnvironment(instance.environment),
+      };
+    },
   );
 
   /** Reads Hermes state. Never fails — availability is part of the snapshot. */
   const readSnapshot = Effect.gen(function* () {
     const readAt = DateTime.formatIso(yield* DateTime.now);
-    const settings = yield* hermesSettings;
+    const instance = yield* hermesInstance;
 
-    if (settings === null || !settings.enabled) {
+    if (instance === null) {
       return { snapshot: emptySnapshot(readAt, "providerDisabled"), runs: [] } satisfies PollResult;
     }
 
-    const paths = resolveHermesCronPaths();
+    const paths = resolveHermesCronPaths(instance.env);
     const exists = yield* fs.exists(paths.jobsFile).pipe(Effect.orElseSucceed(() => false));
     if (!exists) {
       return { snapshot: emptySnapshot(readAt, "noCronStore"), runs: [] } satisfies PollResult;
@@ -391,14 +401,14 @@ export const make = Effect.gen(function* () {
   );
 
   const requireEnabled = Effect.gen(function* () {
-    const settings = yield* hermesSettings;
-    if (settings === null || !settings.enabled) {
+    const instance = yield* hermesInstance;
+    if (instance === null) {
       return yield* new HermesCronError({
         reason: "providerDisabled",
         detail: "The Hermes provider is not enabled in this environment.",
       });
     }
-    return settings;
+    return instance;
   });
 
   /**
@@ -410,7 +420,7 @@ export const make = Effect.gen(function* () {
    */
   const setEnabled = (input: HermesCronSetEnabledInput) =>
     Effect.gen(function* () {
-      const settings = yield* requireEnabled;
+      const instance = yield* requireEnabled;
       const snapshot = yield* currentSnapshot;
       if (!snapshot.jobs.some((job) => job.id === input.jobId)) {
         return yield* new HermesCronError({
@@ -425,9 +435,9 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const binary = settings.binaryPath || "hermes";
+      const binary = instance.settings.binaryPath || "hermes";
       const args = ["cron", input.enabled ? "resume" : "pause", input.jobId];
-      const spawnCommand = yield* resolveSpawnCommand(binary, args, { env: process.env }).pipe(
+      const spawnCommand = yield* resolveSpawnCommand(binary, args, { env: instance.env }).pipe(
         Effect.mapError(
           (cause) =>
             new HermesCronError({
@@ -440,7 +450,7 @@ export const make = Effect.gen(function* () {
       const result = yield* spawnAndCollect(
         binary,
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-          env: process.env,
+          env: instance.env,
           shell: spawnCommand.shell,
         }),
       ).pipe(

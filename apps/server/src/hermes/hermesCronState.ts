@@ -27,10 +27,18 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import {
+  defaultInstanceIdForDriver,
   HERMES_CRON_RUNS_PER_JOB,
+  HermesSettings,
+  ProviderDriverKind,
+  resolveProviderInstanceEnabled,
   type HermesCronJobState,
   type HermesCronRunStatus,
+  type ProviderInstanceConfig,
+  type ServerSettings,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 /** Failure text is shown inline in a panel row, so it is bounded on read. */
 const MAX_ERROR_TEXT_LENGTH = 400;
@@ -60,6 +68,50 @@ export function resolveHermesCronPaths(
     jobsFile: NodePath.join(cronDir, "jobs.json"),
     executionsDb: NodePath.join(cronDir, "executions.db"),
   };
+}
+
+const HERMES_DRIVER_KIND = ProviderDriverKind.make("hermes");
+const decodeHermesSettings = Schema.decodeUnknownOption(HermesSettings);
+
+/** The Hermes instance this environment runs: its config plus its own env overrides. */
+export interface EnabledHermesInstance {
+  readonly settings: HermesSettings;
+  readonly environment: ProviderInstanceConfig["environment"];
+}
+
+/**
+ * The enabled Hermes instance, or `null` when none is enabled.
+ *
+ * Resolved like the provider registry does: an explicit `providerInstances`
+ * entry wins over the legacy `providers.hermes` blob. The Settings switch
+ * writes that explicit entry and leaves `providers.hermes.enabled` at its
+ * default `false`, so the legacy blob alone reports a switched-on Hermes as
+ * disabled. The default slot is preferred over custom instances.
+ *
+ * The instance `environment` matters: it can point `HERMES_HOME` at a
+ * different store, and cron reads and CLI calls must follow it.
+ */
+export function resolveEnabledHermesInstance(
+  settings: ServerSettings,
+): EnabledHermesInstance | null {
+  const defaultId = defaultInstanceIdForDriver(HERMES_DRIVER_KIND);
+  const candidates: ProviderInstanceConfig[] = [
+    settings.providerInstances[defaultId] ?? {
+      driver: HERMES_DRIVER_KIND,
+      config: settings.providers.hermes,
+    },
+  ];
+  for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
+    if (instanceId !== defaultId) candidates.push(instance);
+  }
+  const enabled = candidates.find(
+    (instance) =>
+      instance.driver === HERMES_DRIVER_KIND && resolveProviderInstanceEnabled(instance),
+  );
+  if (enabled === undefined) return null;
+  const decoded = decodeHermesSettings(enabled.config ?? {});
+  if (Option.isNone(decoded)) return null;
+  return { settings: decoded.value, environment: enabled.environment };
 }
 
 /** A job as it appears on disk, after normalisation but before contract encoding. */
