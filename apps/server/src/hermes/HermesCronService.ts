@@ -69,6 +69,7 @@ import {
   groupRunsByJob,
   parseHermesCronJobs,
   readHermesCronRuns,
+  resolveEnabledHermesSettings,
   resolveHermesCronPaths,
   type ParsedHermesCronJob,
   type ParsedHermesCronRun,
@@ -247,7 +248,7 @@ export const make = Effect.gen(function* () {
 
   const hermesSettings = Effect.map(
     settingsService.getSettings.pipe(Effect.orElseSucceed(() => null)),
-    (settings) => settings?.providers.hermes ?? null,
+    (settings) => (settings === null ? null : resolveEnabledHermesSettings(settings)),
   );
 
   /** Reads Hermes state. Never fails — availability is part of the snapshot. */
@@ -255,7 +256,7 @@ export const make = Effect.gen(function* () {
     const readAt = DateTime.formatIso(yield* DateTime.now);
     const settings = yield* hermesSettings;
 
-    if (settings === null || !settings.enabled) {
+    if (settings === null) {
       return { snapshot: emptySnapshot(readAt, "providerDisabled"), runs: [] } satisfies PollResult;
     }
 
@@ -392,7 +393,7 @@ export const make = Effect.gen(function* () {
 
   const requireEnabled = Effect.gen(function* () {
     const settings = yield* hermesSettings;
-    if (settings === null || !settings.enabled) {
+    if (settings === null) {
       return yield* new HermesCronError({
         reason: "providerDisabled",
         detail: "The Hermes provider is not enabled in this environment.",

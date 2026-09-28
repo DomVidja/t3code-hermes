@@ -13,6 +13,12 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import { describe, expect, it } from "@effect/vitest";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerSettings,
+} from "@t3tools/contracts";
 
 import {
   HERMES_EXECUTIONS_DDL,
@@ -25,6 +31,7 @@ import {
   groupRunsByJob,
   parseHermesCronJobs,
   readHermesCronRuns,
+  resolveEnabledHermesSettings,
   resolveHermesCronPaths,
 } from "./hermesCronState.ts";
 
@@ -75,6 +82,64 @@ describe("resolveHermesCronPaths", () => {
   it("falls back to ~/.hermes when HERMES_HOME is blank", () => {
     const paths = resolveHermesCronPaths({ HERMES_HOME: "   " }, "/home/dev");
     expect(paths.home).toBe(NodePath.join("/home/dev", ".hermes"));
+  });
+});
+
+describe("resolveEnabledHermesSettings", () => {
+  const hermes = ProviderDriverKind.make("hermes");
+  const withInstances = (
+    providerInstances: ServerSettings["providerInstances"],
+  ): ServerSettings => ({ ...DEFAULT_SERVER_SETTINGS, providerInstances });
+
+  it("is null when Hermes was never switched on", () => {
+    expect(resolveEnabledHermesSettings(DEFAULT_SERVER_SETTINGS)).toBeNull();
+  });
+
+  it("honours the explicit instance the Settings switch writes", () => {
+    const settings = withInstances({
+      [ProviderInstanceId.make("hermes")]: {
+        driver: hermes,
+        enabled: true,
+        config: { binaryPath: "/opt/hermes" },
+      },
+    });
+    expect(settings.providers.hermes.enabled).toBe(false);
+    expect(resolveEnabledHermesSettings(settings)?.binaryPath).toBe("/opt/hermes");
+  });
+
+  it("falls back to the legacy providers blob", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providers: {
+        ...DEFAULT_SERVER_SETTINGS.providers,
+        hermes: { ...DEFAULT_SERVER_SETTINGS.providers.hermes, enabled: true },
+      },
+    };
+    expect(resolveEnabledHermesSettings(settings)).not.toBeNull();
+  });
+
+  it("uses an enabled custom instance when the default slot is off", () => {
+    const settings = withInstances({
+      [ProviderInstanceId.make("hermes-box")]: {
+        driver: hermes,
+        enabled: true,
+        config: { binaryPath: "/srv/hermes" },
+      },
+    });
+    expect(resolveEnabledHermesSettings(settings)?.binaryPath).toBe("/srv/hermes");
+  });
+
+  it("respects an explicit disable over the legacy blob", () => {
+    const settings: ServerSettings = {
+      ...withInstances({
+        [ProviderInstanceId.make("hermes")]: { driver: hermes, enabled: false },
+      }),
+      providers: {
+        ...DEFAULT_SERVER_SETTINGS.providers,
+        hermes: { ...DEFAULT_SERVER_SETTINGS.providers.hermes, enabled: true },
+      },
+    };
+    expect(resolveEnabledHermesSettings(settings)).toBeNull();
   });
 });
 
