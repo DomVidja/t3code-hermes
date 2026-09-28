@@ -142,6 +142,8 @@ interface HermesSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  /** The first ACP prompt must be sent before overlapping steering can be redirected. */
+  firstPromptDispatched: Deferred.Deferred<void> | undefined;
   currentModelId: string | undefined;
   /**
    * Reasoning level Hermes's live agent was built with, as far as we know.
@@ -923,6 +925,7 @@ export function makeHermesAdapter(
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
+            firstPromptDispatched: undefined,
             currentModelId: boundModelId,
             reasoningLevel: startReasoningLevel,
             tokenUsage: {},
@@ -1105,6 +1108,10 @@ export function makeHermesAdapter(
             // id is reused instead of opening a new turn.
             const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
             const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+            if (steeringTurnId === undefined) {
+              ctx.firstPromptDispatched = yield* Deferred.make<void>();
+            }
+            const firstPromptDispatched = ctx.firstPromptDispatched;
             // Count this prompt immediately so a superseded in-flight prompt
             // resolving from here on does not settle the turn; decremented on
             // preparation failure here, and after the prompt below otherwise.
@@ -1258,10 +1265,15 @@ export function makeHermesAdapter(
                 displayModel,
                 promptParts,
                 turnId,
+                steeringTurnId,
+                firstPromptDispatched,
               };
             }).pipe(
               Effect.tapCause(() =>
                 Effect.gen(function* () {
+                  if (steeringTurnId === undefined && firstPromptDispatched) {
+                    yield* Deferred.succeed(firstPromptDispatched, undefined);
+                  }
                   const liveCtx = sessions.get(input.threadId);
                   if (!liveCtx) {
                     return;
@@ -1284,37 +1296,52 @@ export function makeHermesAdapter(
         const promptFailureMessageRef = yield* Ref.make<string | undefined>(undefined);
 
         return yield* Effect.gen(function* () {
-          const result = yield* prepared.acp
-            .prompt({
-              // ACP has no system-message field; keep runtime context separate from user input.
-              prompt: [
-                ...prepared.promptParts,
+          if (prepared.steeringTurnId !== undefined && prepared.firstPromptDispatched) {
+            yield* Deferred.await(prepared.firstPromptDispatched);
+          }
+          // Hermes only redirects text-only prompts into a running turn. It queues
+          // anything else as plain text, dropping attachments, so those steers
+          // wait for the running prompt instead.
+          const steersLive =
+            prepared.steeringTurnId !== undefined &&
+            prepared.promptParts.every((part) => part.type === "text");
+          const promptRequest = steersLive
+            ? prepared.acp.promptWhileRunning({ prompt: prepared.promptParts })
+            : prepared.acp.prompt(
                 {
-                  type: "text",
-                  text: buildRuntimeInstructions({
-                    harness: "Hermes",
-                    model: prepared.displayModel,
-                  }),
+                  // ACP has no system-message field; keep runtime context separate from user input.
+                  prompt: [
+                    ...prepared.promptParts,
+                    {
+                      type: "text",
+                      text: buildRuntimeInstructions({
+                        harness: "Hermes",
+                        model: prepared.displayModel,
+                      }),
+                    },
+                  ],
                 },
-              ],
-            })
-            .pipe(
-              Effect.tap((promptResult) =>
-                Effect.all([
-                  Ref.set(promptRpcSucceeded, true),
-                  Ref.set(promptResultRef, promptResult),
-                ]),
-              ),
-              Effect.tapError((error) =>
-                Ref.set(
-                  promptFailureMessageRef,
-                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error).message,
-                ).pipe(Effect.andThen(prepared.acp.drainEvents)),
-              ),
-              Effect.mapError((error) =>
-                mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
-              ),
-            );
+                prepared.steeringTurnId === undefined && prepared.firstPromptDispatched
+                  ? { dispatched: prepared.firstPromptDispatched }
+                  : undefined,
+              );
+          const result = yield* promptRequest.pipe(
+            Effect.tap((promptResult) =>
+              Effect.all([
+                Ref.set(promptRpcSucceeded, true),
+                Ref.set(promptResultRef, promptResult),
+              ]),
+            ),
+            Effect.tapError((error) =>
+              Ref.set(
+                promptFailureMessageRef,
+                mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error).message,
+              ).pipe(Effect.andThen(prepared.acp.drainEvents)),
+            ),
+            Effect.mapError((error) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+            ),
+          );
 
           return yield* withThreadLock(
             input.threadId,
@@ -1430,6 +1457,9 @@ export function makeHermesAdapter(
         }).pipe(
           Effect.ensuring(
             Effect.gen(function* () {
+              if (prepared.steeringTurnId === undefined && prepared.firstPromptDispatched) {
+                yield* Deferred.succeed(prepared.firstPromptDispatched, undefined);
+              }
               if (yield* Ref.get(promptSettled)) {
                 return;
               }

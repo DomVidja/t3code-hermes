@@ -1210,4 +1210,65 @@ describe("AcpSessionRuntime", () => {
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
     );
   });
+
+  const collectAssistantText = (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) =>
+    Effect.gen(function* () {
+      const texts: Array<string> = [];
+      const toolStarted = yield* Deferred.make<void>();
+      yield* runtime.getEvents().pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "EventStreamBarrier") {
+            return Deferred.succeed(event.acknowledge, undefined);
+          }
+          if (event._tag === "ContentDelta") texts.push(event.text);
+          if (event._tag === "ToolCallUpdated") return Deferred.succeed(toolStarted, undefined);
+          return Effect.void;
+        }),
+        Effect.forkChild,
+      );
+      return { texts, toolStarted };
+    });
+
+  it.effect("keeps a steer's answer when the agent finishes the running prompt first", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: { T3_ACP_COMPLETE_FIRST_PROMPT_ON_SECOND: "1" },
+        },
+      });
+      const { texts, toolStarted } = yield* collectAssistantText(runtime);
+      yield* runtime.start();
+      const first = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "first" }] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(toolStarted);
+      const steer = yield* runtime
+        .promptWhileRunning({ prompt: [{ type: "text", text: "steer" }] })
+        .pipe(Effect.forkChild);
+      expect(yield* Fiber.join(first)).toMatchObject({ stopReason: "end_turn" });
+      // What an adapter does when it settles the finished prompt.
+      yield* runtime.drainEvents;
+      yield* runtime.request("_test/release-steer", {});
+      expect(yield* Fiber.join(steer)).toMatchObject({ stopReason: "end_turn" });
+      yield* runtime.drainEvents;
+
+      expect(texts).toContain("Answered the steer.");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a steer's answer when it is sent after the running prompt settled", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions);
+      const { texts } = yield* collectAssistantText(runtime);
+      yield* runtime.start();
+      yield* runtime.prompt({ prompt: [{ type: "text", text: "first" }] });
+      yield* runtime.drainEvents;
+      yield* runtime.promptWhileRunning({ prompt: [{ type: "text", text: "steer" }] });
+      yield* runtime.drainEvents;
+
+      expect(texts.filter((text) => text === "hello from mock")).toHaveLength(2);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

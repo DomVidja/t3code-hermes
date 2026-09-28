@@ -46,6 +46,8 @@ const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TA
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
+const completeFirstPromptOnSecond = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_SECOND === "1";
+const redirectOverlappingPrompts = process.env.T3_ACP_REDIRECT_OVERLAPPING_PROMPTS === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
@@ -88,6 +90,7 @@ let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
 let overlappingFirstPromptId: string | undefined;
+let redirectableTurnActive = false;
 const cancelledSessions = new Set<string>();
 
 function promptIdFromRequestMeta(
@@ -400,6 +403,8 @@ const program = Effect.gen(function* () {
   const resumeRelease = yield* Deferred.make<void>();
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
+  const firstPromptRelease = yield* Deferred.make<void>();
+  const steerRelease = yield* Deferred.make<void>();
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
       sessionId: targetSessionId,
@@ -650,6 +655,86 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+
+      if (completeFirstPromptOnSecond && promptCount === 1) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "await-live-steer",
+            title: "Waiting for steering message",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
+        yield* Deferred.await(firstPromptRelease);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "await-live-steer",
+            status: "completed",
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+      // The first turn ends before the agent handles the overlapping prompt, which
+      // then streams its own answer once the client calls `_test/release-steer`.
+      if (completeFirstPromptOnSecond && promptCount === 2) {
+        yield* Deferred.succeed(firstPromptRelease, undefined);
+        yield* Deferred.await(steerRelease);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Answered the steer." },
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
+      // Mirrors Hermes ACP: a prompt overlapping a running turn returns at once.
+      // Text-only prompts redirect the turn; anything else is queued as text.
+      if (redirectOverlappingPrompts) {
+        const sendText = (text: string) =>
+          agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+          });
+        if (redirectableTurnActive) {
+          const textOnly = request.prompt.every((block) => block.type === "text");
+          yield* sendText(
+            textOnly
+              ? "Redirected the active turn with your correction."
+              : "Queued for the next turn. (1 queued)",
+          );
+          return { stopReason: "end_turn" };
+        }
+        if (promptCount > 1) {
+          yield* sendText("Handled follow-up.");
+          return { stopReason: "end_turn" };
+        }
+        redirectableTurnActive = true;
+        yield* sendText("Working on the original task.");
+        // The approval holds the turn open until the client answers it.
+        yield* agent.client.requestPermission({
+          sessionId: requestedSessionId,
+          toolCall: {
+            toolCallId: "redirectable-tool",
+            title: "`sleep 60`",
+            kind: "execute",
+            status: "pending",
+            rawInput: { command: "sleep 60" },
+          },
+          options: [
+            { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+            { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+          ],
+        });
+        yield* sendText("Finished the redirected task.");
+        redirectableTurnActive = false;
+        return { stopReason: "end_turn" };
+      }
 
       if (completeFirstPromptOnCancel && promptCount === 1) {
         yield* agent.client.sessionUpdate({
@@ -1461,6 +1546,9 @@ const program = Effect.gen(function* () {
     }
     if (method === "_test/release-resume") {
       return Deferred.succeed(resumeRelease, undefined).pipe(Effect.as({}));
+    }
+    if (method === "_test/release-steer") {
+      return Deferred.succeed(steerRelease, undefined).pipe(Effect.as({}));
     }
     if (method === "_test/finish-cancel") {
       return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));
