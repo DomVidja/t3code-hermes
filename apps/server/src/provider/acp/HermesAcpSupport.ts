@@ -32,10 +32,15 @@ const HERMES_AUTH_METHOD_ID = "hermes";
 export const HERMES_FALLBACK_MODEL_ID = "hermes-4";
 
 /**
- * Mode ids Hermes derives from its edit-approval policy. Matching is by id,
- * name, then substring, so builds that rename a policy still resolve.
+ * Mode ids Hermes derives from its edit-approval policy (`default`,
+ * `accept_edits`, `dont_ask`). Matching is by id, name, then substring, so
+ * builds that rename a policy still resolve. Order is preference: `dont_ask`
+ * auto-allows every edit, while `accept_edits` still asks outside the
+ * workspace.
  */
 const HERMES_AUTONOMOUS_MODE_ALIASES = [
+  "dont_ask",
+  "don't ask",
   "auto",
   "autonomous",
   "auto approve",
@@ -43,6 +48,11 @@ const HERMES_AUTONOMOUS_MODE_ALIASES = [
   "full access",
   "accept edits",
   "bypass",
+];
+const HERMES_ACCEPT_EDITS_MODE_ALIASES = [
+  "accept_edits",
+  "accept edits",
+  ...HERMES_AUTONOMOUS_MODE_ALIASES,
 ];
 const HERMES_APPROVAL_MODE_ALIASES = ["ask", "approve", "manual", "confirm", "default"];
 
@@ -113,6 +123,30 @@ export function hermesSessionInfoIndicatesCompaction(rawPayload: unknown): boole
     }
   }
   return false;
+}
+
+/**
+ * How many of a session's opening prompts to keep for
+ * {@link isHermesDerivedTitle}. Hermes titles from the first message that
+ * reaches the agent, which a locally handled slash command or a quick steer
+ * can push past the very first prompt.
+ */
+export const HERMES_TITLE_PROMPT_LIMIT = 4;
+
+/**
+ * Hermes titles a session twice: first an instant title cut from the opening
+ * message (`derive_title` in agent/title_generator.py), then a model-written
+ * one. ACP does not say which is which, and T3 Code already titles a thread
+ * from its first message, so a title that is just a prefix of one of the
+ * opening prompts is the derived one and is not worth forwarding.
+ */
+export function isHermesDerivedTitle(
+  title: string,
+  openingPrompts: ReadonlyArray<string>,
+): boolean {
+  const collapse = (value: string) => value.split(/\s+/).filter(Boolean).join(" ");
+  const stem = collapse(title.replace(/…$/, "")).replace(/[ ,.;:—-]+$/, "");
+  return stem.length > 0 && openingPrompts.some((prompt) => collapse(prompt).startsWith(stem));
 }
 
 type HermesAcpRuntimeHermesSettings = Pick<HermesSettings, "binaryPath">;
@@ -245,7 +279,9 @@ export function resolveHermesSessionModeId(input: {
   const aliases =
     input.runtimeMode === "approval-required"
       ? HERMES_APPROVAL_MODE_ALIASES
-      : HERMES_AUTONOMOUS_MODE_ALIASES;
+      : input.runtimeMode === "auto-accept-edits"
+        ? HERMES_ACCEPT_EDITS_MODE_ALIASES
+        : HERMES_AUTONOMOUS_MODE_ALIASES;
   const requestedModeId = findModeIdByAliases(modeState.availableModes, aliases);
   return requestedModeId === undefined || requestedModeId === modeState.currentModeId
     ? undefined

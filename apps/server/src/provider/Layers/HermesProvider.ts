@@ -20,6 +20,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -46,9 +47,19 @@ import {
 const HERMES_PRESENTATION = {
   displayName: "Hermes",
   reportsContextWindow: true,
+  supportsConversationRollback: false,
   badgeLabel: "Early Access",
   showInteractionModeToggle: false,
 } as const;
+/**
+ * `compact` is T3 Code's manual-compaction entry point: ProviderService runs it
+ * as Hermes's own `/compress` (see HermesAdapter's `compaction`).
+ */
+const withCompactCommand = (
+  commands: ReadonlyArray<ServerProviderSlashCommand>,
+): ReadonlyArray<ServerProviderSlashCommand> =>
+  dedupeSlashCommands([COMPACT_SLASH_COMMAND, ...commands]);
+const HERMES_SLASH_COMMANDS = withCompactCommand(HERMES_BUILT_IN_SLASH_COMMANDS);
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
@@ -100,7 +111,7 @@ export function buildInitialHermesProviderSnapshot(
       enabled: true,
       checkedAt,
       models,
-      slashCommands: HERMES_BUILT_IN_SLASH_COMMANDS,
+      slashCommands: HERMES_SLASH_COMMANDS,
       probe: {
         installed: true,
         version: null,
@@ -250,7 +261,7 @@ const discoverHermesModelsViaAcp = (
     );
     return {
       models: buildHermesDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models),
-      slashCommands: dedupeSlashCommands(slashCommands),
+      slashCommands: withCompactCommand(slashCommands),
       upstreams: deriveConfiguredUpstreams(started.sessionSetupResult.models),
     } satisfies HermesAcpDiscovery;
   }).pipe(Effect.scoped);
@@ -328,7 +339,7 @@ export const checkHermesProviderStatus = Effect.fn("checkHermesProviderStatus")(
       enabled: hermesSettings.enabled,
       checkedAt,
       models: fallbackModels,
-      slashCommands: HERMES_BUILT_IN_SLASH_COMMANDS,
+      slashCommands: HERMES_SLASH_COMMANDS,
       probe: {
         installed: !isCommandMissingCause(error),
         version: null,
@@ -347,7 +358,7 @@ export const checkHermesProviderStatus = Effect.fn("checkHermesProviderStatus")(
       enabled: hermesSettings.enabled,
       checkedAt,
       models: fallbackModels,
-      slashCommands: HERMES_BUILT_IN_SLASH_COMMANDS,
+      slashCommands: HERMES_SLASH_COMMANDS,
       probe: {
         installed: true,
         version: null,
@@ -371,7 +382,7 @@ export const checkHermesProviderStatus = Effect.fn("checkHermesProviderStatus")(
       enabled: hermesSettings.enabled,
       checkedAt,
       models: fallbackModels,
-      slashCommands: HERMES_BUILT_IN_SLASH_COMMANDS,
+      slashCommands: HERMES_SLASH_COMMANDS,
       probe: {
         installed: true,
         version,
@@ -396,7 +407,7 @@ export const checkHermesProviderStatus = Effect.fn("checkHermesProviderStatus")(
       enabled: hermesSettings.enabled,
       checkedAt,
       models: fallbackModels,
-      slashCommands: HERMES_BUILT_IN_SLASH_COMMANDS,
+      slashCommands: HERMES_SLASH_COMMANDS,
       probe: {
         installed: true,
         version,
@@ -415,7 +426,7 @@ export const checkHermesProviderStatus = Effect.fn("checkHermesProviderStatus")(
       enabled: hermesSettings.enabled,
       checkedAt,
       models: fallbackModels,
-      slashCommands: HERMES_BUILT_IN_SLASH_COMMANDS,
+      slashCommands: HERMES_SLASH_COMMANDS,
       probe: {
         installed: true,
         version,

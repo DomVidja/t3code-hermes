@@ -23,6 +23,8 @@ const usageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE;
  * end-of-turn totals to the `session/prompt` response.
  */
 const promptUsage = process.env.T3_ACP_EMIT_PROMPT_USAGE;
+/** Streams this text as an `agent_thought_chunk` before the assistant reply. */
+const thoughtText = process.env.T3_ACP_EMIT_THOUGHT_TEXT;
 /** Emits a Hermes-shaped compaction `session_info_update` before finishing the prompt. */
 const emitCompactionInfo = process.env.T3_ACP_EMIT_COMPACTION_INFO === "1";
 const emitInterleavedAssistantToolCalls =
@@ -1481,6 +1483,16 @@ const program = Effect.gen(function* () {
           ],
         },
       });
+
+      if (thoughtText) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: thoughtText },
+          },
+        });
+      }
 
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,

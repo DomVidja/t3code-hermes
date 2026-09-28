@@ -258,9 +258,11 @@ it.live("seeds the built-in slash commands when Hermes advertises none", () =>
       }),
     );
 
-    expect(snapshot.slashCommands.map((command) => command.name)).toEqual(
-      HERMES_BUILT_IN_SLASH_COMMANDS.map((command) => command.name),
-    );
+    // `compact` leads so the composer offers T3 Code's manual compaction.
+    expect(snapshot.slashCommands.map((command) => command.name)).toEqual([
+      "compact",
+      ...HERMES_BUILT_IN_SLASH_COMMANDS.map((command) => command.name),
+    ]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -287,6 +289,7 @@ it.live("replaces the seed with the commands Hermes advertises", () =>
     );
 
     expect(snapshot.slashCommands.map((command) => command.name)).toEqual([
+      "compact",
       "compress",
       "brand-new",
     ]);

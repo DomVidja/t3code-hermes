@@ -8,6 +8,7 @@ import {
   hermesSessionInfoIndicatesCompaction,
   HERMES_BUILT_IN_SLASH_COMMANDS,
   resolveHermesAcpBaseModelId,
+  isHermesDerivedTitle,
   resolveHermesSessionModeId,
 } from "./HermesAcpSupport.ts";
 
@@ -52,6 +53,33 @@ describe("buildHermesAcpSpawnInput", () => {
   });
 });
 
+describe("isHermesDerivedTitle", () => {
+  // Observed from Hermes 0.21.0: the instant title, then the model's title.
+  const prompt =
+    "Do not run any tools or commands. In your head: is 391 prime? Answer yes or no with one short sentence.";
+
+  it("recognises the instant title Hermes cuts from the prompt", () => {
+    expect(isHermesDerivedTitle("Do not run any tools or commands. In your head…", [prompt])).toBe(
+      true,
+    );
+    expect(isHermesDerivedTitle("fix the  bug", ["fix the bug\nin the parser"])).toBe(true);
+  });
+
+  it("still recognises it after a steer lands before the title does", () => {
+    expect(
+      isHermesDerivedTitle("Do not run any tools or commands. In your head…", [
+        prompt,
+        "actually, also check 397",
+      ]),
+    ).toBe(true);
+  });
+
+  it("keeps a model-written title", () => {
+    expect(isHermesDerivedTitle("Check if 391 is prime", [prompt])).toBe(false);
+    expect(isHermesDerivedTitle("Check if 391 is prime", [])).toBe(false);
+  });
+});
+
 describe("resolveHermesSessionModeId", () => {
   const modeState = {
     currentModeId: "ask",
@@ -66,6 +94,37 @@ describe("resolveHermesSessionModeId", () => {
     expect(resolveHermesSessionModeId({ runtimeMode: "auto-accept-edits", modeState })).toBe(
       "auto",
     );
+  });
+
+  it("maps each runtime mode onto Hermes's edit-approval modes", () => {
+    const hermesModeState = {
+      currentModeId: "default",
+      availableModes: [
+        { id: "default", name: "Default", description: "Ask before edits." },
+        {
+          id: "accept_edits",
+          name: "Accept Edits",
+          description: "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+        },
+        {
+          id: "dont_ask",
+          name: "Don't Ask",
+          description: "Auto-allow file edits for this session except sensitive paths.",
+        },
+      ],
+    };
+    expect(
+      resolveHermesSessionModeId({ runtimeMode: "full-access", modeState: hermesModeState }),
+    ).toBe("dont_ask");
+    expect(resolveHermesSessionModeId({ runtimeMode: "auto", modeState: hermesModeState })).toBe(
+      "dont_ask",
+    );
+    expect(
+      resolveHermesSessionModeId({ runtimeMode: "auto-accept-edits", modeState: hermesModeState }),
+    ).toBe("accept_edits");
+    expect(
+      resolveHermesSessionModeId({ runtimeMode: "approval-required", modeState: hermesModeState }),
+    ).toBeUndefined();
   });
 
   it("stays put when the requested mode is already active", () => {
