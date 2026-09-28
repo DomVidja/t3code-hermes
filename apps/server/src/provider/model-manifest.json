@@ -50,6 +50,15 @@
       ]
     },
     {
+      "driver": "hermes",
+      "t3CodeRange": ">=0.0.42",
+      "recommendedRange": ">=0.21.0",
+      "ranges": [
+        { "range": ">=0.21.0", "status": "supported" },
+        { "range": "<0.21.0", "status": "unknown" }
+      ]
+    },
+    {
       "driver": "antigravity",
       "t3CodeRange": ">=0.0.42",
       "recommendedRange": "=1.1.1",

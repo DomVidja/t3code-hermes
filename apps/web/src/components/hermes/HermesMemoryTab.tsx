@@ -216,7 +216,7 @@ export function HermesMemoryTab() {
 
   if (unavailable !== null) {
     return (
-      <Empty className="py-16">
+      <Empty>
         <EmptyHeader>
           <EmptyTitle>{unavailable.title}</EmptyTitle>
           <EmptyDescription>{unavailable.description}</EmptyDescription>
@@ -233,7 +233,7 @@ export function HermesMemoryTab() {
 
   if (error !== null) {
     return (
-      <Empty className="py-16">
+      <Empty>
         <EmptyHeader>
           <EmptyTitle>Memory is unavailable</EmptyTitle>
           <EmptyDescription>{error}</EmptyDescription>
@@ -319,7 +319,7 @@ export function HermesMemoryTab() {
       {isPending ? (
         <MemoriesGhost />
       ) : memories.length === 0 ? (
-        <Empty className="py-16">
+        <Empty>
           <EmptyHeader>
             <EmptyTitle>{describeHindsightEmptyList(submittedQuery).title}</EmptyTitle>
             <EmptyDescription>

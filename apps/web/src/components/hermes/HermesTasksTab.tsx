@@ -76,7 +76,7 @@ function RunRow({ run }: { readonly run: HermesCronRun }) {
         {duration === null ? null : <span className="text-muted-foreground">· {duration}</span>}
       </div>
       {run.error === null ? null : (
-        <p className="break-words font-mono text-[11px] text-destructive">{run.error}</p>
+        <p className="break-words font-mono text-2xs text-destructive">{run.error}</p>
       )}
     </li>
   );
@@ -156,9 +156,7 @@ function TaskRow({
             <p className="text-xs text-muted-foreground">Delivers to {job.deliver.join(", ")}</p>
           ) : null}
           {job.lastError === null ? null : (
-            <p className="mt-1 break-words font-mono text-[11px] text-destructive">
-              {job.lastError}
-            </p>
+            <p className="mt-1 break-words font-mono text-2xs text-destructive">{job.lastError}</p>
           )}
           {job.runs.length === 0 ? (
             <p className="mt-1 text-xs text-muted-foreground">No recorded runs yet.</p>
@@ -195,7 +193,7 @@ export function HermesTasksTab({ onNewTask }: HermesTasksTabProps) {
   return (
     <div className="flex flex-col gap-3">
       {error !== null ? (
-        <Empty className="py-16">
+        <Empty>
           <EmptyHeader>
             <EmptyTitle>Hermes tasks are unavailable</EmptyTitle>
             <EmptyDescription>{error}</EmptyDescription>
@@ -204,7 +202,7 @@ export function HermesTasksTab({ onNewTask }: HermesTasksTabProps) {
       ) : isPending ? (
         <TasksGhost />
       ) : emptyState !== null ? (
-        <Empty className="py-16">
+        <Empty>
           <EmptyHeader>
             <EmptyTitle>{emptyState.title}</EmptyTitle>
             <EmptyDescription>{emptyState.description}</EmptyDescription>
