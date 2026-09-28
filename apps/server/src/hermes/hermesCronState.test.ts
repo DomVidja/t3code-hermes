@@ -31,7 +31,7 @@ import {
   groupRunsByJob,
   parseHermesCronJobs,
   readHermesCronRuns,
-  resolveEnabledHermesSettings,
+  resolveEnabledHermesInstance,
   resolveHermesCronPaths,
 } from "./hermesCronState.ts";
 
@@ -85,14 +85,14 @@ describe("resolveHermesCronPaths", () => {
   });
 });
 
-describe("resolveEnabledHermesSettings", () => {
+describe("resolveEnabledHermesInstance", () => {
   const hermes = ProviderDriverKind.make("hermes");
   const withInstances = (
     providerInstances: ServerSettings["providerInstances"],
   ): ServerSettings => ({ ...DEFAULT_SERVER_SETTINGS, providerInstances });
 
   it("is null when Hermes was never switched on", () => {
-    expect(resolveEnabledHermesSettings(DEFAULT_SERVER_SETTINGS)).toBeNull();
+    expect(resolveEnabledHermesInstance(DEFAULT_SERVER_SETTINGS)).toBeNull();
   });
 
   it("honours the explicit instance the Settings switch writes", () => {
@@ -104,7 +104,7 @@ describe("resolveEnabledHermesSettings", () => {
       },
     });
     expect(settings.providers.hermes.enabled).toBe(false);
-    expect(resolveEnabledHermesSettings(settings)?.binaryPath).toBe("/opt/hermes");
+    expect(resolveEnabledHermesInstance(settings)?.settings.binaryPath).toBe("/opt/hermes");
   });
 
   it("falls back to the legacy providers blob", () => {
@@ -115,7 +115,7 @@ describe("resolveEnabledHermesSettings", () => {
         hermes: { ...DEFAULT_SERVER_SETTINGS.providers.hermes, enabled: true },
       },
     };
-    expect(resolveEnabledHermesSettings(settings)).not.toBeNull();
+    expect(resolveEnabledHermesInstance(settings)).not.toBeNull();
   });
 
   it("uses an enabled custom instance when the default slot is off", () => {
@@ -126,7 +126,16 @@ describe("resolveEnabledHermesSettings", () => {
         config: { binaryPath: "/srv/hermes" },
       },
     });
-    expect(resolveEnabledHermesSettings(settings)?.binaryPath).toBe("/srv/hermes");
+    expect(resolveEnabledHermesInstance(settings)?.settings.binaryPath).toBe("/srv/hermes");
+  });
+
+  it("carries the instance environment so cron follows its HERMES_HOME", () => {
+    const environment = [{ name: "HERMES_HOME", value: "/srv/hermes-home", sensitive: false }];
+    const settings = withInstances({
+      [ProviderInstanceId.make("hermes-box")]: { driver: hermes, enabled: true, environment },
+    });
+    const instance = resolveEnabledHermesInstance(settings);
+    expect(instance?.environment).toEqual(environment);
   });
 
   it("respects an explicit disable over the legacy blob", () => {
@@ -139,7 +148,7 @@ describe("resolveEnabledHermesSettings", () => {
         hermes: { ...DEFAULT_SERVER_SETTINGS.providers.hermes, enabled: true },
       },
     };
-    expect(resolveEnabledHermesSettings(settings)).toBeNull();
+    expect(resolveEnabledHermesInstance(settings)).toBeNull();
   });
 });
 

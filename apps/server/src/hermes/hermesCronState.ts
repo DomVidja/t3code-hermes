@@ -73,17 +73,27 @@ export function resolveHermesCronPaths(
 const HERMES_DRIVER_KIND = ProviderDriverKind.make("hermes");
 const decodeHermesSettings = Schema.decodeUnknownOption(HermesSettings);
 
+/** The Hermes instance this environment runs: its config plus its own env overrides. */
+export interface EnabledHermesInstance {
+  readonly settings: HermesSettings;
+  readonly environment: ProviderInstanceConfig["environment"];
+}
+
 /**
- * Settings of the Hermes instance this environment runs, or `null` when none
- * is enabled.
+ * The enabled Hermes instance, or `null` when none is enabled.
  *
  * Resolved like the provider registry does: an explicit `providerInstances`
  * entry wins over the legacy `providers.hermes` blob. The Settings switch
  * writes that explicit entry and leaves `providers.hermes.enabled` at its
  * default `false`, so the legacy blob alone reports a switched-on Hermes as
  * disabled. The default slot is preferred over custom instances.
+ *
+ * The instance `environment` matters: it can point `HERMES_HOME` at a
+ * different store, and cron reads and CLI calls must follow it.
  */
-export function resolveEnabledHermesSettings(settings: ServerSettings): HermesSettings | null {
+export function resolveEnabledHermesInstance(
+  settings: ServerSettings,
+): EnabledHermesInstance | null {
   const defaultId = defaultInstanceIdForDriver(HERMES_DRIVER_KIND);
   const candidates: ProviderInstanceConfig[] = [
     settings.providerInstances[defaultId] ?? {
@@ -99,7 +109,9 @@ export function resolveEnabledHermesSettings(settings: ServerSettings): HermesSe
       instance.driver === HERMES_DRIVER_KIND && resolveProviderInstanceEnabled(instance),
   );
   if (enabled === undefined) return null;
-  return Option.getOrNull(decodeHermesSettings(enabled.config ?? {}));
+  const decoded = decodeHermesSettings(enabled.config ?? {});
+  if (Option.isNone(decoded)) return null;
+  return { settings: decoded.value, environment: enabled.environment };
 }
 
 /** A job as it appears on disk, after normalisation but before contract encoding. */
