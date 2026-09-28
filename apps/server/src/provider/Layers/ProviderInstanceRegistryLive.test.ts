@@ -462,6 +462,43 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(CodexResetCredit.layerTest),
   );
 
+  it.live("keeps an explicit OpenCode dashboard source through the merged driver probe", () =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      const instance = yield* OpenCodeDriver.create({
+        instanceId: ProviderInstanceId.make("opencode-dashboard"),
+        displayName: "Dashboard account",
+        enabled: true,
+        environment: [
+          { name: "OPENCODE_GO_AUTH_COOKIE", value: "fixture", sensitive: true },
+          { name: "OPENCODE_GO_WORKSPACE_ID", value: "wrk_test", sensitive: false },
+          { name: "OPENCODE_AUTH_CONTENT", value: "{}", sensitive: true },
+          { name: "OPENCODE_API_KEY", value: "", sensitive: true },
+        ],
+        config: makeOpenCodeConfig({ binaryPath: "/nonexistent/t3-test-opencode" }),
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              requests.push(request.url);
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({ rolling: { percent: 25 }, weekly: { percent: 50 } }),
+              );
+            }),
+          ),
+        ),
+      );
+      const snapshot = yield* instance.snapshot.refresh;
+      expect(snapshot.usageLimits?.windows).toMatchObject([
+        { kind: "session", usedPercent: 25 },
+        { kind: "weekly", usedPercent: 50 },
+      ]);
+      expect(requests).toContain("https://opencode.ai/workspace/wrk_test/go");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live("boots one instance of every shipped driver from a single config map", () =>
     Effect.gen(function* () {
       const codexId = ProviderInstanceId.make("codex_default");
