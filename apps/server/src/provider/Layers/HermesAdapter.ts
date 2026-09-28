@@ -1299,27 +1299,32 @@ export function makeHermesAdapter(
           if (prepared.steeringTurnId !== undefined && prepared.firstPromptDispatched) {
             yield* Deferred.await(prepared.firstPromptDispatched);
           }
-          const promptRequest =
-            prepared.steeringTurnId === undefined
-              ? prepared.acp.prompt(
-                  {
-                    // ACP has no system-message field; keep runtime context separate from user input.
-                    prompt: [
-                      ...prepared.promptParts,
-                      {
-                        type: "text",
-                        text: buildRuntimeInstructions({
-                          harness: "Hermes",
-                          model: prepared.displayModel,
-                        }),
-                      },
-                    ],
-                  },
-                  prepared.firstPromptDispatched
-                    ? { dispatched: prepared.firstPromptDispatched }
-                    : undefined,
-                )
-              : prepared.acp.promptWhileRunning({ prompt: prepared.promptParts });
+          // Hermes only redirects text-only prompts into a running turn. It queues
+          // anything else as plain text, dropping attachments, so those steers
+          // wait for the running prompt instead.
+          const steersLive =
+            prepared.steeringTurnId !== undefined &&
+            prepared.promptParts.every((part) => part.type === "text");
+          const promptRequest = steersLive
+            ? prepared.acp.promptWhileRunning({ prompt: prepared.promptParts })
+            : prepared.acp.prompt(
+                {
+                  // ACP has no system-message field; keep runtime context separate from user input.
+                  prompt: [
+                    ...prepared.promptParts,
+                    {
+                      type: "text",
+                      text: buildRuntimeInstructions({
+                        harness: "Hermes",
+                        model: prepared.displayModel,
+                      }),
+                    },
+                  ],
+                },
+                prepared.steeringTurnId === undefined && prepared.firstPromptDispatched
+                  ? { dispatched: prepared.firstPromptDispatched }
+                  : undefined,
+              );
           const result = yield* promptRequest.pipe(
             Effect.tap((promptResult) =>
               Effect.all([

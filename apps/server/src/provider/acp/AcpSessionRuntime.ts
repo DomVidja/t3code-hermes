@@ -250,8 +250,9 @@ export class AcpSessionRuntime extends Context.Service<
     /**
      * Delivers a follow-up while `prompt` is still pending. Only call for agents
      * that accept overlapping `session/prompt` requests (Hermes redirects the
-     * message into its active turn). The original prompt retains cancellation
-     * and assistant-segment ownership.
+     * message into its active turn). The original prompt keeps cancellation
+     * ownership. Assistant updates stay open until this request settles, even
+     * if the original prompt finishes first.
      */
     readonly promptWhileRunning: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
@@ -378,6 +379,7 @@ export const make = (
     const promptDispatchSemaphore = yield* Semaphore.make(1);
     const activePromptRef = yield* Ref.make<Option.Option<AcpActivePrompt>>(Option.none());
     const assistantUpdatesOpenRef = yield* Ref.make(true);
+    const overlappingPromptsRef = yield* Ref.make(0);
     const sessionLoadGateRef = yield* Ref.make<Option.Option<SessionLoadGate>>(Option.none());
 
     const ensureConnected = Effect.gen(function* () {
@@ -937,7 +939,10 @@ export const make = (
       yield* notificationSemaphore.withPermit(
         Effect.gen(function* () {
           // Keep a provider's final flushed chunks together until the adapter settles the turn.
-          if (Option.isNone(yield* Ref.get(activePromptRef))) {
+          if (
+            Option.isNone(yield* Ref.get(activePromptRef)) &&
+            (yield* Ref.get(overlappingPromptsRef)) === 0
+          ) {
             yield* Ref.set(assistantUpdatesOpenRef, false);
             yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
           }
@@ -1084,11 +1089,19 @@ export const make = (
             sessionId: started.sessionId,
             ...payload,
           } satisfies EffectAcpSchema.PromptRequest;
+          // The original prompt can finish before this request reaches the agent,
+          // which then runs it as a fresh turn; its output must not be gated off.
+          // Text after a steer answers it, so it starts a new assistant segment.
+          yield* Effect.gen(function* () {
+            yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
+            yield* Ref.set(assistantUpdatesOpenRef, true);
+            yield* Ref.update(overlappingPromptsRef, (count) => count + 1);
+          }).pipe(notificationSemaphore.withPermit);
           return yield* runLoggedRequest(
             "session/prompt",
             requestPayload,
             acp.agent.prompt(requestPayload),
-          );
+          ).pipe(Effect.ensuring(Ref.update(overlappingPromptsRef, (count) => count - 1)));
         }),
       cancel:
         options.cancelBehavior === "wait-for-prompt"
