@@ -65,6 +65,7 @@ import {
   applyHermesAcpModelSelection,
   currentHermesModelIdFromSessionSetup,
   hermesSessionInfoIndicatesCompaction,
+  HERMES_TITLE_PROMPT_LIMIT,
   isHermesDerivedTitle,
   makeHermesAcpRuntime,
   resolveHermesAcpBaseModelId,
@@ -154,8 +155,8 @@ interface HermesSessionContext {
   reasoningLevel: HermesReasoningLevel | null | undefined;
   /** Last known reading from each token-usage source, merged on every emit. */
   tokenUsage: HermesTokenUsageState;
-  /** Text of the latest prompt, to recognise Hermes's derived session title. */
-  lastPromptText: string | undefined;
+  /** The session's opening prompts, to recognise Hermes's derived title. */
+  openingPrompts: Array<string>;
   stopped: boolean;
 }
 
@@ -932,7 +933,7 @@ export function makeHermesAdapter(
             currentModelId: boundModelId,
             reasoningLevel: startReasoningLevel,
             tokenUsage: {},
-            lastPromptText: undefined,
+            openingPrompts: [],
             stopped: false,
           };
 
@@ -978,7 +979,7 @@ export function makeHermesAdapter(
                   // Hermes auto-titles each session in its first turn's prologue.
                   if (
                     event.title !== undefined &&
-                    !isHermesDerivedTitle(event.title, ctx.lastPromptText)
+                    !isHermesDerivedTitle(event.title, ctx.openingPrompts)
                   ) {
                     yield* offerRuntimeEvent({
                       type: "thread.metadata.updated",
@@ -1205,8 +1206,8 @@ export function makeHermesAdapter(
               }
 
               const text = input.input?.trim();
-              if (text) {
-                ctx.lastPromptText = text;
+              if (text && ctx.openingPrompts.length < HERMES_TITLE_PROMPT_LIMIT) {
+                ctx.openingPrompts.push(text);
               }
               const attachmentPromptParts = yield* Effect.forEach(
                 input.attachments ?? [],

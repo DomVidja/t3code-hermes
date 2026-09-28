@@ -59,15 +59,24 @@ describe("isHermesDerivedTitle", () => {
     "Do not run any tools or commands. In your head: is 391 prime? Answer yes or no with one short sentence.";
 
   it("recognises the instant title Hermes cuts from the prompt", () => {
-    expect(isHermesDerivedTitle("Do not run any tools or commands. In your head…", prompt)).toBe(
+    expect(isHermesDerivedTitle("Do not run any tools or commands. In your head…", [prompt])).toBe(
       true,
     );
-    expect(isHermesDerivedTitle("fix the  bug", "fix the bug\nin the parser")).toBe(true);
+    expect(isHermesDerivedTitle("fix the  bug", ["fix the bug\nin the parser"])).toBe(true);
+  });
+
+  it("still recognises it after a steer lands before the title does", () => {
+    expect(
+      isHermesDerivedTitle("Do not run any tools or commands. In your head…", [
+        prompt,
+        "actually, also check 397",
+      ]),
+    ).toBe(true);
   });
 
   it("keeps a model-written title", () => {
-    expect(isHermesDerivedTitle("Check if 391 is prime", prompt)).toBe(false);
-    expect(isHermesDerivedTitle("Check if 391 is prime", undefined)).toBe(false);
+    expect(isHermesDerivedTitle("Check if 391 is prime", [prompt])).toBe(false);
+    expect(isHermesDerivedTitle("Check if 391 is prime", [])).toBe(false);
   });
 });
 

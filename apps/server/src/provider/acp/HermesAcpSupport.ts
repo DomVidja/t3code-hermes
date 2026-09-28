@@ -126,19 +126,27 @@ export function hermesSessionInfoIndicatesCompaction(rawPayload: unknown): boole
 }
 
 /**
+ * How many of a session's opening prompts to keep for
+ * {@link isHermesDerivedTitle}. Hermes titles from the first message that
+ * reaches the agent, which a locally handled slash command or a quick steer
+ * can push past the very first prompt.
+ */
+export const HERMES_TITLE_PROMPT_LIMIT = 4;
+
+/**
  * Hermes titles a session twice: first an instant title cut from the opening
  * message (`derive_title` in agent/title_generator.py), then a model-written
  * one. ACP does not say which is which, and T3 Code already titles a thread
- * from its first message, so a title that is just a prefix of the prompt is
- * the derived one and is not worth forwarding.
+ * from its first message, so a title that is just a prefix of one of the
+ * opening prompts is the derived one and is not worth forwarding.
  */
-export function isHermesDerivedTitle(title: string, promptText: string | undefined): boolean {
-  if (!promptText) {
-    return false;
-  }
+export function isHermesDerivedTitle(
+  title: string,
+  openingPrompts: ReadonlyArray<string>,
+): boolean {
   const collapse = (value: string) => value.split(/\s+/).filter(Boolean).join(" ");
   const stem = collapse(title.replace(/…$/, "")).replace(/[ ,.;:—-]+$/, "");
-  return stem.length > 0 && collapse(promptText).startsWith(stem);
+  return stem.length > 0 && openingPrompts.some((prompt) => collapse(prompt).startsWith(stem));
 }
 
 type HermesAcpRuntimeHermesSettings = Pick<HermesSettings, "binaryPath">;
