@@ -65,6 +65,7 @@ import {
   applyHermesAcpModelSelection,
   currentHermesModelIdFromSessionSetup,
   hermesSessionInfoIndicatesCompaction,
+  isHermesDerivedTitle,
   makeHermesAcpRuntime,
   resolveHermesAcpBaseModelId,
   resolveHermesSessionModeId,
@@ -153,6 +154,8 @@ interface HermesSessionContext {
   reasoningLevel: HermesReasoningLevel | null | undefined;
   /** Last known reading from each token-usage source, merged on every emit. */
   tokenUsage: HermesTokenUsageState;
+  /** Text of the latest prompt, to recognise Hermes's derived session title. */
+  lastPromptText: string | undefined;
   stopped: boolean;
 }
 
@@ -929,6 +932,7 @@ export function makeHermesAdapter(
             currentModelId: boundModelId,
             reasoningLevel: startReasoningLevel,
             tokenUsage: {},
+            lastPromptText: undefined,
             stopped: false,
           };
 
@@ -942,7 +946,8 @@ export function makeHermesAdapter(
                 if (
                   event._tag === "PlanUpdated" ||
                   event._tag === "ToolCallUpdated" ||
-                  event._tag === "ContentDelta"
+                  event._tag === "ContentDelta" ||
+                  event._tag === "ThoughtDelta"
                 ) {
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload);
                 }
@@ -970,6 +975,24 @@ export function makeHermesAdapter(
 
                 if (event._tag === "SessionInfoUpdated") {
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload);
+                  // Hermes auto-titles each session in its first turn's prologue.
+                  if (
+                    event.title !== undefined &&
+                    !isHermesDerivedTitle(event.title, ctx.lastPromptText)
+                  ) {
+                    yield* offerRuntimeEvent({
+                      type: "thread.metadata.updated",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: ctx.threadId,
+                      payload: { name: event.title },
+                      raw: {
+                        source: "acp.jsonrpc",
+                        method: "session/update",
+                        payload: event.rawPayload,
+                      },
+                    });
+                  }
                   if (hermesSessionInfoIndicatesCompaction(event.rawPayload)) {
                     yield* offerRuntimeEvent({
                       type: "thread.state.changed",
@@ -1034,6 +1057,19 @@ export function makeHermesAdapter(
                         threadId: ctx.threadId,
                         turnId: notificationTurnId,
                         toolCall: event.toolCall,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "ThoughtDelta":
+                    yield* offerRuntimeEvent(
+                      makeAcpContentDeltaEvent({
+                        stamp,
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: notificationTurnId,
+                        streamKind: "reasoning_text",
+                        text: event.text,
                         rawPayload: event.rawPayload,
                       }),
                     );
@@ -1169,6 +1205,9 @@ export function makeHermesAdapter(
               }
 
               const text = input.input?.trim();
+              if (text) {
+                ctx.lastPromptText = text;
+              }
               const attachmentPromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>
@@ -1694,7 +1733,8 @@ export function makeHermesAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: { sessionModelSwitch: "in-session", supportsConversationRollback: false },
+      compaction: { type: "slash-command", command: "/compress" },
       startSession,
       sendTurn,
       interruptTurn,

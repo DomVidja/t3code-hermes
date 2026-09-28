@@ -447,6 +447,59 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
       );
       assert.isDefined(compacted, "expected a compacted thread.state.changed event");
 
+      const titled = runtimeEvents.find((event) => event.type === "thread.metadata.updated");
+      assert.equal(
+        titled?.type === "thread.metadata.updated" ? titled.payload.name : undefined,
+        "Compacted thread",
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("streams Hermes reasoning as reasoning text, separate from the reply", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-reasoning-thread");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockHermesWrapper({ T3_ACP_EMIT_THOUGHT_TEXT: "weighing the options" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("hermes"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "think first", attachments: [] });
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(runtimeEventsFiber);
+
+      const deltas = runtimeEvents.flatMap((event) =>
+        event.type === "content.delta" ? [event.payload] : [],
+      );
+      assert.deepEqual(
+        deltas.map((delta) => [delta.streamKind, delta.delta]),
+        [
+          ["reasoning_text", "weighing the options"],
+          ["assistant_text", "hello from mock"],
+        ],
+      );
+
       yield* adapter.stopSession(threadId);
     }),
   );
