@@ -5,17 +5,40 @@ release_version="${1:?release version is required}"
 release_dist_tag="${2:?npm dist-tag is required}"
 export npm_config_registry=https://registry.npmjs.org
 
-# Allow npm's public metadata to propagate before testing a fresh install.
+# npm makes a publish visible asynchronously. The small launcher shows up
+# within a minute or two, but the ~60 MB platform packages routinely take
+# several minutes, even though they are published first.
+wait_attempts=90
+wait_seconds=10
+
 published_version=""
-for attempt in {1..12}; do
+for attempt in $(seq 1 "$wait_attempts"); do
   published_version="$(npm view "t3-hermes@${release_dist_tag}" version 2>/dev/null || true)"
   if [[ "$published_version" == "$release_version" ]]; then
     break
   fi
-  sleep 5
+  sleep "$wait_seconds"
 done
 if [[ "$published_version" != "$release_version" ]]; then
   echo "::error::t3-hermes@${release_dist_tag} resolves to '${published_version}', expected '${release_version}'." >&2
+  exit 1
+fi
+
+# The platform package is an optional dependency, so npm silently skips it
+# while it is not visible yet and the launcher then reports the platform as
+# unsupported. Wait for this runner's package before installing.
+platform_package="t3-hermes-$(node -p 'process.platform + "-" + process.arch')"
+platform_version=""
+for attempt in $(seq 1 "$wait_attempts"); do
+  platform_version="$(npm view "${platform_package}@${release_version}" version 2>/dev/null || true)"
+  if [[ "$platform_version" == "$release_version" ]]; then
+    break
+  fi
+  echo "Waiting for ${platform_package}@${release_version} (attempt ${attempt}/${wait_attempts})." >&2
+  sleep "$wait_seconds"
+done
+if [[ "$platform_version" != "$release_version" ]]; then
+  echo "::error::${platform_package}@${release_version} is not visible on npm." >&2
   exit 1
 fi
 
