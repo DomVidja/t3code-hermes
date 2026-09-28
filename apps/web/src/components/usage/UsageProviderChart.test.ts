@@ -86,11 +86,13 @@ describe("buildPeriodColumns", () => {
     const [first] = buildPeriodColumns(days, byDay, "cost");
 
     expect(first?.bands).toEqual([
-      { provider: "opencode", value: 0 },
       { provider: "hermes", value: 0 },
       { provider: "codex", value: 10 },
       { provider: "claude", value: 20 },
       { provider: "grok", value: 0 },
+      { provider: "cursor", value: 0 },
+      { provider: "opencode", value: 0 },
+      { provider: "antigravity", value: 0 },
     ]);
   });
 
