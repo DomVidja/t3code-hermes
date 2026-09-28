@@ -90,6 +90,8 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       });
 
     const sweep = Effect.gen(function* () {
+      // Stopped rows are kept so a projection still showing a running turn
+      // can be reconciled after its provider process ended.
       const bindings = yield* directory.listBindings();
       const now = yield* Clock.currentTimeMillis;
       let reapedCount = 0;
@@ -205,7 +207,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       if (reapedCount > 0) {
         yield* Effect.logInfo("provider.session.reaper.sweep-complete", {
           reapedCount,
-          totalBindings: bindings.length,
+          liveBindings: bindings.length,
         });
       }
     });
