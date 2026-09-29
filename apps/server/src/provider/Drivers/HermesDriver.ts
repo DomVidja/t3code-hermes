@@ -30,6 +30,7 @@ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment
 import {
   makeCachedProviderMaintenanceResolution,
   makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
@@ -41,16 +42,46 @@ import {
 const decodeHermesSettings = Schema.decodeSync(HermesSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("hermes");
-// Hermes ships as a self-hosted Python install, so T3 Code never manages
-// the binary — updates stay a manual, user-driven action.
+// Hermes is not on npm; its GitHub release titles carry the semver that
+// `hermes --version` reports.
+const HERMES_RELEASE_REPOSITORY = "NousResearch/hermes-agent";
+// `hermes update` pulls and reinstalls a git checkout in place, so it is only
+// offered when the binary is `<checkout>/venv/bin/hermes` beside a `.git`.
+// Nix, Docker, apt and pip installs stay manual; `hermes update` refuses them.
+// `--yes` accepts its config-migration and stash-restore prompts, since the
+// runner has no terminal to answer them. It runs with the instance's
+// environment so a custom `HERMES_HOME` is the one migrated.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
-  resolve: () =>
-    Effect.succeed(
-      makeManualOnlyProviderMaintenanceCapabilities({
+  resolve: (context) =>
+    Effect.gen(function* () {
+      const manual = makeManualOnlyProviderMaintenanceCapabilities({
         provider: DRIVER_KIND,
         packageName: null,
-      }),
-    ),
+        githubReleaseRepository: HERMES_RELEASE_REPOSITORY,
+      });
+      if (!context) {
+        return manual;
+      }
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const checkoutRoot = path.dirname(path.dirname(path.dirname(context.realCommandPath)));
+      const isGitCheckout = yield* fileSystem
+        .exists(path.join(checkoutRoot, ".git"))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (!isGitCheckout) {
+        return manual;
+      }
+      return makeProviderMaintenanceCapabilities({
+        provider: DRIVER_KIND,
+        packageName: null,
+        updateExecutable: context.resolvedCommandPath,
+        updateArgs: ["update", "--yes"],
+        updateLockKey: "hermes",
+        platform: context.platform,
+        env: context.env,
+        githubReleaseRepository: HERMES_RELEASE_REPOSITORY,
+      });
+    }),
 };
 
 export type HermesDriverEnv =

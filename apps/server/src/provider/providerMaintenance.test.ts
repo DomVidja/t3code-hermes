@@ -11,7 +11,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createProviderVersionAdvisory,
@@ -159,6 +159,44 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       ),
       Effect.map((version) => {
         expect(version).toBe("1.2.0");
+      }),
+    ),
+  );
+
+  it.effect("reads semver from a GitHub release title when there is no npm package", () =>
+    enrichProviderSnapshotWithVersionAdvisory(
+      { ...installedPackageToolProvider, version: "0.21.0" },
+      {
+        provider: driver("packageTool"),
+        packageName: null,
+        update: null,
+        githubReleaseRepository: "example/release-tool",
+      },
+    ).pipe(
+      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              request.url === "https://api.github.com/repos/example/release-tool/releases/latest"
+                ? // The calendar tag must not be mistaken for the version.
+                  Response.json({
+                    tag_name: "v2026.9.24",
+                    name: "Release Tool v0.21.5 (v2026.9.24)",
+                  })
+                : new Response(null, { status: 404 }),
+            ),
+          ),
+        ),
+      ),
+      Effect.map((provider) => {
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: "0.21.0",
+          latestVersion: "0.21.5",
+        });
       }),
     ),
   );
