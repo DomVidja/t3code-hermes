@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
   approval: false,
   sessionError: false,
   turnError: false,
+  backgroundLiveness: null as "working" | null,
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -40,6 +41,7 @@ vi.mock("@effect/atom-react", () => ({
           archivedAt: state.archivedAt,
           hasPendingUserInput: state.input,
           hasPendingApprovals: state.approval,
+          backgroundLiveness: state.backgroundLiveness,
           session: state.sessionError ? { status: "error" } : null,
           latestTurn: {
             turnId: "turn-1",
@@ -109,6 +111,7 @@ beforeEach(() => {
     approval: false,
     sessionError: false,
     turnError: false,
+    backgroundLiveness: null,
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
@@ -130,6 +133,28 @@ afterEach(async () => {
 });
 
 describe("thread notifications", () => {
+  it("does not repeat completion alerts when background child activity settles later", async () => {
+    await render();
+    await complete();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    state.backgroundLiveness = "working";
+    await render();
+    state.backgroundLiveness = null;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for live background children to finish before notifying once", async () => {
+    state.backgroundLiveness = "working";
+    await render();
+    await complete();
+    expect(state.add).not.toHaveBeenCalled();
+    state.backgroundLiveness = null;
+    await render();
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+  });
+
   it("alerts once with system alerts off and opens the completed thread", async () => {
     await render();
     await complete();

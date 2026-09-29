@@ -972,3 +972,232 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
     }).pipe(TestClock.withLive),
   );
 });
+
+it.layer(hermesAdapterTestLayer)("Hermes delegation", (it) => {
+  for (const mode of ["stock", "progress"] as const) {
+    it.effect(`renders ${mode} delegate batches as child tasks rather than shell calls`, () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make(`hermes-delegation-${mode}`);
+        const wrapper = yield* Effect.promise(() =>
+          makeMockHermesWrapper({ T3_ACP_HERMES_DELEGATION: mode }),
+        );
+        const adapter = yield* makeTestAdapter(wrapper);
+        const events: ProviderRuntimeEvent[] = [];
+        const done = yield* Deferred.make<void>();
+        yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.gen(function* () {
+            events.push(event);
+            if (event.type === "turn.completed") yield* Deferred.succeed(done, undefined);
+          }),
+        ).pipe(Effect.forkChild);
+        yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+        yield* adapter.sendTurn({ threadId, input: "delegate review and tests", attachments: [] });
+        yield* Deferred.await(done);
+        assert.lengthOf(
+          events.filter((event) => event.type === "task.started"),
+          2,
+        );
+        assert.deepStrictEqual(
+          events
+            .filter((event) => event.type === "task.completed")
+            .map((event) => event.payload.status),
+          ["completed", "failed"],
+        );
+        assert.isFalse(
+          events.some(
+            (event) =>
+              event.type === "item.started" && event.payload.itemType === "command_execution",
+          ),
+        );
+        const ticks = events.filter((event) => event.type === "task.progress");
+        assert.deepStrictEqual(
+          ticks.slice(0, 2).map((event) => event.payload.status),
+          ["pending", "pending"],
+        );
+        if (mode === "progress") {
+          assert.deepStrictEqual(
+            ticks.slice(2, 4).map((event) => event.payload.taskId),
+            ["hermes-delegate-1:task:0", "hermes-delegate-1:task:1"],
+          );
+          assert.isTrue(
+            ticks.some(
+              (event) =>
+                event.payload.summary === "Routing inspected; checking parallel child isolation.",
+            ),
+          );
+        }
+        yield* adapter.stopSession(threadId);
+      }),
+    );
+  }
+
+  it.effect("keeps late background child completion on the original turn", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-background-delegation");
+      const wrapper = yield* Effect.promise(() =>
+        makeMockHermesWrapper({
+          T3_ACP_HERMES_DELEGATION: "progress",
+          T3_ACP_HERMES_DELEGATION_CASE: "dispatched",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapper);
+      const events: ProviderRuntimeEvent[] = [];
+      const firstDone = yield* Deferred.make<void>();
+      const secondDone = yield* Deferred.make<void>();
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (event.type === "turn.completed")
+            yield* Deferred.succeed(
+              events.filter((item) => item.type === "turn.completed").length === 1
+                ? firstDone
+                : secondDone,
+              undefined,
+            );
+        }),
+      ).pipe(Effect.forkChild);
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const first = yield* adapter.sendTurn({
+        threadId,
+        input: "delegate background work",
+        attachments: [],
+      });
+      yield* Deferred.await(firstDone);
+      assert.lengthOf(
+        events.filter((event) => event.type === "task.completed"),
+        0,
+      );
+      assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+      const second = yield* adapter.sendTurn({ threadId, input: "continue", attachments: [] });
+      yield* Deferred.await(secondDone);
+      const completed = events.filter((event) => event.type === "task.completed");
+      assert.lengthOf(completed, 1);
+      assert.equal(completed[0]?.turnId, first.turnId);
+      assert.notEqual(first.turnId, second.turnId);
+      assert.equal(completed[0]?.payload.summary, "Background review completed.");
+      assert.lengthOf(
+        events.filter((event) => event.type === "turn.completed"),
+        2,
+      );
+      assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("preserves detached children when their parent is cancelled", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-detached-cancel");
+      const wrapper = yield* Effect.promise(() =>
+        makeMockHermesWrapper({
+          T3_ACP_HERMES_DELEGATION: "progress",
+          T3_ACP_HERMES_DELEGATION_CASE: "dispatched",
+          T3_ACP_HERMES_DELEGATION_HANG_AFTER_DISPATCH: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapper);
+      const events: ProviderRuntimeEvent[] = [];
+      const dispatched = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      const completed = yield* Deferred.make<void>();
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (
+            event.type === "task.progress" &&
+            event.payload.status === "running" &&
+            events.filter((e) => e.type === "task.progress").length === 5
+          )
+            yield* Deferred.succeed(dispatched, undefined);
+          if (event.type === "turn.completed") yield* Deferred.succeed(cancelled, undefined);
+          if (event.type === "task.completed") yield* Deferred.succeed(completed, undefined);
+        }),
+      ).pipe(Effect.forkChild);
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const prompt = yield* adapter
+        .sendTurn({ threadId, input: "delegate", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(dispatched);
+      yield* adapter.interruptTurn(threadId);
+      yield* Deferred.await(cancelled);
+      const first = yield* Fiber.join(prompt);
+      assert.lengthOf(
+        events.filter((event) => event.type === "task.updated"),
+        0,
+      );
+      yield* adapter.sendTurn({ threadId, input: "continue", attachments: [] });
+      yield* Deferred.await(completed);
+      assert.equal(events.find((event) => event.type === "task.completed")?.turnId, first.turnId);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("interrupts background children when an idle ACP process disconnects", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-detached-exit");
+      const wrapper = yield* Effect.promise(() =>
+        makeMockHermesWrapper({
+          T3_ACP_HERMES_DELEGATION: "progress",
+          T3_ACP_HERMES_DELEGATION_CASE: "dispatched",
+          T3_ACP_HERMES_DELEGATION_EXIT_ON_CANCEL: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapper);
+      const interrupted = yield* Deferred.make<ProviderRuntimeEvent>();
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "task.updated" && event.payload.status === "interrupted"
+          ? Deferred.succeed(interrupted, event)
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const first = yield* adapter.sendTurn({ threadId, input: "delegate", attachments: [] });
+      assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+      yield* adapter.interruptTurn(threadId);
+      const event = yield* Deferred.await(interrupted);
+      assert.equal(event.turnId, first.turnId);
+      assert.match(
+        event.type === "task.updated" ? (event.payload.error ?? "") : "",
+        /ACP disconnected/,
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("cancels pending children when an active delegation is interrupted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-interrupt-delegation");
+      const wrapper = yield* Effect.promise(() =>
+        makeMockHermesWrapper({
+          T3_ACP_HERMES_DELEGATION: "stock",
+          T3_ACP_HERMES_DELEGATION_HANG: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapper);
+      const events: ProviderRuntimeEvent[] = [];
+      const started = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (event.type === "task.progress" && event.payload.taskId.endsWith(":1"))
+            yield* Deferred.succeed(started, undefined);
+          if (event.type === "turn.completed") yield* Deferred.succeed(cancelled, undefined);
+        }),
+      ).pipe(Effect.forkChild);
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const prompt = yield* adapter
+        .sendTurn({ threadId, input: "delegate work", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* adapter.interruptTurn(threadId);
+      yield* Deferred.await(cancelled);
+      yield* Fiber.join(prompt);
+      assert.deepStrictEqual(
+        events
+          .filter((event) => event.type === "task.updated")
+          .map((event) => event.payload.status),
+        ["cancelled", "cancelled"],
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+});

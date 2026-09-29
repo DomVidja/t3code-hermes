@@ -32,6 +32,54 @@ const mockRuntimeOptions = {
 } satisfies AcpSessionRuntime.AcpSessionRuntimeOptions;
 
 describe("AcpSessionRuntime", () => {
+  it.effect("passes through child updates without retaining them in parent tool state", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        isPassthroughToolCallUpdate: (tool) => tool.data.rawOutput !== undefined,
+      });
+      const events: Array<AcpSessionRuntime.AcpSessionRuntimeEvent> = [];
+      yield* runtime.getEvents().pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "EventStreamBarrier")
+            return Deferred.succeed(event.acknowledge, undefined);
+          events.push(event);
+          return Effect.void;
+        }),
+        Effect.forkChild,
+      );
+      const { sessionId } = yield* runtime.start();
+      const update = (fields: Record<string, unknown>) => ({
+        sessionId,
+        update: { sessionUpdate: "tool_call_update", toolCallId: "parent", ...fields },
+      });
+      yield* runtime.request("_test/session-updates", {
+        updates: [
+          update({
+            sessionUpdate: "tool_call",
+            title: "delegate: Review",
+            kind: "execute",
+            status: "in_progress",
+          }),
+          update({ status: "in_progress", rawOutput: { child: "first" }, title: "Child snapshot" }),
+          update({ status: "completed" }),
+          update({
+            status: "in_progress",
+            rawOutput: { child: "second" },
+            title: "Detached snapshot",
+          }),
+          update({ status: "in_progress", rawOutput: { child: "complete" } }),
+        ],
+      });
+      yield* runtime.drainEvents;
+      const tools = events.filter((event) => event._tag === "ToolCallUpdated");
+      expect(tools).toHaveLength(5);
+      expect(tools[2]?.toolCall.data.title).toBe("delegate: Review");
+      expect(tools[2]?.toolCall.data.rawOutput).toBeUndefined();
+      expect(tools[4]?.toolCall.data.title).toBeUndefined();
+      expect(tools[4]?.toolCall.data.rawOutput).toEqual({ child: "complete" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   for (const setupMethod of ["session/new", "session/resume"] as const) {
     it.effect(`buffers root metadata while ${setupMethod} startup is still pending`, () =>
       Effect.gen(function* () {

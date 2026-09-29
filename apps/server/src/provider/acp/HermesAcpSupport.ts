@@ -25,6 +25,7 @@ import { normalizeModelSlug } from "@t3tools/shared/model";
 
 import type { AcpSessionModeState, AcpToolCallState } from "./AcpRuntimeModel.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import { isHermesDelegationProgress } from "./HermesDelegation.ts";
 
 const HERMES_DRIVER_KIND = ProviderDriverKind.make("hermes");
 /** Hermes authenticates from `~/.hermes/.env`; the method id is a formality. */
@@ -288,6 +289,7 @@ export const makeHermesAcpRuntime = (
         spawn: buildHermesAcpSpawnInput(input.hermesSettings, input.cwd, input.environment),
         authMethodId: HERMES_AUTH_METHOD_ID,
         transformSessionUpdate: dropHermesRedirectAck,
+        isPassthroughToolCallUpdate: isHermesDelegationProgress,
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

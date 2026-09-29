@@ -3,6 +3,7 @@
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -10,11 +11,22 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 
 import * as EffectAcpAgent from "effect-acp/agent";
 import * as AcpError from "effect-acp/errors";
-import type * as AcpSchema from "effect-acp/schema";
+import * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+/** Stock or patched Hermes delegate_task wire fixtures; no model or Hermes install needed. */
+const decodeHermesFixture = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeTestUpdates = Schema.decodeUnknownEffect(
+  Schema.Struct({ updates: Schema.Array(AcpSchema.SessionNotification) }),
+);
+let pendingHermesDelegation: string | undefined;
+const hermesDelegation = process.env.T3_ACP_HERMES_DELEGATION;
+const hermesDelegationDelayMs = Math.max(
+  0,
+  Number(process.env.T3_ACP_HERMES_DELEGATION_DELAY_MS) || 0,
+);
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 /** `T3_ACP_EMIT_USAGE_UPDATE=used/size` sends an ACP `usage_update` per prompt. */
 const usageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE;
@@ -628,6 +640,9 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      if (process.env.T3_ACP_HERMES_DELEGATION_EXIT_ON_CANCEL === "1") {
+        return yield* Effect.sync(() => process.exit(19));
+      }
       if (completeFirstPromptOnCancel) {
         yield* Deferred.succeed(nativeCancelRequested, undefined);
         yield* agent.client.sessionUpdate({
@@ -657,6 +672,121 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+
+      if (hermesDelegation === "stock" || hermesDelegation === "progress") {
+        const fixture = decodeHermesFixture(
+          NodeFS.readFileSync(
+            new URL("../src/provider/acp/fixtures/hermes-delegation.json", import.meta.url),
+            "utf8",
+          ),
+        ) as {
+          cases: Array<{
+            name: string;
+            args: unknown;
+            result: unknown;
+            start: Extract<AcpSchema.SessionNotification["update"], { sessionUpdate: "tool_call" }>;
+            complete: Extract<
+              AcpSchema.SessionNotification["update"],
+              { sessionUpdate: "tool_call_update" }
+            >;
+          }>;
+        };
+        const scenario = fixture.cases.find(
+          (item) => item.name === (process.env.T3_ACP_HERMES_DELEGATION_CASE ?? "batch"),
+        )!;
+        const toolCallId = `hermes-delegate-${promptCount}`;
+        const send = (update: AcpSchema.SessionNotification["update"]) =>
+          agent.client.sessionUpdate({ sessionId: requestedSessionId, update });
+        // The next prompt delivers the old background result while a new turn is active.
+        if (pendingHermesDelegation && hermesDelegation === "progress") {
+          yield* send({
+            sessionUpdate: "tool_call_update",
+            toolCallId: pendingHermesDelegation,
+            status: "in_progress",
+            rawOutput: {
+              hermesDelegation: {
+                event: "subagent.complete",
+                task_index: 0,
+                status: "completed",
+                summary: "Background review completed.",
+                duration_seconds: 3,
+              },
+            },
+          });
+          pendingHermesDelegation = undefined;
+        }
+        yield* send({
+          ...scenario.start,
+          toolCallId,
+          ...(hermesDelegation === "progress" ? { rawInput: scenario.args } : {}),
+        });
+        if (hermesDelegationDelayMs > 0) yield* Effect.sleep(hermesDelegationDelayMs);
+        if (hermesDelegation === "progress") {
+          const args = scenario.args as {
+            goal?: string;
+            model?: string;
+            tasks?: Array<{ goal: string; model?: string }>;
+          };
+          const tasks = args.tasks ?? [{ goal: args.goal ?? "Delegated task", model: args.model }];
+          for (let index = 0; index < tasks.length; index += 1) {
+            yield* send({
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              status: "in_progress",
+              rawOutput: {
+                hermesDelegation: {
+                  event: "subagent.start",
+                  task_index: index,
+                  goal: tasks[index]?.goal,
+                  model: tasks[index]?.model,
+                },
+              },
+            });
+          }
+          for (const text of [
+            "Inspecting the delegation boundary.",
+            "Routing inspected; checking parallel child isolation.",
+          ]) {
+            yield* send({
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              status: "in_progress",
+              rawOutput: { hermesDelegation: { event: "subagent.text", task_index: 0, text } },
+            });
+            if (hermesDelegationDelayMs > 0) yield* Effect.sleep(hermesDelegationDelayMs);
+          }
+        }
+        if (process.env.T3_ACP_HERMES_DELEGATION_HANG === "1") return yield* Effect.never;
+        yield* send({
+          ...scenario.complete,
+          toolCallId,
+          ...(hermesDelegation === "progress" ? { rawOutput: scenario.result } : {}),
+        });
+        if (scenario.name === "dispatched") {
+          pendingHermesDelegation = toolCallId;
+          if (
+            promptCount === 1 &&
+            process.env.T3_ACP_HERMES_DELEGATION_HANG_AFTER_DISPATCH === "1"
+          ) {
+            return yield* Effect.never;
+          }
+        }
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text:
+              scenario.name === "dispatched"
+                ? "Delegated background work; the next prompt delivers its result."
+                : scenario.name === "batch"
+                  ? "Delegation finished. Routing was inspected; the test child reported a process failure."
+                  : scenario.name === "failure"
+                    ? "Delegation unavailable."
+                    : "Parser reviewed.",
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
 
       if (completeFirstPromptOnSecond && promptCount === 1) {
         yield* agent.client.sessionUpdate({
@@ -1550,6 +1680,17 @@ const program = Effect.gen(function* () {
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
+    if (method === "_test/session-updates") {
+      return decodeTestUpdates(params).pipe(
+        Effect.orDie,
+        Effect.flatMap(({ updates }) =>
+          Effect.forEach(updates, (update) => agent.client.sessionUpdate(update), {
+            discard: true,
+          }),
+        ),
+        Effect.as({}),
+      );
+    }
     if (method === "_test/environment") {
       return Effect.succeed({
         inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",
