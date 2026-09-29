@@ -1066,6 +1066,18 @@ jobs:
     secrets:
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
 
+  # Releases published with GITHUB_TOKEN never fire mobile-ipa.yml's release
+  # trigger, so the fork calls it directly.
+  mobile_ipa:
+    name: Build sideloadable IPA
+    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && github.repository != 'pingdotgg/t3code' && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/mobile-ipa.yml
+    with:
+      tag: ${{ needs.preflight.outputs.tag }}
+
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
@@ -1458,6 +1470,7 @@ jobs:
         publish_cli,
         release,
         publish_aur,
+        mobile_ipa,
         deploy_web,
         finalize,
         announce_discord,
