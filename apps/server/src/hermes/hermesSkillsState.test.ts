@@ -129,7 +129,17 @@ describe("Hermes 0.21 fixtures", () => {
       fixtures,
       "autonomous-ai-agents/provider-model-availability-triage",
     );
-    expect(detail.markdown).toContain("# Provider and Model Availability Triage");
+    expect(detail.markdown.startsWith("# Provider and Model Availability Triage")).toBe(true);
+    expect(detail.markdown).not.toContain("related_skills:");
+    expect(detail.metadata).toEqual({
+      author: "Hermes Agent",
+      license: "MIT",
+      platforms: [],
+      relatedSkills: ["coding-agent-clis", "t3-code-operations", "hermes-agent"],
+    });
+    const bundled = await readHermesSkillDetail(fixtures, "research/grounded-citations");
+    expect(bundled.markdown.startsWith("# Grounded Citations")).toBe(true);
+    expect(bundled.metadata.platforms).toEqual(["linux", "macos", "windows"]);
     expect(detail.files).toEqual(["SKILL.md", "references/opencode-go-t3code.md"]);
     expect(detail.truncated).toBe(false);
   });
@@ -243,7 +253,8 @@ it("bounds detail bytes and excludes hidden or linked files", async () => {
     );
     await NodeFSP.writeFile(NodePath.join(root, "example/.env"), "private");
     const detail = await readHermesSkillDetail(root, "example");
-    expect(Buffer.byteLength(detail.markdown)).toBe(SKILL_LIMITS.detailBytes);
+    expect(Buffer.byteLength(detail.markdown)).toBeLessThanOrEqual(SKILL_LIMITS.detailBytes);
+    expect(detail.markdown.startsWith("# Example")).toBe(true);
     expect(detail.truncated).toBe(true);
     expect(detail.files).toEqual(["SKILL.md"]);
     for (const path of [

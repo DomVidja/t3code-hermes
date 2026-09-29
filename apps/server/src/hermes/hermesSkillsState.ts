@@ -29,12 +29,16 @@ export function resolveHermesSkillsPath(environment: NodeJS.ProcessEnv = process
 const Frontmatter = Schema.Struct({
   name: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
+  author: Schema.optional(Schema.String),
+  license: Schema.optional(Schema.String),
+  platforms: Schema.optional(Schema.Array(Schema.String)),
   version: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
   metadata: Schema.optional(
     Schema.Struct({
       hermes: Schema.optional(
         Schema.Struct({
           tags: Schema.optional(Schema.Array(Schema.String)),
+          related_skills: Schema.optional(Schema.Array(Schema.String)),
           category: Schema.optional(Schema.String),
         }),
       ),
@@ -62,12 +66,17 @@ const decodeUsage = Schema.decodeUnknownSync(
   ),
 );
 
-export function parseSkillFrontmatter(markdown: string, path: string) {
+function parseSkillDocument(markdown: string) {
   const match = /^﻿?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown);
   if (!match) throw new Error("Missing skill frontmatter");
   const document = parseDocument(match[1] ?? "");
   if (document.errors.length > 0) throw new Error("Invalid skill frontmatter");
   const data = decodeFrontmatter(document.toJS({ maxAliasCount: 20 }));
+  return { data, body: markdown.slice(match[0].length).replace(/^(?:[ \t]*\r?\n)+/, "") };
+}
+
+export function parseSkillFrontmatter(markdown: string, path: string) {
+  const { data } = parseSkillDocument(markdown);
   return {
     path,
     name: (data.name?.trim() || NodePath.posix.basename(path)).slice(0, 160),
@@ -370,9 +379,18 @@ export async function readHermesSkillDetail(
   }
   const content = await readBounded(NodePath.join(current, "SKILL.md"), SKILL_LIMITS.detailBytes);
   const listing = await walk(current, SKILL_LIMITS.files, false);
+  const { data, body } = parseSkillDocument(content.text);
   return {
     path: relative,
-    markdown: content.text,
+    markdown: body,
+    metadata: {
+      author: data.author?.slice(0, 160) ?? null,
+      license: data.license?.slice(0, 160) ?? null,
+      platforms: (data.platforms ?? []).slice(0, 16).map((value) => value.slice(0, 64)),
+      relatedSkills: (data.metadata?.hermes?.related_skills ?? [])
+        .slice(0, 16)
+        .map((value) => value.slice(0, 160)),
+    },
     files: listing.files,
     truncated: content.truncated || listing.truncated,
   };

@@ -59,6 +59,7 @@ describe("Hermes skills wire contract", () => {
       decodeDetail({
         path: "research/example",
         markdown: "# Example",
+        metadata: { author: null, license: null, platforms: [], relatedSkills: [] },
         files: ["SKILL.md"],
         truncated: false,
       }),

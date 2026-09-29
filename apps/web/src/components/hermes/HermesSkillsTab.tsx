@@ -1,5 +1,6 @@
 import {
   formatHermesSkillUpdated,
+  formatHermesSkillMetadata,
   HERMES_SKILL_ORIGIN_FILTERS,
   HERMES_SKILL_ORIGIN_LABELS,
 } from "@t3tools/client-runtime/state/hermes-skills";
@@ -64,6 +65,7 @@ function SkillRow({
 export function HermesSkillsTab() {
   const skills = useHermesSkills();
   const selected = skills.selectedSkill;
+  const documentMetadata = formatHermesSkillMetadata(skills.detail?.metadata);
 
   if (selected !== null) {
     return (
@@ -83,6 +85,12 @@ export function HermesSkillsTab() {
         </div>
         <h2 className="break-words text-lg font-semibold">{selected.name}</h2>
         <SkillMetadata skill={selected} />
+        {selected.tags.length > 0 ? (
+          <p className="text-xs text-muted-foreground">{selected.tags.join(" · ")}</p>
+        ) : null}
+        {documentMetadata ? (
+          <p className="break-words text-xs text-muted-foreground">{documentMetadata}</p>
+        ) : null}
         <p className="break-all text-xs text-muted-foreground">{selected.path}</p>
         {skills.isDetailPending ? (
           <p role="status" className="text-sm text-muted-foreground">

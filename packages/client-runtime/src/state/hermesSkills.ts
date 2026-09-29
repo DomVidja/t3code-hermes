@@ -1,4 +1,9 @@
-import type { EnvironmentId, HermesSkill, HermesSkillsSnapshot } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  HermesSkill,
+  HermesSkillDetail,
+  HermesSkillsSnapshot,
+} from "@t3tools/contracts";
 import { DateTime } from "effect";
 
 export type HermesSkillOriginFilter = "all" | HermesSkill["origin"];
@@ -114,4 +119,18 @@ export function resolveHermesSkillSelection(
 /** Store changes can preserve all skill metadata; readAt also separates server restarts. */
 export function hermesSkillDetailInput(path: string, snapshot: HermesSkillsSnapshot) {
   return { path, revision: `${snapshot.readAt}:${snapshot.revision}` };
+}
+
+/** Optional document attributes stay metadata rather than becoming Markdown prose. */
+export function formatHermesSkillMetadata(
+  metadata: HermesSkillDetail["metadata"] | undefined,
+): string | null {
+  if (metadata === undefined) return null;
+  const parts = [
+    metadata.author ? `Author: ${metadata.author}` : null,
+    metadata.license ? `License: ${metadata.license}` : null,
+    metadata.platforms.length ? `Platforms: ${metadata.platforms.join(", ")}` : null,
+    metadata.relatedSkills.length ? `Related skills: ${metadata.relatedSkills.join(", ")}` : null,
+  ].filter((part) => part !== null);
+  return parts.length ? parts.join(" · ") : null;
 }

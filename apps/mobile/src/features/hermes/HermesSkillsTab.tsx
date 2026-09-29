@@ -1,6 +1,7 @@
 import { LegendList } from "@legendapp/list/react-native";
 import {
   formatHermesSkillUpdated,
+  formatHermesSkillMetadata,
   HERMES_SKILL_ORIGIN_FILTERS,
   HERMES_SKILL_ORIGIN_LABELS,
 } from "@t3tools/client-runtime/state/hermes-skills";
@@ -79,6 +80,7 @@ function TextAction({ label, onPress }: { readonly label: string; readonly onPre
 
 export function HermesSkillsTab({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const skills = useHermesSkills(environmentId);
+  const documentMetadata = formatHermesSkillMetadata(skills.detail?.metadata);
   const insets = useSafeAreaInsets();
   const [showFiles, setShowFiles] = useState(false);
   const rows = useMemo(() => {
@@ -109,6 +111,14 @@ export function HermesSkillsTab({ environmentId }: { readonly environmentId: Env
             {skills.selectedSkill.name}
           </Text>
           <SkillMetadata skill={skills.selectedSkill} />
+          {skills.selectedSkill.tags.length > 0 ? (
+            <Text className="text-xs text-foreground-muted">
+              {skills.selectedSkill.tags.join(" · ")}
+            </Text>
+          ) : null}
+          {documentMetadata ? (
+            <Text className="text-xs text-foreground-muted">{documentMetadata}</Text>
+          ) : null}
           <Text selectable className="text-xs text-foreground-muted">
             {skills.selectedSkill.path}
           </Text>

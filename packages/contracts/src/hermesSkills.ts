@@ -34,7 +34,14 @@ export type HermesSkillsSnapshot = typeof HermesSkillsSnapshot.Type;
 
 export const HermesSkillDetail = Schema.Struct({
   path: TrimmedNonEmptyString,
+  /** Markdown body, with the YAML frontmatter removed. */
   markdown: Schema.String,
+  metadata: Schema.Struct({
+    author: Schema.NullOr(Schema.String),
+    license: Schema.NullOr(Schema.String),
+    platforms: ForwardCompatibleArray(Schema.String),
+    relatedSkills: ForwardCompatibleArray(Schema.String),
+  }),
   /** Relative file names only; no file contents except SKILL.md cross the wire. */
   files: ForwardCompatibleArray(Schema.String),
   truncated: Schema.Boolean,

@@ -4,6 +4,7 @@ import { EnvironmentId, type HermesSkill, type HermesSkillsSnapshot } from "@t3t
 import {
   describeHermesSkillsEmptyState,
   formatHermesSkillUpdated,
+  formatHermesSkillMetadata,
   hermesSkillDetailInput,
   resolveHermesSkillSelection,
   selectHermesSkills,
@@ -161,4 +162,21 @@ describe("Hermes Skills library", () => {
     expect(formatHermesSkillUpdated("2026-09-29T09:00:00Z", now)).toBe("Updated by Hermes 3h ago");
     expect(formatHermesSkillUpdated("2026-09-27T12:00:00Z", now)).toBe("Updated by Hermes 2d ago");
   });
+});
+
+it("formats document metadata without empty labels or YAML syntax", () => {
+  expect(formatHermesSkillMetadata(undefined)).toBeNull();
+  expect(
+    formatHermesSkillMetadata({ author: null, license: null, platforms: [], relatedSkills: [] }),
+  ).toBeNull();
+  expect(
+    formatHermesSkillMetadata({
+      author: "Hermes Agent",
+      license: "MIT",
+      platforms: ["linux", "macos"],
+      relatedSkills: ["research"],
+    }),
+  ).toBe(
+    "Author: Hermes Agent · License: MIT · Platforms: linux, macos · Related skills: research",
+  );
 });
