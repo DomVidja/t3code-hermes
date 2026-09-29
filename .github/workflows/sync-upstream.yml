@@ -156,53 +156,16 @@ jobs:
         # workflows, so CI is dispatched by hand, as is the release below.
         run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
 
-      # Fork nightlies follow upstream's: release once main contains an
-      # upstream nightly commit that no fork nightly has shipped yet. Runs on
-      # `up-to-date` too, so a sync re-dispatched after a conflict-resolution
-      # PR merges still releases. release.yml's own test jobs gate publishing.
-      - id: release
-        name: Dispatch fork nightly
+      # Fork nightlies follow upstream's. release.yml decides, under its
+      # nightly concurrency lock, whether main now contains an upstream nightly
+      # no fork nightly has shipped; otherwise the run skips after one short
+      # job. Runs on `up-to-date` too, so a sync re-dispatched after a
+      # conflict-resolution PR merges still releases.
+      - name: Dispatch fork nightly
         if: steps.merge.outputs.status == 'merged' || steps.merge.outputs.status == 'up-to-date'
-        shell: bash
-        run: |
-          set -uo pipefail
-
-          nightly_tag() {
-            gh release list --repo "$1" --limit 50 --json tagName,publishedAt,isDraft \
-              --jq '[.[] | select((.isDraft | not) and (.tagName | test("-nightly\\.")))] | sort_by(.publishedAt) | last | .tagName // empty'
-          }
-
-          upstream_tag="$(nightly_tag pingdotgg/t3code)"
-          if [[ -z "$upstream_tag" ]]; then
-            echo "No upstream nightly found; nothing to follow." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          upstream_nightly="$(gh api "repos/pingdotgg/t3code/commits/$upstream_tag" --jq .sha)"
-
-          if ! git merge-base --is-ancestor "$upstream_nightly" HEAD; then
-            echo "Upstream $upstream_tag is not in main yet; no release." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          fork_tag="$(nightly_tag "$GITHUB_REPOSITORY")"
-          if [[ -n "$fork_tag" ]]; then
-            fork_nightly="$(gh api "repos/$GITHUB_REPOSITORY/commits/$fork_tag" --jq .sha)"
-            if git merge-base --is-ancestor "$upstream_nightly" "$fork_nightly"; then
-              echo "Upstream $upstream_tag already shipped in $fork_tag." | tee -a "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-          fi
-
-          pending="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --limit 20 \
-            --json status --jq '[.[] | select(.status != "completed")] | length')"
-          if [[ "$pending" != "0" ]]; then
-            echo "A release run is already in flight; the next sync will pick up $upstream_tag if it still needs shipping." \
-              | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f channel=nightly
-          echo "Dispatched a fork nightly following upstream $upstream_tag." | tee -a "$GITHUB_STEP_SUMMARY"
+        run: >-
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main
+          -f channel=nightly -f follow_upstream=true
 
       # Advisory, and deliberately after the push: the merge is already correct
       # by the time this runs, so a heuristic must never be what keeps it from

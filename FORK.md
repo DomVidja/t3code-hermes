@@ -242,10 +242,11 @@ break every clone — and it runs every three hours (at :50, matching upstream's
 dispatches `ci.yml` by hand, because pushes made with the default `GITHUB_TOKEN` do not trigger
 other workflows.
 
-The same job drives fork releases: once `main` contains the commit of upstream's latest nightly and
-no fork nightly has shipped it yet, it dispatches `release.yml` on the nightly channel. `release.yml`
-has no schedule of its own, so fork nightlies track upstream's one-for-one (a fork nightly may bundle
-several upstream nightlies if a conflict held the sync back).
+The same job drives fork releases: every sync dispatches `release.yml` with `follow_upstream`, and
+the release's first job — running under the nightly concurrency lock, so queued runs cannot double
+publish — continues only when `main` contains the commit of upstream's latest nightly and no fork
+nightly has shipped it yet. `release.yml` has no schedule of its own, so fork nightlies track
+upstream's (a fork nightly may bundle several upstream nightlies if a conflict held the sync back).
 
 Two kinds of issue come out of it:
 

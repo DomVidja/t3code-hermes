@@ -81,6 +81,70 @@ async function shouldReleaseNightly({ github, context, core, now = Date.now() })
   return true;
 }
 
+const UPSTREAM_REPO = { owner: "pingdotgg", repo: "t3code" };
+
+// Status of `base...head` in this repository, or undefined when GitHub cannot
+// resolve `base` here (an upstream commit the fork has not merged yet).
+async function compareStatus({ github, context, base, head }) {
+  try {
+    const { data } = await github.rest.repos.compareCommitsWithBasehead({
+      ...context.repo,
+      basehead: `${base}...${head}`,
+      per_page: 1,
+    });
+    return data.status;
+  } catch (error) {
+    if (error.status === 404) return undefined;
+    throw error;
+  }
+}
+
+const contains = (status) => status === "ahead" || status === "identical";
+
+// Fork-only. Fork nightlies follow upstream's: release when the candidate
+// commit contains upstream's latest nightly and no fork nightly has shipped it.
+// Runs after the workflow acquires the nightly concurrency lock, so a run that
+// queued behind one that already shipped this upstream nightly skips.
+async function shouldFollowUpstreamNightly({ github, context, core }) {
+  const { data: upstreamReleases } = await github.rest.repos.listReleases({
+    ...UPSTREAM_REPO,
+    per_page: 100,
+  });
+  const upstreamNightly = upstreamReleases
+    .filter((release) => !release.draft && release.published_at && isNightlyTag(release.tag_name))
+    .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at))[0];
+  if (!upstreamNightly) {
+    core.info("No published upstream nightly found. Skipping.");
+    return false;
+  }
+  const { data: upstreamCommit } = await github.rest.repos.getCommit({
+    ...UPSTREAM_REPO,
+    ref: upstreamNightly.tag_name,
+  });
+  const upstreamSha = upstreamCommit.sha;
+
+  if (!contains(await compareStatus({ github, context, base: upstreamSha, head: context.sha }))) {
+    core.info(`Upstream ${upstreamNightly.tag_name} (${upstreamSha}) is not merged yet. Skipping.`);
+    return false;
+  }
+
+  const lastNightly = await findLatestNightly({ github, context });
+  if (
+    lastNightly &&
+    contains(
+      await compareStatus({ github, context, base: upstreamSha, head: lastNightly.tag_name }),
+    )
+  ) {
+    core.info(
+      `Upstream ${upstreamNightly.tag_name} already shipped in ${lastNightly.tag_name}. Skipping.`,
+    );
+    return false;
+  }
+
+  core.info(`Following upstream ${upstreamNightly.tag_name} (${upstreamSha}).`);
+  return true;
+}
+
 // Stable releases build the commit the latest nightly shipped, so the stable
 // build is one nightly users already ran. Returns the nightly tag, its commit,
 // and the stable version that nightly was a preview of.
@@ -106,5 +170,6 @@ module.exports = {
   assertCommitOnDefaultBranch,
   assertReleaseSource,
   shouldReleaseNightly,
+  shouldFollowUpstreamNightly,
   resolveLatestNightlyCommit,
 };
