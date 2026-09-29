@@ -9,17 +9,36 @@ name: Mobile IPA
 #
 # Uses a standard GitHub-hosted Apple Silicon runner so builds do not wait
 # for a laptop to come online. Standard hosted runners are free for public repos.
+#
+# release.yml calls this after publishing each nightly and stable release,
+# because releases it publishes with GITHUB_TOKEN never fire the `release`
+# trigger below. Tagged builds attach the IPA to the release and refresh an
+# AltStore-format source on the `ipa-source` branch, so Feather can offer each
+# new build as an update.
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach to (blank builds the selected ref as a workflow artifact)"
+        required: false
+        type: string
   release:
     types: [published, prereleased]
 
 permissions:
   contents: write
 
+env:
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+
 concurrency:
-  group: mobile-ipa-${{ github.event.release.tag_name || github.ref }}
+  group: mobile-ipa-${{ inputs.tag || github.event.release.tag_name || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -27,6 +46,10 @@ jobs:
     name: Build unsigned IPA
     runs-on: macos-26
     timeout-minutes: 90
+    outputs:
+      tag: ${{ env.TAG }}
+      bundle_id: ${{ steps.package.outputs.bundle_id }}
+      app_name: ${{ steps.package.outputs.app_name }}
     env:
       APP_VARIANT: production
       EXPO_NO_GIT_STATUS: "1"
@@ -36,7 +59,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
+          ref: ${{ env.TAG || github.ref }}
           sparse-checkout: |
             /*
             !/.repos/
@@ -65,9 +88,8 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          tag="${{ github.event.release.tag_name }}"
-          if [[ -n "$tag" ]]; then
-            version="${tag#v}"
+          if [[ -n "$TAG" ]]; then
+            version="${TAG#v}"
           else
             version="$(pnpm exec expo config --type public --json | jq -r '.version // empty')"
           fi
@@ -140,6 +162,9 @@ jobs:
             exit 1
           fi
           echo "Packaging $app"
+          plist="$app/Info.plist"
+          echo "bundle_id=$(plutil -extract CFBundleIdentifier raw "$plist")" >> "$GITHUB_OUTPUT"
+          echo "app_name=$(plutil -extract CFBundleDisplayName raw "$plist" 2>/dev/null || plutil -extract CFBundleName raw "$plist")" >> "$GITHUB_OUTPUT"
 
           staging="$RUNNER_TEMP/ipa-stage"
           rm -rf "$staging"
@@ -158,11 +183,11 @@ jobs:
             echo "## Unsigned IPA"
             echo
             echo "- \`$ipa_name\` ($(du -h "$ipa_path" | cut -f1))"
-            echo "- Sideload with AltStore or Sideloadly; both re-sign on install."
+            echo "- Sideload with Feather, AltStore, or Sideloadly; all re-sign on install."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload IPA artifact
-        if: github.event_name == 'workflow_dispatch'
+        if: env.TAG == ''
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.ipa_name }}
@@ -171,5 +196,93 @@ jobs:
           retention-days: 14
 
       - name: Attach IPA to release
-        if: github.event_name == 'release'
-        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.package.outputs.ipa_path }}" --clobber
+        if: env.TAG != ''
+        run: gh release upload "$TAG" "${{ steps.package.outputs.ipa_path }}" --clobber
+
+  source:
+    name: Publish IPA source
+    needs: ipa
+    if: needs.ipa.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Every run rebuilds the whole source from the release list, so a pending
+    # run that GitHub drops in favor of a newer one loses nothing.
+    concurrency:
+      group: mobile-ipa-source
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUNDLE_ID: ${{ needs.ipa.outputs.bundle_id }}
+      APP_NAME: ${{ needs.ipa.outputs.app_name }}
+    steps:
+      - name: Build source.json from releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="https://raw.githubusercontent.com/$GITHUB_REPOSITORY"
+          source_url="$raw/ipa-source/source.json"
+          # Feather treats versions[0] as current and offers an update whenever
+          # its version string differs from the one recorded at install time.
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq \
+              --arg name "$APP_NAME" \
+              --arg bundle "$BUNDLE_ID" \
+              --arg developer "$GITHUB_REPOSITORY_OWNER" \
+              --arg repo "$GITHUB_REPOSITORY" \
+              --arg sourceURL "$source_url" \
+              --arg icon "$raw/HEAD/assets/hermes/ios-1024.png" \
+              '[ .[]
+                 | select((.draft | not) and (.tag_name | test("-preview\\.") | not))
+                 | . as $release
+                 | .assets[]
+                 | select(.name | test("^T3Code-.+\\.ipa$"))
+                 | {
+                     version: ($release.tag_name | ltrimstr("v")),
+                     date: $release.published_at,
+                     localizedDescription: $release.name,
+                     downloadURL: .browser_download_url,
+                     size: .size
+                   } ]
+               | sort_by(.date) | reverse | .[:10]
+               | if length == 0 then error("No releases have an IPA attached") else . end
+               | . as $versions
+               | {
+                   name: $name,
+                   identifier: "\($bundle).source",
+                   sourceURL: $sourceURL,
+                   iconURL: $icon,
+                   apps: [{
+                     name: $name,
+                     bundleIdentifier: $bundle,
+                     developerName: $developer,
+                     localizedDescription: "Nightly and stable builds from \($repo) releases.",
+                     iconURL: $icon,
+                     versions: $versions,
+                     version: $versions[0].version,
+                     versionDate: $versions[0].date,
+                     downloadURL: $versions[0].downloadURL,
+                     size: $versions[0].size
+                   }],
+                   news: []
+                 }' > source.json
+          jq -r '.apps[0].versions[] | "\(.version)  \(.downloadURL)"' source.json
+          {
+            echo "## IPA source"
+            echo
+            echo "- Add to Feather: \`$source_url\`"
+            echo "- Current: \`$(jq -r '.apps[0].version' source.json)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push to the ipa-source branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A single force-pushed commit keeps the branch from growing history.
+          git init -q -b ipa-source site
+          mv source.json site/
+          cd site
+          git add source.json
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "Update IPA source for ${{ needs.ipa.outputs.tag }}"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:ipa-source
