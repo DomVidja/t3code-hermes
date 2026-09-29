@@ -9,8 +9,10 @@ import {
   HERMES_BUILT_IN_SLASH_COMMANDS,
   resolveHermesAcpBaseModelId,
   isHermesDerivedTitle,
+  normalizeHermesTerminalResult,
   resolveHermesSessionModeId,
 } from "./HermesAcpSupport.ts";
+import { projectActivityPayload } from "../../orchestration/ActivityPayloadProjection.ts";
 
 describe("resolveHermesAcpBaseModelId", () => {
   it("falls back to the placeholder model for empty ids", () => {
@@ -327,5 +329,95 @@ describe("hermesSessionInfoIndicatesCompaction", () => {
     expect(hermesSessionInfoIndicatesCompaction(undefined)).toBe(false);
     expect(hermesSessionInfoIndicatesCompaction({ update: { title: "x" } })).toBe(false);
     expect(hermesSessionInfoIndicatesCompaction({ _meta: { hermes: {} } })).toBe(false);
+  });
+});
+
+describe("normalizeHermesTerminalResult", () => {
+  const completedTerminal = (text: string, status: "completed" | "failed" = "completed") => ({
+    toolCallId: "tc-1",
+    kind: "execute",
+    status,
+    command: "git status",
+    detail: "git status",
+    data: {
+      toolCallId: "tc-1",
+      kind: "execute",
+      command: "git status",
+      content: [{ type: "content" as const, content: { type: "text" as const, text } }],
+    },
+  });
+
+  it("moves multi-line terminal output out of Hermes's markdown summary", () => {
+    const normalized = normalizeHermesTerminalResult(
+      completedTerminal(
+        "terminal result\n- **output:** On branch main\n- clean tree\n\nnothing to commit\n- **exit_code:** 0",
+      ),
+    );
+    expect(normalized.data.content).toBeUndefined();
+    expect(normalized.data.rawOutput).toEqual({
+      stdout: "On branch main\n- clean tree\n\nnothing to commit",
+      exitCode: 0,
+    });
+    expect(normalized.command).toBe("git status");
+  });
+
+  it("keeps field-shaped lines that belong to the command's own output", () => {
+    const normalized = normalizeHermesTerminalResult(
+      completedTerminal(
+        [
+          "terminal result",
+          "- **output:** # Report",
+          "- **output:** quoted",
+          "- **exit_code:** 1",
+          "tail line",
+          "- **exit_code:** 0",
+          "- **cwd:** /repo",
+        ].join("\n"),
+      ),
+    );
+    expect(normalized.data.rawOutput).toEqual({
+      stdout: "# Report\n- **output:** quoted\n- **exit_code:** 1\ntail line",
+      exitCode: 0,
+    });
+  });
+
+  it("gives clients the output's first line instead of the summary heading", () => {
+    const toolCall = normalizeHermesTerminalResult(
+      completedTerminal("terminal result\n- **output:** 391\n- **exit_code:** 0"),
+    );
+    const projected = projectActivityPayload({
+      id: "activity-1" as never,
+      createdAt: "2026-09-29T00:00:00.000Z",
+      tone: "tool",
+      kind: "tool.completed",
+      summary: "Ran command",
+      turnId: null,
+      payload: { itemType: "command_execution", status: "completed", data: toolCall.data },
+    });
+    expect((projected.payload as { data: { rawOutput: unknown } }).data.rawOutput).toEqual({
+      content: "391",
+    });
+  });
+
+  it("keeps the exit code when a failing command printed nothing", () => {
+    const normalized = normalizeHermesTerminalResult(
+      completedTerminal("✅ terminal completed\n- **exit_code:** 1", "failed"),
+    );
+    expect(normalized.data.content).toBeUndefined();
+    expect(normalized.data.rawOutput).toEqual({ exitCode: 1 });
+  });
+
+  it("leaves failure text, in-flight calls, and other tools untouched", () => {
+    const failure = completedTerminal("terminal failed: command timed out", "failed");
+    expect(normalizeHermesTerminalResult(failure)).toBe(failure);
+
+    const running = {
+      ...completedTerminal("terminal result\n- **output:** x"),
+      status: "inProgress" as const,
+    };
+    expect(normalizeHermesTerminalResult(running)).toBe(running);
+
+    const edit = { ...completedTerminal("terminal result\n- **output:** x"), kind: "edit" };
+    expect(normalizeHermesTerminalResult(edit)).toBe(edit);
   });
 });
