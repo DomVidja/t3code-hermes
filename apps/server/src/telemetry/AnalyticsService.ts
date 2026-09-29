@@ -30,8 +30,9 @@ interface BufferedAnalyticsEvent {
 }
 
 const TelemetryEnvConfig = Config.all({
+  // The fork's own PostHog project, not upstream's.
   posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(
-    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
+    Config.withDefault("phc_t8BNyfphzUcWjSMaMWsq2bVbAYqjGMNZAPxzo8jF6fKw"),
   ),
   posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
     Config.withDefault("https://us.i.posthog.com"),

@@ -23,6 +23,8 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | Hermes Memory panel (Hindsight)                     | `apps/server/src/integrations/hindsight/`, `packages/contracts/src/hindsight.ts`, `apps/web/src/{state/hindsight.ts,components/hermes/HermesMemoryTab.tsx}` |
 | Reasoning-effort selector (Hermes `config.yaml`)    | `apps/server/src/hermes/hermesReasoning*.ts`, `infra/hermes/`                                                                                               |
 | Central Hermes execution on shell-only SSH targets  | `infra/hermes/0002-acp-central-ssh-execution.patch`                                                                                                         |
+| `triage` files on the fork, not upstream            | `.github/triage/PLAYBOOK.md`, `apps/server/src/cli/triagePrompt.ts`                                                                                         |
+| Telemetry reports to the fork's PostHog project     | `apps/server/src/telemetry/AnalyticsService.ts`                                                                                                             |
 
 The auto-bootstrap and model-picker rows are not Hermes-specific but matter on Hermes-only hosts.
 The ACP session-update and slash-command-dedupe rows are not Hermes-specific at all — they are
@@ -79,7 +81,7 @@ node apps/server/src/bin.ts pair --ttl 2h
 ## Enable the Hermes provider
 
 **The driver ships disabled** — it will not probe for a Hermes binary until you turn it on. Create
-`<T3CODE_HOME>/userdata/settings.json` (`T3CODE_HOME` defaults to `~/.t3`):
+`<T3HERMES_HOME>/userdata/settings.json` (`T3HERMES_HOME` defaults to `~/.t3-hermes`):
 
 ```json
 {
@@ -93,7 +95,7 @@ node apps/server/src/bin.ts pair --ttl 2h
 ```
 
 `binaryPath` may be omitted if `hermes` is on the server process's `PATH`. Restart the server, then
-check `<T3CODE_HOME>/caches/hermes.json` — a working setup reports `"status": "ready"`, the Hermes
+check `<T3HERMES_HOME>/caches/hermes.json` — a working setup reports `"status": "ready"`, the Hermes
 version, and a populated `models` array.
 
 ## Enable the Memory tab (optional)
@@ -130,9 +132,12 @@ completes, the snapshot shows a single placeholder slug; that is expected.
 For an always-on box, run it under systemd as a user service. Two things differ from a normal
 T3 Code install and will silently bite you otherwise:
 
-1. **Do not use `t3 service install`.** It downloads the _published_ `t3` package into a managed
-   runtime directory (`~/.t3/runtime/versions/<v>/node_modules/t3/dist/bin.mjs`) and runs that —
-   i.e. upstream code, without the Hermes driver. Write your own unit pointing at this checkout.
+1. **Do not use `t3-hermes service install` from a source checkout.** It never runs the checkout:
+   it downloads the fork's CLI release archive for the running CLI's version into
+   `~/.t3-hermes/runtime/versions/<v>/` and runs that. The fork only publishes nightlies, so a
+   checkout's plain `apps/server/package.json` version has no release to download, and your local
+   changes would not be in it anyway. Write your own unit pointing at the checkout. For a packaged
+   install, `npx t3-hermes@nightly service install` installs the matching fork nightly.
 2. **Use `start --no-browser`, not `serve`.** `serve` forces `startupPresentation=headless`, which
    hard-disables auto-bootstrap of a default project and thread, so you land on a project picker
    with nothing in it. `--no-browser` keeps `start` headless-safe.
@@ -306,10 +311,16 @@ upstream-only infrastructure. This fork therefore diverges in `.github/workflows
   nightly the fork has not shipped (see "Tracking upstream") and produces the desktop artifacts — macOS dmg/zip, Linux AppImage, Windows nsis — plus the
   updater manifests, attached to a GitHub prerelease. Everything that needs upstream credentials
   degrades instead of failing: the T3 Connect config resolves to empty values (so builds ship with
-  T3 Connect disabled), the npm `t3` publish is skipped, and the Vercel deploy, the version-bump
-  commit, and the Discord announcement skip when their secrets are absent. macOS and Windows code
-  signing already degrade to unsigned. The desktop updater feed is derived from `GITHUB_REPOSITORY`,
-  so fork builds self-update from fork releases.
+  T3 Connect disabled), and the Vercel deploy, the version-bump commit, and the Discord
+  announcement skip when their secrets are absent. Windows code signing degrades to unsigned;
+  macOS builds are signed with the stable self-signed identity in `MACOS_SELF_SIGNED_P12`, when
+  set, so in-app updates pass Squirrel.Mac's same-signer check (see
+  [docs/operations/release.md](./docs/operations/release.md)). The desktop updater feed is derived
+  from `GITHUB_REPOSITORY`, so fork builds self-update from fork releases.
+- **npm.** The CLI publishes as `t3-hermes` plus one `t3-hermes-<platform>` package per platform,
+  under the `nightly` dist-tag, through trusted publishing. A platform package that does not exist
+  on npm yet is left out and reported in an `npm-packages-skipped` issue, because its first publish
+  has to be done by hand. Use `npx t3-hermes@nightly`: nightlies never move `latest`.
 - **iOS IPA.** `mobile-ipa.yml` builds an unsigned, sideloadable `T3Code-<version>.ipa` of the
   production Expo variant on GitHub-hosted macOS. It has no schedule: run it via
   `workflow_dispatch` to get a workflow artifact, or let a published release trigger it to have the

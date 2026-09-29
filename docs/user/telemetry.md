@@ -8,4 +8,6 @@ Events do not include prompts, responses, file contents, authentication tokens, 
 raw provider events, or child-agent output. Child-agent token use is excluded from the totals.
 
 To disable collection, set `T3CODE_TELEMETRY_ENABLED=false` in the server's environment before
-starting it. This stops product events from being recorded or sent.
+starting it. This stops product events from being recorded or sent. To send them to your own
+PostHog project instead, set `T3CODE_POSTHOG_KEY` to its project key, and `T3CODE_POSTHOG_HOST`
+if it is not on PostHog's US cloud.
