@@ -30,7 +30,7 @@ export type RuntimeSubagentStatus =
   | "interrupted";
 
 export interface SubagentUsage {
-  readonly totalTokens: number;
+  readonly totalTokens?: number;
   readonly inputTokens?: number;
   readonly cachedInputTokens?: number;
   readonly outputTokens?: number;
@@ -152,18 +152,16 @@ function asUsage(value: unknown): SubagentUsage | undefined {
   }
   const record = value as Record<string, unknown>;
   const totalTokens = asCount(record.totalTokens);
-  if (totalTokens === undefined) {
-    return undefined;
-  }
   const usage: {
-    totalTokens: number;
+    totalTokens?: number;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;
     reasoningOutputTokens?: number;
     toolUses?: number;
     durationMs?: number;
-  } = { totalTokens };
+  } = {};
+  if (totalTokens !== undefined) usage.totalTokens = totalTokens;
   const inputTokens = asCount(record.inputTokens);
   if (inputTokens !== undefined) usage.inputTokens = inputTokens;
   const cachedInputTokens = asCount(record.cachedInputTokens);
@@ -176,7 +174,7 @@ function asUsage(value: unknown): SubagentUsage | undefined {
   if (toolUses !== undefined) usage.toolUses = toolUses;
   const durationMs = asCount(record.durationMs);
   if (durationMs !== undefined) usage.durationMs = durationMs;
-  return usage;
+  return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
 /**
@@ -202,14 +200,16 @@ function mergeUsageMax(
   const pick = (a: number | undefined, b: number | undefined): number | undefined =>
     a === undefined ? b : b === undefined ? a : Math.max(a, b);
   const merged: {
-    totalTokens: number;
+    totalTokens?: number;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;
     reasoningOutputTokens?: number;
     toolUses?: number;
     durationMs?: number;
-  } = { totalTokens: Math.max(current.totalTokens, incoming.totalTokens) };
+  } = {};
+  const totalTokens = pick(current.totalTokens, incoming.totalTokens);
+  if (totalTokens !== undefined) merged.totalTokens = totalTokens;
   const inputTokens = pick(current.inputTokens, incoming.inputTokens);
   if (inputTokens !== undefined) merged.inputTokens = inputTokens;
   const cachedInputTokens = pick(current.cachedInputTokens, incoming.cachedInputTokens);
@@ -702,7 +702,7 @@ export interface AgentPanelModel {
   readonly waitingCount: number;
   readonly idleCount: number;
   readonly settledCount: number;
-  readonly totalTokens: number;
+  readonly totalTokens: number | null;
   readonly hasAgents: boolean;
   readonly liveCount: number;
 }
@@ -714,7 +714,7 @@ const EMPTY_PANEL_MODEL: AgentPanelModel = {
   waitingCount: 0,
   idleCount: 0,
   settledCount: 0,
-  totalTokens: 0,
+  totalTokens: null,
   hasAgents: false,
   liveCount: 0,
 };
@@ -830,7 +830,7 @@ export function deriveAgentPanelModel({
   let waitingCount = 0;
   let idleCount = 0;
   let settledCount = 0;
-  let totalTokens = 0;
+  let totalTokens: number | null = null;
   for (const agent of source) {
     // A workflow coordinator with members is a container for those members, not
     // work of its own: it reports running for the whole run and aggregates their
@@ -841,7 +841,8 @@ export function deriveAgentPanelModel({
     else if (agent.status === "waiting") waitingCount += 1;
     else if (agent.status === "idle") idleCount += 1;
     else settledCount += 1;
-    totalTokens += agent.usage?.totalTokens ?? 0;
+    if (agent.usage?.totalTokens !== undefined)
+      totalTokens = (totalTokens ?? 0) + agent.usage.totalTokens;
   }
 
   return {
@@ -880,7 +881,8 @@ export function formatSubagentModelLabel(
   return effort ? `${compact} · ${effort}` : compact;
 }
 
-export function formatSubagentTokenCount(totalTokens: number): string {
+export function formatSubagentTokenCount(totalTokens: number | null | undefined): string {
+  if (totalTokens == null) return "—";
   if (totalTokens < 1000) {
     return `${totalTokens}`;
   }

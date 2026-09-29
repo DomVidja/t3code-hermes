@@ -249,6 +249,36 @@ describe("foldSubagentActivities", () => {
     expect(agent?.usage?.totalTokens).toBe(800);
   });
 
+  it("retains duration-only usage without inventing a token count", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "duration-only", taskType: "subagent" }),
+      activity("task.progress", { taskId: "duration-only", typedUsage: { durationMs: 2500 } }),
+      activity("task.completed", {
+        taskId: "duration-only",
+        status: "completed",
+        typedUsage: { toolUses: 2 },
+      }),
+    ]);
+    expect(agents[0]!.usage).toEqual({ durationMs: 2500, toolUses: 2 });
+    expect(deriveAgentPanelModel({ agents }).totalTokens).toBeNull();
+    expect(formatSubagentTokenCount(agents[0]!.usage?.totalTokens)).toBe("—");
+    expect(formatSubagentTokenCount(0)).toBe("0");
+  });
+
+  it("partial usage preserves a previously reported token total", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "partial-usage", taskType: "subagent" }),
+      activity("task.progress", { taskId: "partial-usage", typedUsage: { totalTokens: 123 } }),
+      activity("task.completed", {
+        taskId: "partial-usage",
+        status: "completed",
+        typedUsage: { durationMs: 2500 },
+      }),
+    ]);
+    expect(agents[0]!.usage).toEqual({ totalTokens: 123, durationMs: 2500 });
+    expect(deriveAgentPanelModel({ agents }).totalTokens).toBe(123);
+  });
+
   it("partial terminal usage preserves known breakdown fields", () => {
     const agents = fold([
       activity("task.started", { taskId: "task-6", taskType: "local_agent" }),

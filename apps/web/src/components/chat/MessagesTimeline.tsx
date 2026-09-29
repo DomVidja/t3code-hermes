@@ -4603,12 +4603,13 @@ function AgentSpawnMemberRow({
     ? (agent.progress ?? (agent.lastToolName ? `▸ ${agent.lastToolName}` : null))
     : (agent.error ?? agent.result ?? agent.progress ?? null);
   const durationMs =
-    agent.startedAt && agent.completedAt
+    agent.usage?.durationMs ??
+    (agent.startedAt && agent.completedAt
       ? Date.parse(agent.completedAt) - Date.parse(agent.startedAt)
-      : null;
+      : null);
   const meta = [
     durationMs !== null && durationMs >= 0 ? formatDuration(durationMs) : null,
-    agent.usage && agent.usage.totalTokens > 0
+    agent.usage?.totalTokens !== undefined && agent.usage.totalTokens > 0
       ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
       : null,
   ]

@@ -408,7 +408,6 @@ export class HermesDelegations {
         ...(duration !== undefined || toolUses !== undefined
           ? {
               typedUsage: {
-                totalTokens: 0,
                 ...(duration !== undefined ? { durationMs: Math.round(duration * 1000) } : {}),
                 ...(toolUses !== undefined ? { toolUses } : {}),
               },
