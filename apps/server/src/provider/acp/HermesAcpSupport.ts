@@ -126,7 +126,9 @@ export function hermesSessionInfoIndicatesCompaction(rawPayload: unknown): boole
 }
 
 const HERMES_TERMINAL_RESULT_HEADINGS = new Set(["terminal result", "✅ terminal completed"]);
-const HERMES_RESULT_FIELD = /^- \*\*([\w-]+):\*\* ?(.*)$/;
+const HERMES_RESULT_FIELD = /^- \*\*[\w-]+:\*\*/;
+const HERMES_OUTPUT_FIELD = "- **output:**";
+const HERMES_EXIT_CODE_FIELD = /^- \*\*exit_code:\*\* (-?\d+)$/;
 
 /**
  * Hermes sends no `rawOutput` for its `terminal` tool. Its completion content
@@ -162,19 +164,32 @@ export function normalizeHermesTerminalResult(toolCall: AcpToolCallState): AcpTo
     return toolCall;
   }
 
-  const fields = new Map<string, Array<string>>();
-  let current: Array<string> | undefined;
-  for (const line of lines) {
-    const field = HERMES_RESULT_FIELD.exec(line);
-    if (field) {
-      current = [field[2] ?? ""];
-      fields.set(field[1] ?? "", current);
-    } else if (current) {
-      current.push(line);
-    }
+  // Hermes writes `output`, then `exit_code`, then optional fields such as
+  // `cwd` or `hint`. The output can itself contain lines shaped like fields,
+  // so it runs to the last exit-code line rather than the next field.
+  const exitCodeIndex = lines.findLastIndex((line) => HERMES_EXIT_CODE_FIELD.test(line));
+  const exitCodeMatch =
+    exitCodeIndex === -1 ? null : HERMES_EXIT_CODE_FIELD.exec(lines[exitCodeIndex]!);
+  const exitCode = exitCodeMatch ? Number(exitCodeMatch[1]) : undefined;
+  const outputIndex = lines.findIndex((line) => line.startsWith(HERMES_OUTPUT_FIELD));
+  let stdout: string | undefined;
+  if (outputIndex !== -1) {
+    const nextFieldIndex = lines.findIndex(
+      (line, index) => index > outputIndex && HERMES_RESULT_FIELD.test(line),
+    );
+    const outputEnd =
+      exitCodeIndex > outputIndex
+        ? exitCodeIndex
+        : nextFieldIndex === -1
+          ? lines.length
+          : nextFieldIndex;
+    stdout = [
+      lines[outputIndex]!.slice(HERMES_OUTPUT_FIELD.length),
+      ...lines.slice(outputIndex + 1, outputEnd),
+    ]
+      .join("\n")
+      .trim();
   }
-  const stdout = fields.get("output")?.join("\n").trim();
-  const exitCode = Number.parseInt(fields.get("exit_code")?.[0] ?? "", 10);
 
   const { content: _summary, ...data } = toolCall.data;
   return {
@@ -183,7 +198,7 @@ export function normalizeHermesTerminalResult(toolCall: AcpToolCallState): AcpTo
       ...data,
       rawOutput: {
         ...(stdout ? { stdout } : {}),
-        ...(Number.isInteger(exitCode) ? { exitCode } : {}),
+        ...(exitCode !== undefined ? { exitCode } : {}),
       },
     },
   };

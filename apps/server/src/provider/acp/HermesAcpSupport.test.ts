@@ -361,6 +361,26 @@ describe("normalizeHermesTerminalResult", () => {
     expect(normalized.command).toBe("git status");
   });
 
+  it("keeps field-shaped lines that belong to the command's own output", () => {
+    const normalized = normalizeHermesTerminalResult(
+      completedTerminal(
+        [
+          "terminal result",
+          "- **output:** # Report",
+          "- **output:** quoted",
+          "- **exit_code:** 1",
+          "tail line",
+          "- **exit_code:** 0",
+          "- **cwd:** /repo",
+        ].join("\n"),
+      ),
+    );
+    expect(normalized.data.rawOutput).toEqual({
+      stdout: "# Report\n- **output:** quoted\n- **exit_code:** 1\ntail line",
+      exitCode: 0,
+    });
+  });
+
   it("gives clients the output's first line instead of the summary heading", () => {
     const toolCall = normalizeHermesTerminalResult(
       completedTerminal("terminal result\n- **output:** 391\n- **exit_code:** 0"),
