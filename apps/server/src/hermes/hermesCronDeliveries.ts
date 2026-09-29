@@ -15,6 +15,7 @@ import type {
 } from "./hermesCronState.ts";
 
 const EMPTY_OUTPUT: HermesCronRunOutput = { content: null, truncated: false, source: null };
+const PREVIEW_READ_LENGTH = HERMES_CRON_PREVIEW_LENGTH * 4;
 const DELIVERY_STATUSES = new Set(["pending", "delivering", "delivered", "failed", "unknown"]);
 
 /** Bound UTF-16 payloads without leaving a dangling surrogate in JSON or markdown. */
@@ -22,6 +23,30 @@ export function boundHermesOutput(text: string, limit: number): string {
   const end =
     text.length > limit && /[\uD800-\uDBFF]/.test(text[limit - 1] ?? "") ? limit - 1 : limit;
   return text.slice(0, end);
+}
+
+/** Notification surfaces are plain text; retain the original Markdown only in run output. */
+export function hermesOutputToPlainText(markdown: string): string {
+  return markdown
+    .replace(/^ {0,3}(?:`{3,}|~{3,})[^\n]*$/gm, "")
+    .replace(/^ {0,3}\[[^\]\n]+\]:[^\n]*$/gm, "")
+    .replace(/^ {0,3}(?:[-*_][ \t]*){3,}$/gm, "")
+    .replace(/^ {0,3}(?:=+|-+)[ \t]*$/gm, "")
+    .replace(/^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/gm, "$1")
+    .replace(/^ {0,3}(?:>[ \t]*)+/gm, "")
+    .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]*)?/gm, "")
+    .replace(/!?\[([^\]\n]*)\]\([^\n)]*\)/g, "$1")
+    .replace(/!?\[([^\]\n]*)\]\[[^\]\n]*\]/g, "$1")
+    .replace(/<((?:https?:\/\/|mailto:)[^>]+)>/g, "$1")
+    .replace(/<\/?[A-Za-z][^>]*>/g, "")
+    .replace(/(`+)([^`]*?)\1/g, "$2")
+    .replace(
+      /(?<![\p{L}\p{N}])(\*{1,3}|_{1,3}|~~)(?=\S)(\S(?:[\s\S]*?\S)?)\1(?![\p{L}\p{N}])/gu,
+      "$2",
+    )
+    .replace(/\\([\\`*{}[\]()#+.!_>~-])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function openReadOnly(path: string): NodeSqlite.DatabaseSync | null {
@@ -139,7 +164,8 @@ function readSessionOutput(
   run: ParsedHermesCronRun,
   fullOutput: boolean,
 ): HermesCronRunOutput {
-  const limit = fullOutput ? HERMES_CRON_OUTPUT_LENGTH : HERMES_CRON_PREVIEW_LENGTH;
+  // A bounded lookahead lets formatting be stripped before applying the wire cap.
+  const limit = fullOutput ? HERMES_CRON_OUTPUT_LENGTH : PREVIEW_READ_LENGTH;
   if (database === null || run.status !== "completed") return EMPTY_OUTPUT;
   const start = Date.parse(run.startedAt ?? run.claimedAt ?? "") / 1000;
   const end = Date.parse(run.finishedAt ?? "") / 1000;
@@ -279,14 +305,19 @@ export function createHermesCronDeliveryReader() {
               ? EMPTY_OUTPUT
               : readSessionOutput(state, run, fullOutput);
         if (fullOutput) outputs.set(run.id, output);
-        const preview =
+        const plainText =
           output.content === null
             ? null
-            : boundHermesOutput(output.content, HERMES_CRON_PREVIEW_LENGTH);
+            : hermesOutputToPlainText(boundHermesOutput(output.content, PREVIEW_READ_LENGTH));
+        const preview =
+          plainText === null ? null : boundHermesOutput(plainText, HERMES_CRON_PREVIEW_LENGTH);
         const delivery: HermesCronDelivery = {
           preview,
           contentAvailable: output.content !== null,
-          truncated: output.truncated || (output.content?.length ?? 0) > HERMES_CRON_PREVIEW_LENGTH,
+          truncated:
+            output.truncated ||
+            (output.content?.length ?? 0) > PREVIEW_READ_LENGTH ||
+            (plainText?.length ?? 0) > HERMES_CRON_PREVIEW_LENGTH,
           source: output.source,
           // The queue erases its job snapshot too; without an observed target,
           // expose the current configuration, not an asserted historic recipient.

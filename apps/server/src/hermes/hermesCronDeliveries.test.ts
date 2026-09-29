@@ -7,7 +7,11 @@ import * as NodeSqlite from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { HERMES_CRON_OUTPUT_LENGTH, HERMES_CRON_PREVIEW_LENGTH } from "@t3tools/contracts";
 
-import { boundHermesOutput, createHermesCronDeliveryReader } from "./hermesCronDeliveries.ts";
+import {
+  boundHermesOutput,
+  createHermesCronDeliveryReader,
+  hermesOutputToPlainText,
+} from "./hermesCronDeliveries.ts";
 import {
   appendHermesDeliveryFixture,
   createHermesDeliveryFixture,
@@ -43,17 +47,55 @@ function read(reader = createHermesCronDeliveryReader(), full = false) {
   return reader.read(paths, jobs, runs, full);
 }
 
+describe("Hermes plaintext previews", () => {
+  it("strips Markdown formatting while preserving readable text", () => {
+    expect(
+      hermesOutputToPlainText(
+        [
+          "## Morning engineering digest",
+          "",
+          "- **Builds:** all checks passed on `main`.",
+          "- **Review:** [two pull requests](https://example.com/reviews) are _ready_.",
+          "1. *Next:* review the __release__.",
+          "- [x] ~~Old incident~~ resolved.",
+        ].join("\n"),
+      ),
+    ).toBe(
+      "Morning engineering digest Builds: all checks passed on main. Review: two pull requests are ready. Next: review the release. Old incident resolved.",
+    );
+    expect(hermesOutputToPlainText("**A** and *B* and _C_.")).toBe("A and B and C.");
+    expect(hermesOutputToPlainText("Keep snake_case, 2 * 3, and file_name.ts.")).toBe(
+      "Keep snake_case, 2 * 3, and file_name.ts.",
+    );
+  });
+});
+
 describe("Hermes 0.21.0 delivery/session output", () => {
   it("uses durable cron assistant text after terminal delivery payloads are erased", () => {
     const id = appendHermesDeliveryFixture(home, { content: "## Digest\n\nEverything passed." });
     expect(read().runs[0]?.delivery).toMatchObject({
-      preview: "## Digest\n\nEverything passed.",
+      preview: "Digest Everything passed.",
       source: "session",
       status: "delivered",
       contentAvailable: true,
     });
     expect(read(undefined, true).outputs.get(id)?.content).toBe("## Digest\n\nEverything passed.");
   });
+
+  it.each(["delivered", "pending"] as const)(
+    "cleans %s previews before bounding them and preserves full Markdown",
+    (deliveryStatus) => {
+      const content = `## Digest\n\n${"- **Builds:** passed on `main`.\n".repeat(100)}`;
+      const id = appendHermesDeliveryFixture(home, { content, deliveryStatus });
+      const expected = hermesOutputToPlainText(content).slice(0, HERMES_CRON_PREVIEW_LENGTH);
+      const preview = read().runs[0]?.delivery;
+      expect(preview).toMatchObject({ preview: expected, truncated: true });
+      expect(preview?.preview).toHaveLength(HERMES_CRON_PREVIEW_LENGTH);
+      const full = read(undefined, true);
+      expect(full.outputs.get(id)?.content).toBe(content);
+      expect(full.runs[0]?.delivery.preview).toBe(expected);
+    },
+  );
 
   it("reads agent output without a gateway queue and does not claim it was delivered", () => {
     appendHermesDeliveryFixture(home, { deliveryStatus: "none" });
