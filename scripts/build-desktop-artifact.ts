@@ -2686,6 +2686,18 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    const sign = path.join(repoRoot, "scripts/sign-macos.ts");
+    // Without an Apple certificate, a stable self-signed identity keeps in-app
+    // updates working: Squirrel.Mac only installs an update whose designated
+    // requirement matches the running app's, which ad hoc signatures never do.
+    // electron-builder only discovers Apple-trusted identities, so request its
+    // ad hoc path and let sign-macos.ts swap in the self-signed identity. There
+    // is no notarization, so skip hardened runtime and Apple's timestamp server.
+    const selfSignIdentity = yield* Config.String("T3CODE_MAC_SELF_SIGN_IDENTITY").pipe(
+      Config.option,
+    );
+    const selfSigned =
+      !signed && Option.exists(selfSignIdentity, (identity) => identity.trim() !== "");
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
@@ -2700,7 +2712,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           schemes: ["t3code", "t3code-dev"],
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(signed ? { sign } : {}),
+      ...(selfSigned ? { sign, identity: "-", hardenedRuntime: false, timestamp: "none" } : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
