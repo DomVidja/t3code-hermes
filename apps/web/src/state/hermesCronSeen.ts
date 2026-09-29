@@ -5,7 +5,24 @@
  * The store itself lives in client-runtime so mobile can light the same dot;
  * only the subscription primitive is per-platform.
  */
+import {
+  hasUnseenHermesCompletions,
+  subscribeHermesTasksSeen,
+} from "@t3tools/client-runtime/state/hermes-cron-seen";
+import { useSyncExternalStore } from "react";
+import { useHermesEnvironmentId } from "./hermesCron";
+
 export {
   markHermesTasksSeen,
-  reportHermesCompletionSeq,
+  reportHermesCompletion,
 } from "@t3tools/client-runtime/state/hermes-cron-seen";
+
+/** Lights the sidebar dot when a Hermes run lands while the Tasks panel is closed. */
+export function useHermesTasksUnread(): boolean {
+  const environmentId = useHermesEnvironmentId();
+  return useSyncExternalStore(
+    subscribeHermesTasksSeen,
+    () => environmentId !== null && hasUnseenHermesCompletions(environmentId),
+    () => false,
+  );
+}
