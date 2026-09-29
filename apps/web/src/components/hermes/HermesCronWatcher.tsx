@@ -1,13 +1,20 @@
-/**
- * Holds the Hermes cron subscription for the lifetime of the sidebar.
- *
- * A component rather than a hook call in `SidebarChromeFooter` so that mounting
- * it stays conditional on Hermes actually being present — an environment
- * without Hermes must not open a subscription it will never use.
- */
+/** Shares the notification coordinator's badge and audio ownership across all Hermes hosts. */
+import type { EnvironmentId } from "@t3tools/contracts";
+
+import { useHermesEnvironmentEnabled } from "../../state/hermesCron";
 import { useHermesCronNotifications } from "./useHermesCronNotifications";
 
-export function HermesCronWatcher() {
-  useHermesCronNotifications();
+export interface HermesCronWatcherProps {
+  readonly environmentId: EnvironmentId;
+  readonly onNotification: (environmentId: EnvironmentId, notification: Notification) => void;
+}
+
+function EnabledHermesCronWatcher(props: HermesCronWatcherProps) {
+  useHermesCronNotifications(props);
   return null;
+}
+
+export function HermesCronWatcher(props: HermesCronWatcherProps) {
+  const enabled = useHermesEnvironmentEnabled(props.environmentId);
+  return enabled ? <EnabledHermesCronWatcher {...props} /> : null;
 }

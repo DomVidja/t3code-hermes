@@ -8,7 +8,7 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { Fragment, useCallback, useEffect, useRef } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironments } from "../state/environments";
@@ -20,6 +20,7 @@ import {
   setNotificationBadge,
   unlockNotificationAudio,
 } from "../threadNotifications";
+import { HermesCronWatcher } from "./hermes/HermesCronWatcher";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { toastManager } from "./ui/toast";
 
@@ -76,14 +77,19 @@ export function ThreadNotificationCoordinator() {
     };
   }, [mode]);
 
-  if (mode === "off" && !inAppNotificationsEnabled) return null;
-
   return environments.map((environment) => (
-    <EnvironmentNotifications
-      key={environment.environmentId}
-      environmentId={environment.environmentId}
-      onNotification={onNotification}
-    />
+    <Fragment key={environment.environmentId}>
+      <HermesCronWatcher
+        environmentId={environment.environmentId}
+        onNotification={onNotification}
+      />
+      {mode !== "off" || inAppNotificationsEnabled ? (
+        <EnvironmentNotifications
+          environmentId={environment.environmentId}
+          onNotification={onNotification}
+        />
+      ) : null}
+    </Fragment>
   ));
 }
 

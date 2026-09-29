@@ -53,6 +53,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useServerConfigs } from "../../state/entities";
 import { useHermesCron } from "../../state/hermesCron";
 import { useHindsightMemory } from "../../state/hindsight";
+import { HermesRunDelivery } from "./HermesRunDelivery";
 
 const HERMES_DRIVER = "hermes";
 type HermesTab = "tasks" | "memory";
@@ -217,6 +218,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
   const renderItem = useCallback(
     ({ item }: LegendListRenderItemProps<HermesCronJob>) => (
       <TaskRow
+        environmentId={environmentId}
         job={item}
         expanded={expandedJobIds.has(item.id)}
         pending={cron.pendingJobIds.has(item.id)}
@@ -233,6 +235,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
       cron.pendingJobIds,
       cron.setEnabled,
       cron.setMuted,
+      environmentId,
       expandedJobIds,
       runMutation,
       toggleExpanded,
@@ -296,6 +299,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
 }
 
 function TaskRow(props: {
+  readonly environmentId: EnvironmentId;
   readonly job: HermesCronJob;
   readonly expanded: boolean;
   readonly pending: boolean;
@@ -370,7 +374,9 @@ function TaskRow(props: {
           {props.job.runs.length === 0 ? (
             <Text className="text-sm text-foreground-muted">No recorded runs yet.</Text>
           ) : (
-            props.job.runs.map((run) => <RunRow key={run.id} run={run} />)
+            props.job.runs.map((run) => (
+              <RunRow key={run.id} environmentId={props.environmentId} run={run} />
+            ))
           )}
         </View>
       ) : null}
@@ -378,7 +384,13 @@ function TaskRow(props: {
   );
 }
 
-function RunRow({ run }: { readonly run: HermesCronRun }) {
+function RunRow({
+  environmentId,
+  run,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly run: HermesCronRun;
+}) {
   const when = formatHermesTimestamp(run.finishedAt ?? run.startedAt ?? run.claimedAt);
   const duration = formatHermesRunDuration(run.durationMs);
   return (
@@ -403,6 +415,7 @@ function RunRow({ run }: { readonly run: HermesCronRun }) {
           {run.error}
         </Text>
       )}
+      <HermesRunDelivery environmentId={environmentId} run={run} />
     </View>
   );
 }
