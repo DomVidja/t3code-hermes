@@ -53,8 +53,24 @@ describe("resolveHermesHindsightConfig", () => {
     });
   });
 
+  it("accepts every local mode from variables alone", () => {
+    expect(
+      resolveHermesHindsightConfig({
+        config: null,
+        environment: { HINDSIGHT_MODE: "local_embedded" },
+      })?.baseUrl,
+    ).toBe("http://localhost:8888");
+  });
+
   it("reports nothing when Hermes is not set up for Hindsight", () => {
     expect(resolveHermesHindsightConfig({ config: null, environment: {} })).toBeNull();
+    // A cloud config with neither key nor URL fails Hermes' own availability check.
+    expect(
+      resolveHermesHindsightConfig({
+        config: { path: CONFIG_PATH, value: { mode: "cloud", bank_id: "hermes" } },
+        environment: {},
+      }),
+    ).toBeNull();
   });
 });
 
@@ -66,12 +82,16 @@ describe("parseDotenv", () => {
           "# Hermes secrets",
           "export HINDSIGHT_API_KEY='quoted # kept'",
           "HINDSIGHT_API_URL=http://localhost:8888 # trailing comment",
+          'HINDSIGHT_BANK_ID="work" # rotated monthly',
+          'HINDSIGHT_MODE="a\\"b"',
           "BROKEN LINE",
         ].join("\n"),
       ),
     ).toEqual({
       HINDSIGHT_API_KEY: "quoted # kept",
       HINDSIGHT_API_URL: "http://localhost:8888",
+      HINDSIGHT_BANK_ID: "work",
+      HINDSIGHT_MODE: 'a"b',
     });
   });
 });

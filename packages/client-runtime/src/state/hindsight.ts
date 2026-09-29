@@ -183,7 +183,13 @@ export function describeHindsightConnection(
     return { tone: "idle", label: "Off", detail: "The Memory tab stays empty until this is on." };
   }
   if (result === null) return { tone: "idle", label: "Checking…", detail: null };
-  const connection = result.connection ?? null;
+  // An environment older than the `connection` field omits it; only its status is known.
+  const connection = result.connection;
+  if (connection === undefined) {
+    return result.status.availability === "ready"
+      ? { tone: "ready", label: "Connected", detail: null }
+      : { tone: "attention", label: "Needs attention", detail: result.status.detail };
+  }
   if (connection === null) {
     return {
       tone: "attention",

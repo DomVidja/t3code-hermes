@@ -54,6 +54,9 @@ export function resolveHermesHindsightPaths(
   };
 }
 
+/** A quoted value, optionally followed by a comment: `"value" # note`. */
+const QUOTED_VALUE = /^(["'])(.*)\1(?:\s+#.*)?$/;
+
 /** `KEY=value` lines, as python-dotenv reads them for the handful of keys used here. */
 export function parseDotenv(contents: string): Record<string, string> {
   const values: Record<string, string> = {};
@@ -63,14 +66,15 @@ export function parseDotenv(contents: string): Record<string, string> {
     const equals = line.indexOf("=");
     if (equals <= 0) continue;
     const key = line.slice(0, equals).trim();
-    let value = line.slice(equals + 1).trim();
-    const quote = value[0];
-    if ((quote === '"' || quote === "'") && value.endsWith(quote) && value.length >= 2) {
-      value = value.slice(1, -1);
-    } else {
-      value = value.replace(/\s+#.*$/, "");
-    }
-    values[key] = value;
+    const raw = line.slice(equals + 1).trim();
+    const quoted = QUOTED_VALUE.exec(raw);
+    values[key] =
+      quoted === null
+        ? raw.replace(/\s+#.*$/, "")
+        : // Double quotes decode escapes, single quotes keep the text as written.
+          quoted[1] === '"'
+          ? (quoted[2] ?? "").replace(/\\(["\\])/g, "$1")
+          : (quoted[2] ?? "");
   }
   return values;
 }
@@ -100,40 +104,33 @@ export function resolveHermesHindsightConfig(input: {
   readonly environment: Readonly<Record<string, string | undefined>>;
 }): HermesHindsightConfig | null {
   const env = (name: string) => nonEmptyString(input.environment[name]);
-  const config = input.config === null ? null : asRecord(input.config.value);
-
-  if (config === null) {
-    // Without a config file Hermes defaults to cloud, which only works with a
-    // key; a bare environment with no Hindsight variables is not using it.
-    const mode = env("HINDSIGHT_MODE") ?? "cloud";
-    const apiKey = env("HINDSIGHT_API_KEY");
-    const apiUrl = env("HINDSIGHT_API_URL");
-    if (apiKey === null && apiUrl === null && mode !== "local_external") return null;
-    return {
-      configPath: null,
-      baseUrl:
-        apiUrl ?? (LOCAL_MODES.has(mode) ? HERMES_DEFAULT_LOCAL_URL : HERMES_DEFAULT_CLOUD_URL),
-      bank: env("HINDSIGHT_BANK_ID") ?? HERMES_DEFAULT_BANK,
-      apiKey,
-    };
-  }
+  const file = input.config === null ? null : asRecord(input.config.value);
+  // Without a config file Hermes builds the same shape from variables.
+  const config: Record<string, unknown> = file ?? {
+    mode: env("HINDSIGHT_MODE") ?? "cloud",
+    bank_id: env("HINDSIGHT_BANK_ID"),
+  };
 
   const mode = nonEmptyString(config["mode"]) ?? "cloud";
+  const apiKey =
+    nonEmptyString(config["apiKey"]) ??
+    nonEmptyString(config["api_key"]) ??
+    env("HINDSIGHT_API_KEY");
+  const apiUrl = nonEmptyString(config["api_url"]) ?? env("HINDSIGHT_API_URL");
+  // Hermes' own availability check: a local mode, or cloud with a key or URL.
+  // Anything else means Hermes is not using Hindsight either.
+  if (!LOCAL_MODES.has(mode) && apiKey === null && apiUrl === null) return null;
+
   const banks = asRecord(config["banks"]);
   const hermesBank = banks === null ? null : asRecord(banks["hermes"]);
   return {
-    configPath: input.config?.path ?? null,
+    configPath: file === null ? null : (input.config?.path ?? null),
     baseUrl:
-      nonEmptyString(config["api_url"]) ??
-      env("HINDSIGHT_API_URL") ??
-      (LOCAL_MODES.has(mode) ? HERMES_DEFAULT_LOCAL_URL : HERMES_DEFAULT_CLOUD_URL),
+      apiUrl ?? (LOCAL_MODES.has(mode) ? HERMES_DEFAULT_LOCAL_URL : HERMES_DEFAULT_CLOUD_URL),
     bank:
       nonEmptyString(config["bank_id"]) ??
       nonEmptyString(hermesBank?.["bankId"]) ??
       HERMES_DEFAULT_BANK,
-    apiKey:
-      nonEmptyString(config["apiKey"]) ??
-      nonEmptyString(config["api_key"]) ??
-      env("HINDSIGHT_API_KEY"),
+    apiKey,
   };
 }
