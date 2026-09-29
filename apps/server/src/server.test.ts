@@ -193,6 +193,7 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
+import * as HermesMemoryService from "./hermes/HermesMemoryService.ts";
 import * as HindsightService from "./integrations/hindsight/HindsightService.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -1088,6 +1089,7 @@ const buildAppUnderTest = (options?: {
       Layer.provide(resourceTelemetryLayer),
       Layer.provide(UsageService.layerTest),
       Layer.provide(HermesCronService.layerTest),
+      Layer.provide(HermesMemoryService.layerTest),
       Layer.provide(HindsightService.layerTest),
     );
     const appLayer = appLayerWithServices.pipe(
@@ -5890,6 +5892,31 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const session = yield* HttpClient.get("/api/auth/session", { headers: { cookie } });
       assert.equal(session.status, 200);
       assert.include(spanNames, "http.server GET");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes native Hermes memory reads, subscriptions, and typed mutation failures", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const snapshot = yield* client[WS_METHODS.hermesMemoryRead]({});
+            assert.equal(snapshot.availability, "providerDisabled");
+            const first = yield* client[WS_METHODS.subscribeHermesMemory]({}).pipe(Stream.runHead);
+            assert.equal(first._tag, "Some");
+            if (first._tag === "Some") assert.deepEqual(first.value, snapshot);
+            const failure = yield* client[WS_METHODS.hermesMemoryMutate]({
+              target: "memory",
+              revision: "missing",
+              action: "add",
+              content: "Do not write",
+            }).pipe(Effect.flip);
+            assert.equal(failure._tag, "HermesMemoryError");
+          }),
+        ),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

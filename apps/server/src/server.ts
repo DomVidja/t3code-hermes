@@ -162,6 +162,7 @@ import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
+import * as HermesMemoryService from "./hermes/HermesMemoryService.ts";
 import * as HindsightService from "./integrations/hindsight/HindsightService.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
@@ -229,6 +230,9 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
 );
 
 const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
+const HermesMemoryLayerLive = HermesMemoryService.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+);
 const HermesCronLayerLive = HermesCronService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
 // HttpClient comes from the outermost FetchHttpClient layer, the same way the
 // provider maintenance checks get theirs.
@@ -585,6 +589,7 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
   Layer.provideMerge(UsageLayerLive),
   Layer.provideMerge(HermesCronLayerLive),
+  Layer.provideMerge(HermesMemoryLayerLive),
   Layer.provideMerge(HindsightLayerLive),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),

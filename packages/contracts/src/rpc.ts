@@ -257,6 +257,13 @@ import {
   ResourceTelemetrySnapshot,
 } from "./resourceTelemetry.ts";
 import {
+  HermesMemoryError,
+  HermesMemoryReadInput,
+  HermesMemorySubscribeInput,
+  HermesMemoryMutateInput,
+  HermesMemorySnapshot,
+} from "./hermesMemory.ts";
+import {
   HermesCronError,
   HermesCronListInput,
   HermesCronSetEnabledInput,
@@ -419,6 +426,9 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
+  hermesMemoryRead: "hermes.memoryRead",
+  hermesMemoryMutate: "hermes.memoryMutate",
+  subscribeHermesMemory: "subscribeHermesMemory",
   hermesCronList: "hermes.cronList",
   hermesCronSetEnabled: "hermes.cronSetEnabled",
   hermesCronSetMuted: "hermes.cronSetMuted",
@@ -711,6 +721,23 @@ const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
+const WsHermesMemoryReadRpc = Rpc.make(WS_METHODS.hermesMemoryRead, {
+  payload: HermesMemoryReadInput,
+  success: HermesMemorySnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesMemoryError]),
+});
+const WsHermesMemoryMutateRpc = Rpc.make(WS_METHODS.hermesMemoryMutate, {
+  payload: HermesMemoryMutateInput,
+  success: HermesMemorySnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesMemoryError]),
+});
+const WsSubscribeHermesMemoryRpc = Rpc.make(WS_METHODS.subscribeHermesMemory, {
+  payload: HermesMemorySubscribeInput,
+  success: HermesMemorySnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesMemoryError]),
+  stream: true,
 });
 
 const WsHermesCronListRpc = Rpc.make(WS_METHODS.hermesCronList, {
@@ -1555,6 +1582,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
+  WsHermesMemoryReadRpc,
+  WsHermesMemoryMutateRpc,
+  WsSubscribeHermesMemoryRpc,
   WsHermesCronListRpc,
   WsHermesCronSetEnabledRpc,
   WsHermesCronSetMutedRpc,
