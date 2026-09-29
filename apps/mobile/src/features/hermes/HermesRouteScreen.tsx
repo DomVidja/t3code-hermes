@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import {
   describeHermesJobStatus,
@@ -37,6 +38,7 @@ import {
   IconPlus,
   IconRefresh,
   IconSearch,
+  IconSettings,
   IconSparkles,
   IconX,
 } from "@tabler/icons-react-native";
@@ -51,6 +53,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useServerConfigs } from "../../state/entities";
+import { serverEnvironment } from "../../state/server";
 import { useHermesCron } from "../../state/hermesCron";
 import { useHindsightMemory } from "../../state/hindsight";
 
@@ -423,11 +426,16 @@ function StatusChip(props: { readonly tone: HermesCronStatusTone; readonly label
 
 function HermesMemoryScreen({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
+  const iconColor = useUniwindTheme()["--color-icon"];
   const memory = useHindsightMemory(environmentId);
+  const enabled =
+    useAtomValue(serverEnvironment.settingsValueAtom(environmentId))?.integrations.hindsight
+      .enabled ?? true;
   const [draft, setDraft] = useState("");
   const [retainOpen, setRetainOpen] = useState(false);
   const [retainText, setRetainText] = useState("");
-  const unavailable = describeHindsightUnavailable(memory.status);
+  const unavailable = describeHindsightUnavailable(memory.status, { enabled });
 
   const submitRecall = useCallback(() => memory.submitQuery(draft), [draft, memory]);
   const clearRecall = useCallback(() => {
@@ -460,7 +468,20 @@ function HermesMemoryScreen({ environmentId }: { readonly environmentId: Environ
         description={unavailable.description}
         actionLabel={unavailable.retryable ? "Try again" : undefined}
         onAction={unavailable.retryable ? memory.retry : undefined}
-      />
+      >
+        {memory.status?.availability === "notConfigured" ? (
+          <ActionButton
+            label="Memory settings"
+            icon={<IconSettings size={18} color={String(iconColor)} />}
+            onPress={() =>
+              navigation.navigate("SettingsSheet", {
+                screen: "SettingsContent",
+                params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
+              })
+            }
+          />
+        ) : null}
+      </CenteredState>
     );
   }
   if (memory.error !== null) {
@@ -863,8 +884,10 @@ function NoticeText({ text }: { readonly text: string }) {
 function CenteredState(props: {
   readonly title: string;
   readonly description: string;
-  readonly actionLabel?: string;
-  readonly onAction?: () => void;
+  readonly actionLabel?: string | undefined;
+  readonly onAction?: (() => void) | undefined;
+  /** Extra actions, shown before the retry. */
+  readonly children?: React.ReactNode;
 }) {
   const iconColor = useUniwindTheme()["--color-icon"];
   return (
@@ -873,6 +896,7 @@ function CenteredState(props: {
       <Text className="text-center text-sm leading-5 text-foreground-muted">
         {props.description}
       </Text>
+      {props.children}
       {props.actionLabel && props.onAction ? (
         <ActionButton
           label={props.actionLabel}

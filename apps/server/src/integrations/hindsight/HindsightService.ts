@@ -19,8 +19,11 @@
  * over a blank list. Writes do fail, with the same vocabulary as a reason —
  * the user pressed a button and is owed a straight answer.
  *
- * The service is inert when `integrations.hindsight.enabled` is unset: no
- * socket is opened and the client is told the tab should not render.
+ * The connection is resolved per request: `integrations.hindsight` overrides
+ * first, then the Hermes install's own Hindsight config (see
+ * `hermesHindsightConfig.ts`), so editing either takes effect on the next read
+ * without a restart. With the integration switched off, or nothing
+ * configured anywhere, no socket is opened and the panel says why.
  *
  * @module HindsightService
  */
@@ -34,6 +37,7 @@ import {
   type HindsightBank,
   type HindsightBanksResult,
   type HindsightBrowseInput,
+  type HindsightConnectionSource,
   HindsightError,
   type HindsightListBanksInput,
   type HindsightMemory,
@@ -45,11 +49,13 @@ import {
   type HindsightRetainResult,
   type HindsightStatsInput,
   type HindsightStatsResult,
+  type HindsightSettings,
   type HindsightStatus,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -57,7 +63,15 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
+import { resolveEnabledHermesInstance } from "../../hermes/hermesCronState.ts";
+import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import {
+  type HermesHindsightConfig,
+  parseDotenv,
+  resolveHermesHindsightConfig,
+  resolveHermesHindsightPaths,
+} from "./hermesHindsightConfig.ts";
 import {
   HindsightBankListResponse,
   HindsightBankStatsResponse,
@@ -89,6 +103,8 @@ import {
  */
 const REQUEST_TIMEOUT = Duration.seconds(60);
 
+const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 /** Shorter ceiling for the probe: it only reads a constant. */
 const PROBE_TIMEOUT = Duration.seconds(5);
 
@@ -108,16 +124,79 @@ interface HindsightProbe {
 
 /** Effective connection settings, or `null` when the integration is off. */
 interface HindsightConnection {
+  readonly source: HindsightConnectionSource;
   readonly baseUrl: string;
   readonly apiKey: string | null;
   readonly defaultBank: string | null;
 }
 
-const NOT_CONFIGURED: HindsightProbe = {
-  availability: "notConfigured",
-  detail: "Hindsight is not configured for this environment.",
-  apiVersion: null,
-};
+/** Everything the environment knows about where Hindsight is. */
+interface ResolvedHindsight {
+  readonly connection: HindsightConnection | null;
+  readonly hermes: HermesHindsightConfig | null;
+  readonly enabled: boolean;
+}
+
+function notConfigured(enabled: boolean): HindsightProbe {
+  return {
+    availability: "notConfigured",
+    detail: enabled
+      ? "Neither T3 Code settings nor Hermes name a Hindsight service for this environment."
+      : "Memory is turned off for this environment.",
+    apiVersion: null,
+  };
+}
+
+const NOT_CONFIGURED = notConfigured(true);
+
+function trimmedOrNull(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+/**
+ * Settings overrides laid over Hermes' config, field by field.
+ *
+ * The key follows the URL: a key saved in settings may go to either URL, but
+ * Hermes' key is only ever sent to Hermes' URL, so pointing the panel somewhere
+ * else never hands that server a credential it was not given.
+ */
+export function resolveHindsightConnection(
+  settings: HindsightSettings,
+  hermes: HermesHindsightConfig | null,
+): HindsightConnection | null {
+  if (!settings.enabled) return null;
+  const apiKey = trimmedOrNull(settings.apiKey);
+  const defaultBank = trimmedOrNull(settings.defaultBank);
+  const baseUrl = trimmedOrNull(settings.baseUrl);
+  if (baseUrl !== null) {
+    return {
+      source: "settings",
+      baseUrl,
+      apiKey,
+      defaultBank: defaultBank ?? hermes?.bank ?? null,
+    };
+  }
+  if (hermes === null) return null;
+  return {
+    source: "hermes",
+    baseUrl: hermes.baseUrl,
+    apiKey: apiKey ?? hermes.apiKey,
+    defaultBank: defaultBank ?? hermes.bank,
+  };
+}
+
+/** A URL safe to show a client: any `user:pass@` is removed. */
+function displayUrl(baseUrl: string): string {
+  try {
+    const url = new URL(baseUrl);
+    url.username = "";
+    url.password = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return baseUrl.replace(/\/\/[^/@]*@/, "//");
+  }
+}
 
 function statusOf(probe: HindsightProbe): HindsightStatus {
   return {
@@ -232,27 +311,58 @@ export class HindsightService extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
+  const fs = yield* FileSystem.FileSystem;
   const client = yield* HttpClient.HttpClient;
 
-  /** `null` whenever the integration is absent or switched off. */
-  const connection = Effect.map(
-    settingsService.getSettings.pipe(Effect.orElseSucceed(() => null)),
-    (settings): HindsightConnection | null => {
-      const hindsight = settings?.integrations.hindsight;
-      if (!hindsight || !hindsight.enabled) return null;
-      const baseUrl = hindsight.baseUrl.trim();
-      if (baseUrl.length === 0) return null;
-      const apiKey = hindsight.apiKey?.trim() ?? "";
-      const defaultBank = hindsight.defaultBank?.trim() ?? "";
-      return {
-        baseUrl,
-        apiKey: apiKey.length === 0 ? null : apiKey,
-        defaultBank: defaultBank.length === 0 ? null : defaultBank,
-      };
-    },
-  );
+  const readFileOrNull = (path: string) =>
+    fs.readFileString(path).pipe(Effect.orElseSucceed(() => null));
 
-  const probeRef = yield* Ref.make<HindsightProbe | null>(null);
+  /**
+   * Hermes' Hindsight config, read fresh each time: a handful of small local
+   * files, and caching them would make an edit in Hermes look ignored.
+   */
+  const readHermesConfig = (environment: NodeJS.ProcessEnv) =>
+    Effect.gen(function* () {
+      const paths = resolveHermesHindsightPaths(environment);
+      let config: { readonly path: string; readonly value: unknown } | null = null;
+      for (const path of paths.configFiles) {
+        const raw = yield* readFileOrNull(path);
+        if (raw === null) continue;
+        const value = yield* decodeJsonString(raw).pipe(Effect.orElseSucceed(() => null));
+        // Hermes skips a malformed file and tries the next, so this does too.
+        if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+        config = { path, value };
+        break;
+      }
+      const dotenv = yield* readFileOrNull(paths.dotenvFile);
+      return resolveHermesHindsightConfig({
+        config,
+        // Hermes' own `.env` outranks the shell it was started from.
+        environment: { ...environment, ...(dotenv === null ? {} : parseDotenv(dotenv)) },
+      });
+    });
+
+  const resolve: Effect.Effect<ResolvedHindsight> = Effect.gen(function* () {
+    const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+    if (settings === null) return { connection: null, hermes: null, enabled: false };
+    // A Hermes instance can point `HERMES_HOME` elsewhere; follow it when one is on.
+    const instance = resolveEnabledHermesInstance(settings);
+    const environment =
+      instance === null ? process.env : mergeProviderInstanceEnvironment(instance.environment);
+    const hermes = yield* readHermesConfig(environment);
+    const hindsight = settings.integrations.hindsight;
+    return {
+      connection: resolveHindsightConnection(hindsight, hermes),
+      hermes,
+      enabled: hindsight.enabled,
+    };
+  });
+
+  /** The verdict is only reused for the connection it was reached against. */
+  const probeRef = yield* Ref.make<{
+    readonly connection: HindsightConnection;
+    readonly probe: HindsightProbe;
+  } | null>(null);
 
   const authorized = (request: HttpClientRequest.HttpClientRequest, apiKey: string | null) =>
     apiKey === null
@@ -315,11 +425,12 @@ export const make = Effect.gen(function* () {
   /**
    * The cached compatibility verdict, probing once if needed.
    *
-   * Only a healthy verdict is reused. `ready` and `notConfigured` are the two
-   * answers that cannot change on their own, so re-probing them would be noise;
-   * every other verdict is re-asked, which is how the panel's retry button
-   * recovers without a server restart:
+   * Only a healthy verdict is reused, and only while the URL and key it was
+   * reached with are still the ones in effect. Every other verdict is re-asked,
+   * which is how the panel's retry button recovers without a server restart:
    *
+   * - the user points Settings (or Hermes) at another Hindsight and the old
+   *   verdict no longer applies;
    * - the user starts Hindsight and the stale `offline` verdict is thrown away;
    * - the user upgrades (or downgrades) Hindsight and the stale `incompatible`
    *   verdict is thrown away;
@@ -330,19 +441,22 @@ export const make = Effect.gen(function* () {
    */
   const probe = (options: { readonly refresh: boolean }) =>
     Effect.gen(function* () {
-      const settings = yield* connection;
+      const resolved = yield* resolve;
+      const settings = resolved.connection;
       if (settings === null) {
         yield* Ref.set(probeRef, null);
-        return { probe: NOT_CONFIGURED, connection: null } as const;
+        return { probe: notConfigured(resolved.enabled), connection: null, resolved } as const;
       }
 
       const cached = yield* Ref.get(probeRef);
       if (
         cached !== null &&
         !options.refresh &&
-        (cached.availability === "ready" || cached.availability === "notConfigured")
+        cached.connection.baseUrl === settings.baseUrl &&
+        cached.connection.apiKey === settings.apiKey &&
+        cached.probe.availability === "ready"
       ) {
-        return { probe: cached, connection: settings } as const;
+        return { probe: cached.probe, connection: settings, resolved } as const;
       }
 
       const version = yield* send(
@@ -373,8 +487,8 @@ export const make = Effect.gen(function* () {
               apiVersion: null,
             };
 
-      yield* Ref.set(probeRef, next);
-      return { probe: next, connection: settings } as const;
+      yield* Ref.set(probeRef, { connection: settings, probe: next });
+      return { probe: next, connection: settings, resolved } as const;
     });
 
   /**
@@ -387,16 +501,22 @@ export const make = Effect.gen(function* () {
    * still works — see {@link stats}.
    */
   const readOrStatus = <A>(
-    run: (settings: HindsightConnection, probe: HindsightProbe) => Effect.Effect<A, HindsightError>,
-    fallback: (probe: HindsightProbe) => A,
+    run: (
+      settings: HindsightConnection,
+      probe: HindsightProbe,
+      resolved: ResolvedHindsight,
+    ) => Effect.Effect<A, HindsightError>,
+    fallback: (probe: HindsightProbe, resolved: ResolvedHindsight) => A,
     options?: { readonly invalidatesProbe?: boolean },
   ): Effect.Effect<A> =>
     Effect.gen(function* () {
       const probed = yield* probe({ refresh: false });
       if (probed.connection === null || probed.probe.availability !== "ready") {
-        return fallback(probed.probe);
+        return fallback(probed.probe, probed.resolved);
       }
-      const result = yield* run(probed.connection, probed.probe).pipe(Effect.result);
+      const result = yield* run(probed.connection, probed.probe, probed.resolved).pipe(
+        Effect.result,
+      );
       if (Result.isSuccess(result)) return result.success;
 
       const availability = availabilityForReadFailure(result.failure.reason);
@@ -410,9 +530,9 @@ export const make = Effect.gen(function* () {
       };
 
       if (availability !== "ready" && options?.invalidatesProbe !== false) {
-        yield* Ref.set(probeRef, failed);
+        yield* Ref.set(probeRef, null);
       }
-      return fallback(failed);
+      return fallback(failed, probed.resolved);
     });
 
   /** A write only runs against a `ready` Hindsight; otherwise it says why not. */
@@ -437,9 +557,30 @@ export const make = Effect.gen(function* () {
       { apiKey: settings.apiKey, timeout: REQUEST_TIMEOUT },
     );
 
+  /** Where Hindsight is, as Settings shows it. Never the key itself. */
+  const connectionInfo = (resolved: ResolvedHindsight) => ({
+    connection:
+      resolved.connection === null
+        ? null
+        : {
+            source: resolved.connection.source,
+            baseUrl: displayUrl(resolved.connection.baseUrl),
+            hasApiKey: resolved.connection.apiKey !== null,
+          },
+    hermes:
+      resolved.hermes === null
+        ? null
+        : {
+            configPath: resolved.hermes.configPath,
+            baseUrl: displayUrl(resolved.hermes.baseUrl),
+            bank: resolved.hermes.bank,
+            hasApiKey: resolved.hermes.apiKey !== null,
+          },
+  });
+
   const listBanks = (_input: HindsightListBanksInput) =>
     readOrStatus<HindsightBanksResult>(
-      (settings, probed) =>
+      (settings, probed, resolved) =>
         Effect.map(
           send(
             HttpClientRequest.get(hindsightUrl(settings.baseUrl, hindsightPaths.banks())).pipe(
@@ -457,10 +598,20 @@ export const make = Effect.gen(function* () {
               banks.some((bank) => bank.id === settings.defaultBank)
                 ? HindsightBankId.make(settings.defaultBank)
                 : null;
-            return { status: statusOf(probed), banks, defaultBank };
+            return {
+              status: statusOf(probed),
+              banks,
+              defaultBank,
+              ...connectionInfo(resolved),
+            };
           },
         ),
-      (probed) => ({ status: statusOf(probed), banks: [], defaultBank: null }),
+      (probed, resolved) => ({
+        status: statusOf(probed),
+        banks: [],
+        defaultBank: null,
+        ...connectionInfo(resolved),
+      }),
     );
 
   const browse = (input: HindsightBrowseInput) =>

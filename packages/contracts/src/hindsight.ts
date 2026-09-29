@@ -133,7 +133,7 @@ export type HindsightBank = typeof HindsightBank.Type;
 export const HindsightAvailability = Schema.Literals([
   /** Reachable and understood. Results may still legitimately be empty. */
   "ready",
-  /** No `integrations.hindsight` block in this environment's settings. */
+  /** Switched off, or neither T3 Code settings nor Hermes name a Hindsight URL. */
   "notConfigured",
   /** Configured, but the base URL refused the connection or timed out. */
   "offline",
@@ -169,15 +169,48 @@ export const HindsightStatus = Schema.Struct({
 });
 export type HindsightStatus = typeof HindsightStatus.Type;
 
+/**
+ * Where the URL an environment talks to came from: its own
+ * `integrations.hindsight` settings, or the Hermes install's Hindsight config.
+ */
+export const HindsightConnectionSource = Schema.Literals(["settings", "hermes"]);
+export type HindsightConnectionSource = typeof HindsightConnectionSource.Type;
+
+/** The connection an environment resolved, so Settings can say what is in use. */
+export const HindsightConnectionInfo = Schema.Struct({
+  source: HindsightConnectionSource,
+  /** With any `user:pass@` removed. The key itself never leaves the server. */
+  baseUrl: Schema.String,
+  hasApiKey: Schema.Boolean,
+});
+export type HindsightConnectionInfo = typeof HindsightConnectionInfo.Type;
+
+/** What the Hermes install says about Hindsight, whether or not it is in use. */
+export const HindsightHermesConfig = Schema.Struct({
+  /** The file it was read from, or null when it came from `HINDSIGHT_*` variables. */
+  configPath: Schema.NullOr(Schema.String),
+  baseUrl: Schema.String,
+  bank: Schema.NullOr(Schema.String),
+  hasApiKey: Schema.Boolean,
+});
+export type HindsightHermesConfig = typeof HindsightHermesConfig.Type;
+
 /** Bootstrap for the panel: is Hindsight there, and which banks does it hold? */
 export const HindsightBanksResult = Schema.Struct({
   status: HindsightStatus,
   banks: ForwardCompatibleArray(HindsightBank),
   /**
-   * `integrations.hindsight.defaultBank`, when set and still present. The panel
+   * The configured default bank, when set and still present. The panel
    * preselects it rather than guessing at the first alphabetically.
    */
   defaultBank: Schema.NullOr(HindsightBankId),
+  /**
+   * The connection in use, or null when the integration is off or nothing is
+   * configured. Optional so a client tolerates an environment that predates it.
+   */
+  connection: Schema.optionalKey(Schema.NullOr(HindsightConnectionInfo)),
+  /** Hermes' own Hindsight config, or null when Hermes has none. */
+  hermes: Schema.optionalKey(Schema.NullOr(HindsightHermesConfig)),
 });
 export type HindsightBanksResult = typeof HindsightBanksResult.Type;
 

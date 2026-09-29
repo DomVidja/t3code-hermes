@@ -1,0 +1,139 @@
+// @effect-diagnostics nodeBuiltinImport:off
+/**
+ * Hermes Agent's own Hindsight connection, read the way Hermes reads it.
+ *
+ * Hermes' Hindsight memory plugin resolves its connection from
+ * `$HERMES_HOME/hindsight/config.json`, then the legacy shared
+ * `~/.hindsight/config.json`, then `HINDSIGHT_*` variables — where
+ * `$HERMES_HOME/.env` outranks the shell. Mirroring that order is what lets an
+ * environment running Hermes browse the same memory bank with no setup.
+ *
+ * Only the connection is read: URL, bank and key. Retain and recall tuning
+ * belong to Hermes. A `bank_id_template` resolves per profile or session at
+ * run time, so its static `bank_id` fallback is the best a side panel can do.
+ *
+ * Verified against the Hermes Agent `plugins/memory/hindsight` plugin shipped
+ * with Hermes 0.20.
+ *
+ * @module hermesHindsightConfig
+ */
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+/** Hermes' defaults for a local (external or embedded) and a cloud Hindsight. */
+const HERMES_DEFAULT_LOCAL_URL = "http://localhost:8888";
+const HERMES_DEFAULT_CLOUD_URL = "https://api.hindsight.vectorize.io";
+const HERMES_DEFAULT_BANK = "hermes";
+const LOCAL_MODES = new Set(["local", "local_embedded", "local_external"]);
+
+export interface HermesHindsightConfig {
+  /** The file it was read from, or null when it came from `HINDSIGHT_*` variables. */
+  readonly configPath: string | null;
+  readonly baseUrl: string;
+  readonly bank: string | null;
+  readonly apiKey: string | null;
+}
+
+export interface HermesHindsightPaths {
+  /** Config files in the order Hermes tries them. */
+  readonly configFiles: ReadonlyArray<string>;
+  readonly dotenvFile: string;
+}
+
+export function resolveHermesHindsightPaths(
+  environment: NodeJS.ProcessEnv,
+  homedir: string = NodeOS.homedir(),
+): HermesHindsightPaths {
+  const hermesHome = environment["HERMES_HOME"]?.trim() || NodePath.join(homedir, ".hermes");
+  return {
+    configFiles: [
+      NodePath.join(hermesHome, "hindsight", "config.json"),
+      NodePath.join(homedir, ".hindsight", "config.json"),
+    ],
+    dotenvFile: NodePath.join(hermesHome, ".env"),
+  };
+}
+
+/** `KEY=value` lines, as python-dotenv reads them for the handful of keys used here. */
+export function parseDotenv(contents: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim().replace(/^export\s+/, "");
+    if (line.length === 0 || line.startsWith("#")) continue;
+    const equals = line.indexOf("=");
+    if (equals <= 0) continue;
+    const key = line.slice(0, equals).trim();
+    let value = line.slice(equals + 1).trim();
+    const quote = value[0];
+    if ((quote === '"' || quote === "'") && value.endsWith(quote) && value.length >= 2) {
+      value = value.slice(1, -1);
+    } else {
+      value = value.replace(/\s+#.*$/, "");
+    }
+    values[key] = value;
+  }
+  return values;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Hermes' connection from what was found on disk, or null when Hermes is not
+ * set up to use Hindsight.
+ *
+ * `config` is the first config file that parsed to an object, as Hermes skips
+ * one that is missing or malformed. `environment` is the process environment
+ * with Hermes' `.env` already laid over it.
+ */
+export function resolveHermesHindsightConfig(input: {
+  readonly config: { readonly path: string; readonly value: unknown } | null;
+  readonly environment: Readonly<Record<string, string | undefined>>;
+}): HermesHindsightConfig | null {
+  const env = (name: string) => nonEmptyString(input.environment[name]);
+  const config = input.config === null ? null : asRecord(input.config.value);
+
+  if (config === null) {
+    // Without a config file Hermes defaults to cloud, which only works with a
+    // key; a bare environment with no Hindsight variables is not using it.
+    const mode = env("HINDSIGHT_MODE") ?? "cloud";
+    const apiKey = env("HINDSIGHT_API_KEY");
+    const apiUrl = env("HINDSIGHT_API_URL");
+    if (apiKey === null && apiUrl === null && mode !== "local_external") return null;
+    return {
+      configPath: null,
+      baseUrl:
+        apiUrl ?? (LOCAL_MODES.has(mode) ? HERMES_DEFAULT_LOCAL_URL : HERMES_DEFAULT_CLOUD_URL),
+      bank: env("HINDSIGHT_BANK_ID") ?? HERMES_DEFAULT_BANK,
+      apiKey,
+    };
+  }
+
+  const mode = nonEmptyString(config["mode"]) ?? "cloud";
+  const banks = asRecord(config["banks"]);
+  const hermesBank = banks === null ? null : asRecord(banks["hermes"]);
+  return {
+    configPath: input.config?.path ?? null,
+    baseUrl:
+      nonEmptyString(config["api_url"]) ??
+      env("HINDSIGHT_API_URL") ??
+      (LOCAL_MODES.has(mode) ? HERMES_DEFAULT_LOCAL_URL : HERMES_DEFAULT_CLOUD_URL),
+    bank:
+      nonEmptyString(config["bank_id"]) ??
+      nonEmptyString(hermesBank?.["bankId"]) ??
+      HERMES_DEFAULT_BANK,
+    apiKey:
+      nonEmptyString(config["apiKey"]) ??
+      nonEmptyString(config["api_key"]) ??
+      env("HINDSIGHT_API_KEY"),
+  };
+}
