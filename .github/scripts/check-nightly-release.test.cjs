@@ -216,3 +216,109 @@ test("stable releases fail without a published nightly", async () => {
   const { options } = nightlyCommitFixture({ releases: [nightly(0, { tag_name: "v1.0.0" })] });
   await assert.rejects(resolveLatestNightlyCommit(options), /No published nightly/);
 });
+
+const { shouldFollowUpstreamNightly } = require("./check-nightly-release.cjs");
+
+const notFound = () => Object.assign(new Error("Not Found"), { status: 404 });
+
+// `merged` and `shipped` say whether this repo's main and its latest nightly
+// contain upstream's nightly commit; "missing" means GitHub cannot resolve it.
+function followFixture({
+  upstreamReleases = [nightly(1, { tag_name: "v1.0.1-nightly.20260905.200" })],
+  forkReleases = [nightly(8, { tag_name: "v1.0.1-nightly.20260905.10" })],
+  merged = "ahead",
+  shipped = "behind",
+} = {}) {
+  const calls = [];
+  const options = {
+    context: { repo: { owner: "fork", repo: "app" }, sha: "main-sha" },
+    core: { info() {} },
+    github: {
+      rest: {
+        repos: {
+          listReleases() {},
+          async getCommit({ owner, ref }) {
+            assert.equal(owner, "pingdotgg");
+            return { data: { sha: `sha-of-${ref}` } };
+          },
+          async compareCommitsWithBasehead(params) {
+            calls.push(params);
+            assert.equal(params.owner, "fork");
+            const status = params.basehead.endsWith("...main-sha") ? merged : shipped;
+            if (status === "missing") throw notFound();
+            return { data: { status } };
+          },
+        },
+      },
+      async paginate() {
+        return forkReleases;
+      },
+    },
+  };
+  options.github.rest.repos.listReleases = async ({ owner }) => {
+    assert.equal(owner, "pingdotgg");
+    return { data: upstreamReleases };
+  };
+  return { options, calls };
+}
+
+test("follows an upstream nightly that main contains and no fork nightly shipped", async () => {
+  const { options, calls } = followFixture();
+  assert.equal(await shouldFollowUpstreamNightly(options), true);
+  assert.deepEqual(
+    calls.map((call) => call.basehead),
+    [
+      "sha-of-v1.0.1-nightly.20260905.200...main-sha",
+      "sha-of-v1.0.1-nightly.20260905.200...v1.0.1-nightly.20260905.10",
+    ],
+  );
+});
+
+test("follows the newest upstream nightly by publication time, ignoring previews", async () => {
+  const { options, calls } = followFixture({
+    upstreamReleases: [
+      nightly(9, { tag_name: "v1.0.1-nightly.20260905.1" }),
+      nightly(0, { tag_name: "v1.0.1-preview.20260905.9" }),
+      nightly(2, { tag_name: "v1.0.1-nightly.20260905.7" }),
+    ],
+  });
+  assert.equal(await shouldFollowUpstreamNightly(options), true);
+  assert.match(calls[0].basehead, /^sha-of-v1\.0\.1-nightly\.20260905\.7\.\.\./);
+});
+
+test("skips while the upstream nightly is not merged into main", async () => {
+  for (const merged of ["missing", "behind", "diverged"]) {
+    const { options, calls } = followFixture({ merged });
+    assert.equal(await shouldFollowUpstreamNightly(options), false);
+    assert.equal(calls.length, 1);
+  }
+});
+
+test("skips when a fork nightly already shipped the upstream nightly", async () => {
+  for (const shipped of ["ahead", "identical"]) {
+    const { options } = followFixture({ shipped });
+    assert.equal(await shouldFollowUpstreamNightly(options), false);
+  }
+});
+
+test("follows without any prior fork nightly", async () => {
+  const { options, calls } = followFixture({ forkReleases: [] });
+  assert.equal(await shouldFollowUpstreamNightly(options), true);
+  assert.equal(calls.length, 1);
+});
+
+test("skips when upstream has no published nightly", async () => {
+  const { options, calls } = followFixture({
+    upstreamReleases: [nightly(0, { tag_name: "v1.0.0" })],
+  });
+  assert.equal(await shouldFollowUpstreamNightly(options), false);
+  assert.equal(calls.length, 0);
+});
+
+test("fails instead of releasing when GitHub errors for another reason", async () => {
+  const { options } = followFixture();
+  options.github.rest.repos.compareCommitsWithBasehead = async () => {
+    throw Object.assign(new Error("Server Error"), { status: 500 });
+  };
+  await assert.rejects(shouldFollowUpstreamNightly(options), /Server Error/);
+});
