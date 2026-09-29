@@ -89,3 +89,13 @@ it("requires operate permission for tool updates even alongside a read-only chec
   );
   expect(requiredScopeForDeviceList({ updateTool: "hub" })).toBe(AuthOrchestrationOperateScope);
 });
+
+it("keeps the Hermes skill library and on-demand content read-only", () => {
+  for (const method of [
+    WS_METHODS.hermesSkillsList,
+    WS_METHODS.hermesSkillsGet,
+    WS_METHODS.subscribeHermesSkills,
+  ]) {
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+  }
+});

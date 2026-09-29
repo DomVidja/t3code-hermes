@@ -257,6 +257,14 @@ import {
   ResourceTelemetrySnapshot,
 } from "./resourceTelemetry.ts";
 import {
+  HermesSkillsError,
+  HermesSkillsListInput,
+  HermesSkillsGetInput,
+  HermesSkillsSnapshot,
+  HermesSkillDetail,
+  HermesSkillsStreamEvent,
+} from "./hermesSkills.ts";
+import {
   HermesCronError,
   HermesCronListInput,
   HermesCronSetEnabledInput,
@@ -419,6 +427,8 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
+  hermesSkillsList: "hermes.skillsList",
+  hermesSkillsGet: "hermes.skillsGet",
   hermesCronList: "hermes.cronList",
   hermesCronSetEnabled: "hermes.cronSetEnabled",
   hermesCronSetMuted: "hermes.cronSetMuted",
@@ -487,6 +497,7 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  subscribeHermesSkills: "subscribeHermesSkills",
   subscribeHermesCron: "subscribeHermesCron",
 } as const;
 
@@ -711,6 +722,25 @@ const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
+const WsHermesSkillsListRpc = Rpc.make(WS_METHODS.hermesSkillsList, {
+  payload: HermesSkillsListInput,
+  success: HermesSkillsSnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesSkillsError]),
+});
+
+const WsHermesSkillsGetRpc = Rpc.make(WS_METHODS.hermesSkillsGet, {
+  payload: HermesSkillsGetInput,
+  success: HermesSkillDetail,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesSkillsError]),
+});
+
+const WsSubscribeHermesSkillsRpc = Rpc.make(WS_METHODS.subscribeHermesSkills, {
+  payload: Schema.Struct({}),
+  success: HermesSkillsStreamEvent,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesSkillsError]),
+  stream: true,
 });
 
 const WsHermesCronListRpc = Rpc.make(WS_METHODS.hermesCronList, {
@@ -1555,6 +1585,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
+  WsHermesSkillsListRpc,
+  WsHermesSkillsGetRpc,
+  WsSubscribeHermesSkillsRpc,
   WsHermesCronListRpc,
   WsHermesCronSetEnabledRpc,
   WsHermesCronSetMutedRpc,
