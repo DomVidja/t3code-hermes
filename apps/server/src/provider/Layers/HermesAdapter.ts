@@ -68,6 +68,7 @@ import {
   HERMES_TITLE_PROMPT_LIMIT,
   isHermesDerivedTitle,
   makeHermesAcpRuntime,
+  normalizeHermesTerminalResult,
   resolveHermesAcpBaseModelId,
   resolveHermesSessionModeId,
 } from "../acp/HermesAcpSupport.ts";
@@ -1057,7 +1058,7 @@ export function makeHermesAdapter(
                         provider: PROVIDER,
                         threadId: ctx.threadId,
                         turnId: notificationTurnId,
-                        toolCall: event.toolCall,
+                        toolCall: normalizeHermesTerminalResult(event.toolCall),
                         rawPayload: event.rawPayload,
                       }),
                     );
