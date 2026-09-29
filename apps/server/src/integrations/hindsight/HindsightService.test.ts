@@ -15,10 +15,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import { HindsightBankId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/unstable/http";
 
 import * as ServerSettings from "../../serverSettings.ts";
+import { resolveHermesHindsightPaths } from "./hermesHindsightConfig.ts";
 import * as HindsightService from "./HindsightService.ts";
 import {
   HINDSIGHT_BANKS_RESPONSE,
@@ -83,7 +85,13 @@ function stubHttp(
   );
 }
 
-/** The layer under test, with settings and HTTP both supplied by the caller. */
+/** Where the service looks for Hermes' Hindsight config in this process. */
+const HERMES_CONFIG_PATH = resolveHermesHindsightPaths(process.env).configFiles[0]!;
+
+/**
+ * The layer under test, with settings, HTTP and the files Hermes keeps all
+ * supplied by the caller. No test reads the real Hermes install.
+ */
 function withService(options: {
   readonly settings?: {
     readonly enabled?: boolean;
@@ -91,13 +99,26 @@ function withService(options: {
     readonly apiKey?: string;
     readonly defaultBank?: string;
   };
+  readonly files?: Readonly<Record<string, string>>;
   readonly http: Layer.Layer<HttpClient.HttpClient>;
 }) {
   const settingsLayer =
     options.settings === undefined
       ? ServerSettings.layerTest({})
       : ServerSettings.layerTest({ integrations: { hindsight: options.settings } });
-  return HindsightService.layer.pipe(Layer.provide(settingsLayer), Layer.provide(options.http));
+  const files = options.files ?? {};
+  const missing = FileSystem.makeNoop({});
+  const fileSystemLayer = FileSystem.layerNoop({
+    readFileString: (path) => {
+      const contents = files[path];
+      return contents === undefined ? missing.readFileString(path) : Effect.succeed(contents);
+    },
+  });
+  return HindsightService.layer.pipe(
+    Layer.provide(settingsLayer),
+    Layer.provide(options.http),
+    Layer.provide(fileSystemLayer),
+  );
 }
 
 /** Answers every endpoint this suite touches from the transcribed fixtures. */
@@ -122,6 +143,84 @@ const HAPPY_ROUTES = [
 ] as const;
 
 describe("HindsightService", () => {
+  describe("when Hermes has its own Hindsight config", () => {
+    const HERMES_URL = "http://100.64.0.7:8888";
+    const hermesFiles = {
+      [HERMES_CONFIG_PATH]: JSON.stringify({
+        mode: "local_external",
+        api_url: HERMES_URL,
+        bank_id: "hermes",
+        api_key: "hermes-key",
+      }),
+    };
+
+    it.effect("uses it with nothing set in T3 Code settings", () => {
+      const recorded: Array<RecordedRequest> = [];
+      return Effect.gen(function* () {
+        const hindsight = yield* HindsightService.HindsightService;
+        const result = yield* hindsight.listBanks({});
+        expect(result.status.availability).toBe("ready");
+        expect(result.defaultBank).toBe("hermes");
+        expect(result.connection).toEqual({
+          source: "hermes",
+          baseUrl: HERMES_URL,
+          hasApiKey: true,
+        });
+        expect(result.hermes).toMatchObject({ configPath: HERMES_CONFIG_PATH, bank: "hermes" });
+        expect(recorded.every((request) => request.url.startsWith(HERMES_URL))).toBe(true);
+        expect(recorded[0]?.authorization).toBe("Bearer hermes-key");
+      }).pipe(
+        Effect.provide(withService({ files: hermesFiles, http: stubHttp(HAPPY_ROUTES, recorded) })),
+      );
+    });
+
+    it.effect("is overridden by a URL in settings, which never receives Hermes' key", () => {
+      const recorded: Array<RecordedRequest> = [];
+      return Effect.gen(function* () {
+        const hindsight = yield* HindsightService.HindsightService;
+        const result = yield* hindsight.listBanks({});
+        expect(result.connection).toEqual({
+          source: "settings",
+          baseUrl: BASE_URL,
+          hasApiKey: false,
+        });
+        expect(recorded.length).toBeGreaterThan(0);
+        expect(recorded.every((request) => request.url.startsWith(BASE_URL))).toBe(true);
+        expect(recorded.every((request) => request.authorization === undefined)).toBe(true);
+      }).pipe(
+        Effect.provide(
+          withService({
+            settings: { baseUrl: BASE_URL },
+            files: hermesFiles,
+            http: stubHttp(HAPPY_ROUTES, recorded),
+          }),
+        ),
+      );
+    });
+
+    it.effect("stays unused when Memory is switched off, but is still reported", () =>
+      Effect.gen(function* () {
+        const hindsight = yield* HindsightService.HindsightService;
+        const result = yield* hindsight.listBanks({});
+        expect(result.status.availability).toBe("notConfigured");
+        expect(result.status.detail).toBe("Memory is turned off for this environment.");
+        expect(result.connection).toBeNull();
+        expect(result.hermes?.baseUrl).toBe(HERMES_URL);
+      }).pipe(
+        Effect.provide(
+          withService({
+            settings: { enabled: false },
+            files: hermesFiles,
+            http: Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("a switched-off Hindsight must not open a socket")),
+            ),
+          }),
+        ),
+      ),
+    );
+  });
+
   describe("when Hindsight is not configured", () => {
     const notConfigured = withService({
       http: Layer.succeed(

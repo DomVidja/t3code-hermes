@@ -583,6 +583,23 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
   {
+    id: "memory",
+    title: "Hindsight memory",
+    to: "/settings/integrations",
+    searchTerms: ["hindsight hermes agent memory recall remember bank"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "memory-server",
+    title: "Hindsight server",
+    to: "/settings/integrations",
+    targetId: "memory",
+    searchTerms: ["hindsight url api key bank connection hermes memory"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "device-hosts",
     title: "Device hosts",
     to: "/settings/integrations",
