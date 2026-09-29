@@ -1,17 +1,5 @@
-/**
- * Memory tab — what the agent remembers, via Hindsight.
- *
- * Deliberately dumb. Every decision — which bank, browse or recall, what a
- * failure means — is made in `useHindsightMemory`; this file turns that one
- * object into rows, chips, and four honest empty states.
- *
- * The tab renders whether or not Hindsight is configured. Hiding it would make
- * the panel's tab strip depend on a network read and shift after mount, and it
- * would leave someone who just configured Hindsight with no way to see that it
- * worked. So an unconfigured environment gets one sentence saying where to
- * turn it on, which is the shorter path to a working setup than a tab that is
- * not there.
- */
+/** Hermes's built-in notes remain available independently of the optional
+ * Hindsight bank. Each section owns its loading and failure state. */
 import {
   describeHindsightEmptyList,
   describeHindsightStats,
@@ -26,6 +14,7 @@ import { PlugZapIcon, RefreshCwIcon, SparklesIcon, XIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { useHindsightMemory } from "../../state/hindsight";
+import { HermesNativeMemorySection } from "./HermesNativeMemorySection";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
@@ -172,6 +161,21 @@ function RetainNote({
 }
 
 export function HermesMemoryTab() {
+  return (
+    <div className="flex flex-col gap-6">
+      <HermesNativeMemorySection />
+      <section
+        aria-label="Hindsight memory"
+        className="flex flex-col gap-3 border-t border-border/60 pt-4"
+      >
+        <h2 className="text-sm font-semibold">Hindsight</h2>
+        <HindsightMemorySection />
+      </section>
+    </div>
+  );
+}
+
+function HindsightMemorySection() {
   const {
     status,
     banks,
@@ -214,6 +218,15 @@ export function HermesMemoryTab() {
 
   const unavailable = describeHindsightUnavailable(status);
 
+  if (unavailable !== null && !unavailable.retryable) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Hindsight is optional and adds searchable, long-term recall. Configure it in the environment
+        to use it alongside native Hermes memory.
+      </p>
+    );
+  }
+
   if (unavailable !== null) {
     return (
       <Empty>
@@ -235,7 +248,7 @@ export function HermesMemoryTab() {
     return (
       <Empty>
         <EmptyHeader>
-          <EmptyTitle>Memory is unavailable</EmptyTitle>
+          <EmptyTitle>Hindsight is unavailable</EmptyTitle>
           <EmptyDescription>{error}</EmptyDescription>
         </EmptyHeader>
         <Button onClick={retry} variant="ghost">

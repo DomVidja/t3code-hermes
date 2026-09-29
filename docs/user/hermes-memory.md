@@ -1,17 +1,34 @@
 # Browse what the agent remembers
 
-Agents forget everything between sessions unless something keeps the notes. [Hindsight] is an
-open-source memory service that does exactly that: it stores what an agent learns, sorts it into
-world knowledge, lived experience and its own standing conclusions, and answers questions about it.
+The Memory tab shows the notes Hermes keeps across conversations, whether or not you use an
+external memory service. On web and desktop, open the Hermes panel from the sidebar and select
+**Memory**. On mobile, open **Settings → Hermes → Memory**. Enable the Hermes provider in the
+environment's Settings if it is not available.
 
-If you run Hindsight, the Memory tab of the Hermes panel is a window onto it. On web and desktop,
-the clock button in the sidebar footer opens the panel; Memory is the second tab. On mobile, open
-**Settings → Hermes → Memory**. The Hermes row appears only when a connected environment has a
-Hermes provider instance.
+## Hermes memory
+
+**Memory** contains the agent's notes. **User profile** contains what it remembers about you.
+These are Hermes's own `memories/MEMORY.md` and `memories/USER.md` files, not a second copy.
+The tab follows the enabled Hermes instance's home directory and updates when Hermes changes them.
+On Windows, set the provider instance's `HERMES_HOME` environment variable to Hermes's data directory.
+
+Add a note, edit an entry, or remove one after confirming. Each file shows its character usage;
+shorten or remove stale entries when it reaches its limit. If Hermes changes the file while you
+are editing, review the latest entries before trying again. Files that cannot be read safely stay
+read-only rather than being overwritten. Saving requires Python 3 on the server (normally supplied
+by the Hermes installation).
+
+Hermes captures its memory for a conversation when that conversation starts. A saved change is
+visible here immediately, but an already-running conversation may still use its original snapshot.
+
+## Hindsight (optional)
+
+[Hindsight] is an additional memory service for recall, browsing by pathway, and reflection. Its
+section remains separate from Hermes's built-in notes; neither service copies entries into the other.
 
 [Hindsight]: https://github.com/vectorize-io/hindsight
 
-## Setting it up
+### Setting up Hindsight
 
 Hindsight has to run on the same machine as the T3 Code server. Only the server ever talks to it,
 so it can stay bound to loopback and the Memory tab still works from your phone, from
@@ -36,8 +53,7 @@ Only `enabled` is required. `baseUrl` defaults to `http://127.0.0.1:8888`, which
 listens out of the box. `defaultBank` is the bank the tab opens on when you have more than one;
 leave it out and the tab opens on the first one Hindsight lists.
 
-Until you set this up, the Memory tab says so and points you here. It does not disappear — a tab
-that only exists once everything is already working is no help while you are setting it up.
+Without Hindsight configured, you can still browse and edit Hermes memory above it.
 
 ## Recalling and browsing
 
@@ -78,8 +94,8 @@ typed, it reflects on that question; with the search box empty, it summarises wh
 and what it is least sure of. The answer appears above the list until you dismiss it. Reflection
 runs a language model, so it takes longer than a search.
 
-Editing and deleting memories are deliberately not here. A memory store you can quietly prune from
-a side panel is a memory store you cannot trust; use Hindsight's own tools for that.
+Editing and deleting Hindsight memories still use Hindsight's own tools. The add, edit, and remove
+actions in **Hermes memory** affect only Hermes's built-in files.
 
 ## When something is wrong
 
