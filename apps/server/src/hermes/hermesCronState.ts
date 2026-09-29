@@ -32,6 +32,7 @@ import {
   HermesSettings,
   ProviderDriverKind,
   resolveProviderInstanceEnabled,
+  type HermesCronDelivery,
   type HermesCronJobState,
   type HermesCronRunStatus,
   type ProviderInstanceConfig,
@@ -50,6 +51,8 @@ export interface HermesCronPaths {
   readonly cronDir: string;
   readonly jobsFile: string;
   readonly executionsDb: string;
+  readonly deliveriesDb: string;
+  readonly stateDb: string;
 }
 
 /**
@@ -67,6 +70,8 @@ export function resolveHermesCronPaths(
     cronDir,
     jobsFile: NodePath.join(cronDir, "jobs.json"),
     executionsDb: NodePath.join(cronDir, "executions.db"),
+    deliveriesDb: NodePath.join(cronDir, "deliveries.db"),
+    stateDb: NodePath.join(home, "state.db"),
   };
 }
 
@@ -129,6 +134,7 @@ export interface ParsedHermesCronJob {
 }
 
 export interface ParsedHermesCronRun {
+  readonly delivery?: HermesCronDelivery;
   readonly id: string;
   readonly jobId: string;
   readonly status: HermesCronRunStatus;

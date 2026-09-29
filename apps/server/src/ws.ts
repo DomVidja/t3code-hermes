@@ -2691,6 +2691,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.hermesCronGetRunOutput]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesCronGetRunOutput, hermesCron.getRunOutput(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.hermesCronList]: (input) =>
           observeRpcEffect(WS_METHODS.hermesCronList, hermesCron.list(input), {
             "rpc.aggregate": "server",

@@ -3,6 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   HERMES_CRON_CONTRACT_VERSION,
+  HERMES_CRON_PREVIEW_LENGTH,
+  HERMES_CRON_OUTPUT_LENGTH,
+  HermesCronRunOutput,
+  HermesCronDelivery,
   HermesCronJobId,
   HermesCronListInput,
   HermesCronSetEnabledInput,
@@ -166,4 +170,34 @@ describe("Hermes cron request inputs", () => {
   it("rejects a blank job id", () => {
     expect(() => decodeSetEnabled({ jobId: "  ", enabled: true })).toThrow();
   });
+});
+
+it("bounds delivery previews independently of on-demand output", () => {
+  const delivery = {
+    preview: "x".repeat(HERMES_CRON_PREVIEW_LENGTH),
+    contentAvailable: true,
+    truncated: true,
+    source: "session",
+    targets: ["telegram"],
+    status: "delivered",
+    error: null,
+  };
+  const decode = Schema.decodeUnknownSync(HermesCronDelivery);
+  expect(decode(delivery)).toEqual(delivery);
+  expect(() => decode({ ...delivery, preview: delivery.preview + "x" })).toThrow();
+  const decodeOutput = Schema.decodeUnknownSync(HermesCronRunOutput);
+  expect(
+    decodeOutput({
+      content: "x".repeat(HERMES_CRON_OUTPUT_LENGTH),
+      source: "session",
+      truncated: true,
+    }).content,
+  ).toHaveLength(HERMES_CRON_OUTPUT_LENGTH);
+  expect(() =>
+    decodeOutput({
+      content: "x".repeat(HERMES_CRON_OUTPUT_LENGTH + 1),
+      source: "session",
+      truncated: true,
+    }),
+  ).toThrow();
 });
