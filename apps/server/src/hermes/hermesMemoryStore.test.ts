@@ -41,7 +41,7 @@ async function seed(memory = "First note\n§\nSecond note", config = "") {
 
 describe("Hermes 0.21.0 memory format", () => {
   // Sanitized copies from Hermes 0.21.0: hostnames, addresses, account IDs, and repository replaced.
-  it("round-trips sanitized real MEMORY.md and USER.md files byte-for-byte", async () => {
+  it("round-trips sanitized real MEMORY.md and USER.md through Hermes canonical serialization", async () => {
     await NodeFSP.cp(fixture, home, { recursive: true });
     const { files } = await readHermesMemoryFiles(environment);
     expect(files.map((file) => file.entries.length)).toEqual([14, 8]);
@@ -51,8 +51,9 @@ describe("Hermes 0.21.0 memory format", () => {
         "utf8",
       );
       expect(file.error).toBeNull();
-      expect(serializeHermesMemory(file.entries)).toBe(raw);
-      expect(file.charsUsed).toBe(Array.from(raw).length);
+      // Markdown formatting adds a final newline; Hermes strips outer whitespace.
+      expect(serializeHermesMemory(file.entries)).toBe(raw.trim());
+      expect(file.charsUsed).toBe(Array.from(raw.trim()).length);
     }
   });
 
