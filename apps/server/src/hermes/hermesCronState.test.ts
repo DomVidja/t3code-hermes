@@ -425,6 +425,20 @@ describe("readHermesCronRunOutput", () => {
     );
   });
 
+  it("prefers the run's own coarse-timestamped file over a neighbour's written just after", () => {
+    withOutputDir(
+      {
+        // This run's file, rounded down a second by a coarse filesystem.
+        "own.md": { text: "this run", mtime: "2026-09-29T22:00:18Z" },
+        // A run fired straight afterwards, still inside the slack.
+        "next.md": { text: "next run", mtime: "2026-09-29T22:00:27.500Z" },
+      },
+      (outputDir) => {
+        expect(readHermesCronRunOutput(outputDir, "job-1", run).markdown).toBe("this run");
+      },
+    );
+  });
+
   it("has nothing for an attempt that has not finished or whose file was pruned", () => {
     withOutputDir(
       { "2026-09-29_21-57-25.md": { text: "older run", mtime: "2026-09-29T21:57:25Z" } },

@@ -76,7 +76,9 @@ function RunOutput({ run }: { readonly run: HermesCronRun }) {
   return (
     <div className="max-h-96 overflow-y-auto rounded-md border border-border/60 px-3 py-2">
       {document.length === 0 ? (
-        <p className="text-xs text-muted-foreground">This run produced no output.</p>
+        truncated ? null : (
+          <p className="text-xs text-muted-foreground">This run produced no output.</p>
+        )
       ) : (
         <ChatMarkdown text={document} cwd={undefined} parseRawHtml={false} />
       )}

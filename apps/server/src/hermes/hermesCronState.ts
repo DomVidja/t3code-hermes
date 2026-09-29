@@ -416,7 +416,13 @@ export function readHermesCronRuns(
   }
 }
 
-/** One attempt by id, or `null` when it is not in the ledger or the ledger cannot be read. */
+/**
+ * One attempt by id, or `null` when it is not in the ledger or the ledger cannot be read.
+ *
+ * This runs on a client request rather than the background poll, so it gives
+ * up quickly instead of holding the event loop while another process has the
+ * ledger locked. Hermes keeps it in WAL mode, where a lock is rare.
+ */
 export function readHermesCronRun(
   dbPath: string,
   jobId: string,
@@ -424,7 +430,7 @@ export function readHermesCronRun(
 ): ParsedHermesCronRun | null {
   let database: NodeSqlite.DatabaseSync;
   try {
-    database = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true, timeout: 5_000 });
+    database = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true, timeout: 250 });
   } catch {
     return null;
   }
@@ -460,7 +466,8 @@ export interface HermesCronOutputFile {
  * the ledger's UTC timestamps without re-implementing that resolution. The
  * file's mtime has no timezone: Hermes saves the document after the work and
  * before it marks the attempt finished, so the right file is the one written
- * inside the run's own window. The newest wins if a diagnostic landed there too.
+ * inside the run's own window. The slack only admits files just outside it, and
+ * the closest one wins so a neighbouring run's file never beats this run's own.
  */
 export function pickHermesCronRunOutputFile(
   run: Pick<ParsedHermesCronRun, "claimedAt" | "startedAt" | "finishedAt">,
@@ -471,14 +478,21 @@ export function pickHermesCronRunOutputFile(
   // An attempt that has not finished has not saved its document yet.
   if (start === null || end === null) return null;
 
-  let best: HermesCronOutputFile | null = null;
+  let best: { readonly file: HermesCronOutputFile; readonly distance: number } | null = null;
   for (const file of files) {
     if (!file.name.endsWith(".md")) continue;
-    if (file.mtimeMs < start - OUTPUT_MTIME_SLACK_MS) continue;
-    if (file.mtimeMs > end + OUTPUT_MTIME_SLACK_MS) continue;
-    if (best === null || file.mtimeMs > best.mtimeMs) best = file;
+    const distance = Math.max(0, start - file.mtimeMs, file.mtimeMs - end);
+    if (distance > OUTPUT_MTIME_SLACK_MS) continue;
+    // Inside the window, the newest wins, in case a diagnostic landed there too.
+    if (
+      best === null ||
+      distance < best.distance ||
+      (distance === best.distance && file.mtimeMs > best.file.mtimeMs)
+    ) {
+      best = { file, distance };
+    }
   }
-  return best?.name ?? null;
+  return best?.file.name ?? null;
 }
 
 /** Hermes's own `_job_output_dir` rule: the id must be one plain path component. */

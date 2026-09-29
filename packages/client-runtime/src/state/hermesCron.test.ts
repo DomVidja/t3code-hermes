@@ -72,6 +72,59 @@ describe("describeHermesRunDocument", () => {
     );
   });
 
+  it("keeps a response that quotes a result heading in a code block", () => {
+    const document = [
+      "# Cron Job: PR digest",
+      "",
+      "## Prompt",
+      "",
+      "Summarise open PRs.",
+      "",
+      "## Response",
+      "",
+      "Hermes run documents look like this:",
+      "",
+      "```markdown",
+      "## Response",
+      "",
+      "Example.",
+      "```",
+      "",
+      "That is the format.",
+    ].join("\n");
+    expect(describeHermesRunDocument(document)).toBe(
+      [
+        "Hermes run documents look like this:",
+        "",
+        "```markdown",
+        "## Response",
+        "",
+        "Example.",
+        "```",
+        "",
+        "That is the format.",
+      ].join("\n"),
+    );
+  });
+
+  it("shows no result when truncation cut the document inside a pasted earlier run", () => {
+    const document = [
+      "# Cron Job: PR digest",
+      "",
+      "## Prompt",
+      "",
+      "## Your previous run's output",
+      "",
+      "```",
+      "# Cron Job: PR digest",
+      "",
+      "## Response",
+      "",
+      "Yesterday's digest.",
+    ].join("\n");
+    expect(describeHermesRunDocument(document, true)).toBe("");
+  });
+
   it("keeps the error section of a failed agent run", () => {
     const document = [
       "# Cron Job: PR digest (FAILED)",

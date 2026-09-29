@@ -184,6 +184,35 @@ const RUN_FIELD_LINE = /^\*\*([^*]+):\*\*\s/;
 /** Hermes's reply for a run with nothing new to say; it suppresses delivery. */
 const SILENT_RESPONSE = "[SILENT]";
 
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+/**
+ * Lines of the run's own result headings, skipping any inside fenced code.
+ *
+ * Follows CommonMark: a fence closes on a bare run of the same character at
+ * least as long as the one that opened it, so an info-string line like
+ * ` ```python ` inside a block is content, not a close.
+ */
+function resultHeadingLines(lines: readonly string[]): number[] {
+  const headings: number[] = [];
+  let fence: string | null = null;
+  lines.forEach((line, index) => {
+    const marker = FENCE_LINE.exec(line);
+    if (fence === null) {
+      if (marker !== null) fence = marker[1]!;
+      else if (line === "## Response" || line === "## Error") headings.push(index);
+    } else if (
+      marker !== null &&
+      marker[1]![0] === fence[0] &&
+      marker[1]!.length >= fence.length &&
+      marker[2]!.trim() === ""
+    ) {
+      fence = null;
+    }
+  });
+  return headings;
+}
+
 /**
  * The part of a Hermes run document worth reading under a run row.
  *
@@ -195,11 +224,14 @@ const SILENT_RESPONSE = "[SILENT]";
  * Hermes wrote for a script, silent, or blocked run.
  *
  * The prompt can itself contain whole earlier run documents — a job that reads
- * its previous output gets it pasted in, headings and all — so the result is
- * the *last* `## Response` or `## Error`, never the first heading after the
- * prompt.
+ * its previous output gets it pasted in, fenced, headings and all — and a
+ * response can quote such headings in its own code blocks. So the result is
+ * the *last* `## Response` or `## Error` outside any fence. A prompt with
+ * unbalanced fences can hide the real heading, so a complete document falls
+ * back to the last heading of all; a `truncated` one may have lost its result
+ * entirely, so it shows none rather than a heading from inside the prompt.
  */
-export function describeHermesRunDocument(markdown: string): string {
+export function describeHermesRunDocument(markdown: string, truncated = false): string {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   let index = 0;
   if (lines[0]?.startsWith("# Cron Job:")) index = 1;
@@ -215,11 +247,16 @@ export function describeHermesRunDocument(markdown: string): string {
 
   let body = lines.slice(index);
   if (body[0] === "## Prompt") {
-    const result = body.findLastIndex((line) => line === "## Response" || line === "## Error");
-    if (result <= 0) body = [];
+    const unfenced = resultHeadingLines(body).at(-1);
+    const heading =
+      unfenced ??
+      (truncated
+        ? undefined
+        : body.findLastIndex((line) => line === "## Response" || line === "## Error"));
+    if (heading === undefined || heading <= 0) body = [];
     // The response heading is the only one left, so it says nothing; an error
     // heading is the one signal that the run failed.
-    else body = body.slice(body[result] === "## Response" ? result + 1 : result);
+    else body = body.slice(body[heading] === "## Response" ? heading + 1 : heading);
   }
 
   let result = body.join("\n").trim();

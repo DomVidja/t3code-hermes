@@ -94,14 +94,15 @@ export function useHermesRunOutput(
     serverEnvironment.hermesCronRunOutput({ environmentId, input: { jobId, runId } }),
   );
   const markdown = query.data?.markdown ?? null;
+  const truncated = query.data?.truncated ?? false;
   const document = useMemo(
-    () => (markdown === null ? null : describeHermesRunDocument(markdown)),
-    [markdown],
+    () => (markdown === null ? null : describeHermesRunDocument(markdown, truncated)),
+    [markdown, truncated],
   );
   return {
     /** The readable part of the saved document; `null` when Hermes kept none. */
     document,
-    truncated: query.data?.truncated ?? false,
+    truncated,
     isPending: query.isPending && query.data === null,
     error: query.data === null ? query.error : null,
   };

@@ -455,7 +455,9 @@ function RunOutput(props: { readonly environmentId: EnvironmentId; readonly run:
   return (
     <View className="gap-2 rounded-xl border border-border-subtle px-3 py-2">
       {output.document.length === 0 ? (
-        <Text className="text-sm text-foreground-muted">This run produced no output.</Text>
+        output.truncated ? null : (
+          <Text className="text-sm text-foreground-muted">This run produced no output.</Text>
+        )
       ) : (
         <MarkdownPreviewBody markdown={output.document} />
       )}
