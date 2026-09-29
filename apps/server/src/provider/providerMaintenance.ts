@@ -65,6 +65,12 @@ export interface ProviderMaintenanceCapabilities {
    * installer was asked and did not know.
    */
   readonly latestVersion?: string | null;
+  /**
+   * GitHub `owner/repo` whose latest release is authoritative when there is
+   * no npm package. The version is read from the release title, since tags
+   * may be calendar-versioned (Hermes titles read `Hermes Agent v0.21.5 (v2026.9.24)`).
+   */
+  readonly githubReleaseRepository?: string;
 }
 
 export interface ProviderMaintenanceCommandAction {
@@ -161,6 +167,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
   readonly latestVersion?: string | null;
+  readonly githubReleaseRepository?: string;
 }): ProviderMaintenanceCapabilities {
   const platform = input.platform ?? HostProcessPlatform.defaultValue();
   const update =
@@ -183,6 +190,9 @@ export function makeProviderMaintenanceCapabilities(input: {
     packageName: input.packageName,
     update,
     ...("latestVersion" in input ? { latestVersion: input.latestVersion } : {}),
+    ...(input.githubReleaseRepository
+      ? { githubReleaseRepository: input.githubReleaseRepository }
+      : {}),
   };
 }
 
@@ -216,6 +226,7 @@ export function makeTargetedProviderUpdateAction(
 export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
+  readonly githubReleaseRepository?: string;
 }): ProviderMaintenanceCapabilities {
   return makeProviderMaintenanceCapabilities({
     provider: input.provider,
@@ -223,6 +234,9 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
     updateExecutable: null,
     updateArgs: [],
     updateLockKey: null,
+    ...(input.githubReleaseRepository
+      ? { githubReleaseRepository: input.githubReleaseRepository }
+      : {}),
   });
 }
 
@@ -683,26 +697,68 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   return payload ? nonEmptyString(payload.version) : null;
 });
 
+const GitHubLatestReleaseResponse = Schema.Struct({
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+/** Semver from a release title; the first `x.y.z` wins, so a trailing calendar tag is ignored. */
+function parseGitHubReleaseTitleVersion(title: string): string | null {
+  return /\bv?(\d+\.\d+\.\d+)\b/.exec(title)?.[1] ?? null;
+}
+
+const fetchGitHubLatestReleaseVersion = Effect.fn("fetchGitHubLatestReleaseVersion")(function* (
+  repository: string,
+) {
+  const client = yield* HttpClient.HttpClient;
+  const request = HttpClientRequest.get(
+    `https://api.github.com/repos/${repository}/releases/latest`,
+  ).pipe(HttpClientRequest.setHeader("accept", "application/vnd.github+json"));
+  const response = yield* client.execute(request).pipe(
+    Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
+    Effect.orElseSucceed(() => Option.none()),
+  );
+  if (Option.isNone(response)) {
+    return null;
+  }
+  const httpResponse = response.value;
+  if (httpResponse.status < 200 || httpResponse.status >= 300) {
+    return null;
+  }
+  const payload = yield* httpResponse.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(GitHubLatestReleaseResponse)),
+    Effect.orElseSucceed(() => null),
+  );
+  return payload?.name ? parseGitHubReleaseTitleVersion(payload.name) : null;
+});
+
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
 ) {
   if (maintenanceCapabilities.latestVersion !== undefined) {
     return maintenanceCapabilities.latestVersion;
   }
-  const packageName = maintenanceCapabilities.packageName;
-  if (!packageName) {
+  const { packageName, githubReleaseRepository } = maintenanceCapabilities;
+  const source = packageName
+    ? { cacheKey: packageName, fetch: fetchNpmLatestVersion(packageName) }
+    : githubReleaseRepository
+      ? {
+          cacheKey: `github:${githubReleaseRepository}`,
+          fetch: fetchGitHubLatestReleaseVersion(githubReleaseRepository),
+        }
+      : null;
+  if (!source) {
     return null;
   }
 
   const latestVersionCache = yield* ProviderVersionCache;
-  const cached = latestVersionCache.get(packageName);
+  const cached = latestVersionCache.get(source.cacheKey);
   const now = DateTime.toEpochMillis(yield* DateTime.now);
   if (cached && cached.expiresAt > now) {
     return cached.version;
   }
 
-  const version = yield* fetchNpmLatestVersion(packageName);
-  latestVersionCache.set(packageName, {
+  const version = yield* source.fetch;
+  latestVersionCache.set(source.cacheKey, {
     expiresAt: now + LATEST_VERSION_CACHE_TTL_MS,
     version,
   });
