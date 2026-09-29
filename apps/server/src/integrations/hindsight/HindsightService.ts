@@ -161,7 +161,7 @@ function trimmedOrNull(value: string | undefined): string | null {
  * Hermes' key is only ever sent to Hermes' URL, so pointing the panel somewhere
  * else never hands that server a credential it was not given.
  */
-export function resolveHindsightConnection(
+function resolveHindsightConnection(
   settings: HindsightSettings,
   hermes: HermesHindsightConfig | null,
 ): HindsightConnection | null {
