@@ -53,9 +53,10 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useServerConfigs } from "../../state/entities";
 import { useHermesCron } from "../../state/hermesCron";
 import { useHindsightMemory } from "../../state/hindsight";
+import { HermesSkillsTab } from "./HermesSkillsTab";
 
 const HERMES_DRIVER = "hermes";
-type HermesTab = "tasks" | "memory";
+type HermesTab = "tasks" | "memory" | "skills";
 
 interface HermesEnvironmentOption {
   readonly environmentId: EnvironmentId;
@@ -104,7 +105,7 @@ export function HermesRouteScreen() {
       {environmentId === null ? (
         <CenteredState
           title="Hermes is not available"
-          description="Connect an environment with a Hermes provider instance to use Tasks and Memory."
+          description="Connect an environment with a Hermes provider instance to use Tasks, Memory, and Skills."
         />
       ) : (
         <View className="flex-1">
@@ -118,8 +119,10 @@ export function HermesRouteScreen() {
           <View className="flex-1" key={`${environmentId}:${tab}`}>
             {tab === "tasks" ? (
               <HermesTasksScreen environmentId={environmentId} />
-            ) : (
+            ) : tab === "memory" ? (
               <HermesMemoryScreen environmentId={environmentId} />
+            ) : (
+              <HermesSkillsTab environmentId={environmentId} />
             )}
           </View>
         </View>
@@ -143,7 +146,7 @@ function HermesHeader(props: {
         </View>
         <View className="min-w-0 flex-1">
           <Text className="text-lg font-t3-semibold text-foreground">Hermes</Text>
-          <Text className="text-sm text-foreground-muted">Scheduled work and Hindsight memory</Text>
+          <Text className="text-sm text-foreground-muted">Scheduled work, memory, and skills</Text>
         </View>
       </View>
 
@@ -161,7 +164,7 @@ function HermesHeader(props: {
       ) : null}
 
       <View className="flex-row rounded-full bg-subtle p-1">
-        {(["tasks", "memory"] as const).map((item) => {
+        {(["tasks", "memory", "skills"] as const).map((item) => {
           const selected = props.tab === item;
           return (
             <Pressable
@@ -182,7 +185,7 @@ function HermesHeader(props: {
                     : "text-sm text-foreground-muted"
                 }
               >
-                {item === "tasks" ? "Tasks" : "Memory"}
+                {item === "tasks" ? "Tasks" : item === "memory" ? "Memory" : "Skills"}
               </Text>
             </Pressable>
           );

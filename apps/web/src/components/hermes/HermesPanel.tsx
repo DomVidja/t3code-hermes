@@ -1,11 +1,9 @@
 /**
  * Hermes panel — a full-page view opened from the sidebar, mirroring Usage.
  *
- * Two tabs: Tasks (Hermes's scheduled jobs) and Memory (what the agent
- * remembers, via Hindsight). The tab list is data, so adding a third is one
- * entry plus one component.
+ * Tasks, Memory, and Skills expose scheduled work, memory, and learned procedures.
  *
- * Both tabs render unconditionally and speak for themselves when their backing
+ * All tabs are offered unconditionally and speak for themselves when their backing
  * service is absent. A tab that appears only once a network read lands would
  * shift the strip after mount and would hide the one screen that tells someone
  * whether the thing they just configured is working.
@@ -23,12 +21,14 @@ import { SidebarInset } from "../ui/sidebar";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
 import { HermesMemoryTab } from "./HermesMemoryTab";
 import { HermesTasksTab } from "./HermesTasksTab";
+import { HermesSkillsTab } from "./HermesSkillsTab";
 
-type HermesTab = "tasks" | "memory";
+type HermesTab = "tasks" | "memory" | "skills";
 
 const TABS: ReadonlyArray<{ readonly value: HermesTab; readonly label: string }> = [
   { value: "tasks", label: "Tasks" },
   { value: "memory", label: "Memory" },
+  { value: "skills", label: "Skills" },
 ];
 
 export function HermesPanel() {
@@ -79,7 +79,13 @@ export function HermesPanel() {
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-5">
-            {tab === "tasks" ? <HermesTasksTab onNewTask={handleNewTask} /> : <HermesMemoryTab />}
+            {tab === "tasks" ? (
+              <HermesTasksTab onNewTask={handleNewTask} />
+            ) : tab === "memory" ? (
+              <HermesMemoryTab />
+            ) : (
+              <HermesSkillsTab key={environmentId} />
+            )}
           </div>
         </ScrollArea>
       </div>
