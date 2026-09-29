@@ -232,7 +232,7 @@ type HermesAcpRuntimeHermesSettings = Pick<HermesSettings, "binaryPath">;
 
 export interface HermesAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
-  "authMethodId" | "clientCapabilities" | "spawn"
+  "authMethodId" | "clientCapabilities" | "spawn" | "transformSessionUpdate"
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly hermesSettings: HermesAcpRuntimeHermesSettings | null | undefined;
@@ -252,6 +252,28 @@ export function buildHermesAcpSpawnInput(
   };
 }
 
+/** Hermes's reply to a steer it folded into the running turn. */
+const HERMES_REDIRECT_ACK = "Redirected the active turn with your correction.";
+
+/**
+ * Hermes confirms a live steer by sending a fixed sentence as assistant text.
+ * The user's steer message already shows in the thread, so the sentence is
+ * blanked; the runtime drops empty chunks without opening an assistant message.
+ */
+function dropHermesRedirectAck(
+  notification: EffectAcpSchema.SessionNotification,
+): EffectAcpSchema.SessionNotification {
+  const update = notification.update;
+  if (
+    update.sessionUpdate !== "agent_message_chunk" ||
+    update.content.type !== "text" ||
+    update.content.text !== HERMES_REDIRECT_ACK
+  ) {
+    return notification;
+  }
+  return { ...notification, update: { ...update, content: { ...update.content, text: "" } } };
+}
+
 export const makeHermesAcpRuntime = (
   input: HermesAcpRuntimeInput,
 ): Effect.Effect<
@@ -265,6 +287,7 @@ export const makeHermesAcpRuntime = (
         ...input,
         spawn: buildHermesAcpSpawnInput(input.hermesSettings, input.cwd, input.environment),
         authMethodId: HERMES_AUTH_METHOD_ID,
+        transformSessionUpdate: dropHermesRedirectAck,
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

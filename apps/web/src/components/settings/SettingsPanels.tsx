@@ -569,6 +569,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
         ? ["Auto-settle merged threads"]
         : []),
+      ...(settings.sidebarStatusRings !== DEFAULT_UNIFIED_SETTINGS.sidebarStatusRings
+        ? ["Thread status rings"]
+        : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed
@@ -677,6 +680,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
+      settings.sidebarStatusRings,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -775,6 +779,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      sidebarStatusRings: DEFAULT_UNIFIED_SETTINGS.sidebarStatusRings,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -1469,6 +1474,31 @@ export function AppearanceSettingsPanel() {
                 }
               />
             ) : null
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("status-rings")}
+          description="Outline active threads in the sidebar with their status: marching while working, breathing while waiting on you, pulsing on failure. Your system's reduce-motion setting keeps the outlines but holds them still."
+          resetAction={
+            settings.sidebarStatusRings !== DEFAULT_UNIFIED_SETTINGS.sidebarStatusRings ? (
+              <SettingResetButton
+                label="thread status rings"
+                onClick={() =>
+                  updateSettings({
+                    sidebarStatusRings: DEFAULT_UNIFIED_SETTINGS.sidebarStatusRings,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarStatusRings}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarStatusRings: Boolean(checked) })
+              }
+              aria-label="Thread status rings"
+            />
           }
         />
       </SettingsSection>
