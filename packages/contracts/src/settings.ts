@@ -931,6 +931,19 @@ export const UsageLimitSourceConfig = Schema.Struct({
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
+/**
+ * Bitbucket API credentials for this environment, used before the
+ * `T3CODE_BITBUCKET_*` environment variables. The tokens live in the server's
+ * secret store; settings and clients only see a redaction marker when one is
+ * set. The access token wins when both kinds are configured.
+ */
+export const BitbucketSettings = Schema.Struct({
+  email: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  accessToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  apiToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BitbucketSettings = typeof BitbucketSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1350,6 +1363,7 @@ export const ServerSettings = Schema.Struct({
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   integrations: IntegrationSettings,
+  bitbucket: BitbucketSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
@@ -1627,6 +1641,14 @@ export const ServerSettingsPatch = Schema.Struct({
           defaultBank: Schema.optionalKey(TrimmedString),
         }),
       ),
+    }),
+  ),
+  /** An empty token clears it; an omitted one keeps what the server has. */
+  bitbucket: Schema.optionalKey(
+    Schema.Struct({
+      email: Schema.optionalKey(TrimmedString),
+      accessToken: Schema.optionalKey(TrimmedString),
+      apiToken: Schema.optionalKey(TrimmedString),
     }),
   ),
   providers: Schema.optionalKey(
