@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+// Pure path and home-directory resolution, shared with tests; file reads go through Effect's FileSystem.
 /**
  * Hermes Agent's own Hindsight connection, read the way Hermes reads it.
  *
@@ -42,7 +43,11 @@ export interface HermesHindsightPaths {
 
 export function resolveHermesHindsightPaths(
   environment: NodeJS.ProcessEnv,
-  homedir: string = NodeOS.homedir(),
+  // Python's `Path.home()` honours HOME (USERPROFILE on Windows), so a Hermes
+  // instance given its own home is followed there.
+  homedir: string = environment["HOME"]?.trim() ||
+    environment["USERPROFILE"]?.trim() ||
+    NodeOS.homedir(),
 ): HermesHindsightPaths {
   const hermesHome = environment["HERMES_HOME"]?.trim() || NodePath.join(homedir, ".hermes");
   return {

@@ -314,8 +314,23 @@ export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const client = yield* HttpClient.HttpClient;
 
+  /**
+   * A missing file is the normal "Hermes has no Hindsight config" case. Any
+   * other failure is logged but still reads as absent, because reads never
+   * fail: the panel says "not set up" and the log says why.
+   */
   const readFileOrNull = (path: string) =>
-    fs.readFileString(path).pipe(Effect.orElseSucceed(() => null));
+    fs
+      .readFileString(path)
+      .pipe(
+        Effect.catch((cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.succeed(null)
+            : Effect.logWarning("could not read Hermes' Hindsight config", { path, cause }).pipe(
+                Effect.as(null),
+              ),
+        ),
+      );
 
   /**
    * Hermes' Hindsight config, read fresh each time: a handful of small local

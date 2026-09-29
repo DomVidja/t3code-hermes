@@ -111,9 +111,6 @@ export interface HindsightUnavailableState {
   readonly retryable: boolean;
 }
 
-/** Where the Memory settings live, in the words both clients use to point at them. */
-export const HINDSIGHT_SETTINGS_LOCATION = "Settings → Integrations → Memory";
-
 /**
  * Copy for a Hindsight that cannot answer, or `null` when it can.
  *
@@ -131,12 +128,13 @@ export function describeHindsightUnavailable(
       return options.enabled
         ? {
             title: "Memory is not set up",
-            description: `Set up Hindsight memory in Hermes and it is picked up here automatically, or enter a Hindsight server in ${HINDSIGHT_SETTINGS_LOCATION}.`,
+            description:
+              "Set up Hindsight memory in Hermes and it is picked up here automatically, or enter a Hindsight server in Memory settings.",
             retryable: true,
           }
         : {
             title: "Memory is turned off",
-            description: `Turn it on in ${HINDSIGHT_SETTINGS_LOCATION} to browse what the agent remembers.`,
+            description: "Turn it on in Memory settings to browse what the agent remembers.",
             retryable: false,
           };
     case "offline":
