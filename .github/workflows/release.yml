@@ -6,10 +6,8 @@ on:
       - "v*.*.*"
       - "!v*-nightly.*"
       - "!v*-preview.*"
-  schedule:
-    # Once nightly, off minute zero because GitHub delays scheduled runs most
-    # at the top of the hour. The fork avoids upstream's three-hour cadence.
-    - cron: "38 7 * * *"
+  # No schedule on the fork: sync-upstream.yml dispatches a nightly whenever
+  # main has caught up to an upstream nightly the fork has not shipped yet.
   workflow_dispatch:
     inputs:
       channel:

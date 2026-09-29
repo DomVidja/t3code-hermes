@@ -1,17 +1,23 @@
 name: Sync Upstream
 
-# Nightly merge of pingdotgg/t3code into this fork's main.
+# Merges pingdotgg/t3code into this fork's main every three hours, matching
+# upstream's nightly cadence, then cuts a fork nightly once main contains an
+# upstream nightly the fork has not shipped yet.
 #
 # Merge, not rebase: the fork's history is public and rebasing would rewrite
 # commits that are already pushed. A merge also keeps the Hermes commits intact
 # and makes the next sync's conflict set smaller.
+#
+# A conflict files an `upstream-sync-conflict` issue; the Hermes upstream-sync
+# resolver picks it up from the webhook, merges its resolution PR once CI is
+# green, and dispatches this workflow again to release.
 #
 # This workflow only ever runs on a fork (see the job guard). It is inert if it
 # is ever merged back upstream.
 
 on:
   schedule:
-    - cron: "30 5 * * *"
+    - cron: "50 */3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -147,9 +153,56 @@ jobs:
       - name: Trigger CI
         if: steps.merge.outputs.status == 'merged'
         # Pushes authenticated with the default GITHUB_TOKEN do not start other
-        # workflows, so CI is dispatched by hand. (The nightly release workflow
-        # is cron-driven and needs no push trigger.)
+        # workflows, so CI is dispatched by hand, as is the release below.
         run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
+
+      # Fork nightlies follow upstream's: release once main contains an
+      # upstream nightly commit that no fork nightly has shipped yet. Runs on
+      # `up-to-date` too, so a sync re-dispatched after a conflict-resolution
+      # PR merges still releases. release.yml's own test jobs gate publishing.
+      - id: release
+        name: Dispatch fork nightly
+        if: steps.merge.outputs.status == 'merged' || steps.merge.outputs.status == 'up-to-date'
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          nightly_tag() {
+            gh release list --repo "$1" --limit 50 --json tagName,publishedAt,isDraft \
+              --jq '[.[] | select((.isDraft | not) and (.tagName | test("-nightly\\.")))] | sort_by(.publishedAt) | last | .tagName // empty'
+          }
+
+          upstream_tag="$(nightly_tag pingdotgg/t3code)"
+          if [[ -z "$upstream_tag" ]]; then
+            echo "No upstream nightly found; nothing to follow." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          upstream_nightly="$(gh api "repos/pingdotgg/t3code/commits/$upstream_tag" --jq .sha)"
+
+          if ! git merge-base --is-ancestor "$upstream_nightly" HEAD; then
+            echo "Upstream $upstream_tag is not in main yet; no release." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          fork_tag="$(nightly_tag "$GITHUB_REPOSITORY")"
+          if [[ -n "$fork_tag" ]]; then
+            fork_nightly="$(gh api "repos/$GITHUB_REPOSITORY/commits/$fork_tag" --jq .sha)"
+            if git merge-base --is-ancestor "$upstream_nightly" "$fork_nightly"; then
+              echo "Upstream $upstream_tag already shipped in $fork_tag." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
+
+          pending="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --limit 20 \
+            --json status --jq '[.[] | select(.status != "completed")] | length')"
+          if [[ "$pending" != "0" ]]; then
+            echo "A release run is already in flight; the next sync will pick up $upstream_tag if it still needs shipping." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f channel=nightly
+          echo "Dispatched a fork nightly following upstream $upstream_tag." | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Advisory, and deliberately after the push: the merge is already correct
       # by the time this runs, so a heuristic must never be what keeps it from
