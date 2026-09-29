@@ -477,6 +477,16 @@ Notes:
 - The workflow decodes `MACOS_PROVISIONING_PROFILE`, validates it with `security cms`, and passes it
   to the desktop packager.
 
+### Self-signed fallback
+
+Without the Apple secrets, macOS builds are ad hoc signed, and in-app updates fail: Squirrel.Mac
+only installs an update signed by the same identity as the running app, and every ad hoc signature
+is unique. To keep updates working without an Apple Developer account, set
+`MACOS_SELF_SIGNED_P12` (a base64-encoded `.p12` of a self-signed "Code Signing" certificate from
+Keychain Access) and `MACOS_SELF_SIGNED_P12_PASSWORD`. Keep the certificate: builds signed with a
+different one cannot update each other, and the first self-signed build must be installed by hand.
+Gatekeeper still asks for approval on first launch. Apple signing takes precedence when both are set.
+
 ## 3) Azure Trusted Signing setup (Windows)
 
 Required secrets used by the workflow:

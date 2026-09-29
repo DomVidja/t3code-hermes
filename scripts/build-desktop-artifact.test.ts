@@ -1940,6 +1940,51 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  it.effect("signs unsigned macOS builds with a configured self-signed identity", () =>
+    Effect.gen(function* () {
+      const selfSigned = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      ).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_MAC_SELF_SIGN_IDENTITY: "ABC123" } }),
+          ),
+        ),
+      );
+      const mac = selfSigned.mac as Record<string, unknown>;
+      assert.equal(mac.identity, "-");
+      assert.equal(mac.hardenedRuntime, false);
+      assert.equal(mac.timestamp, "none");
+      assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
+
+      // Apple signing wins when both are configured.
+      const appleSigned = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        true,
+        false,
+        undefined,
+        undefined,
+      ).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_MAC_SELF_SIGN_IDENTITY: "ABC123" } }),
+          ),
+        ),
+      );
+      const appleMac = appleSigned.mac as Record<string, unknown>;
+      assert.notProperty(appleMac, "identity");
+      assert.notProperty(appleMac, "hardenedRuntime");
+    }),
+  );
+
   it.effect("uses the nightly DMG background for nightly macOS builds", () =>
     Effect.gen(function* () {
       const config = yield* createBuildConfig(
