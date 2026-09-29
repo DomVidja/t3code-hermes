@@ -45,7 +45,7 @@ export function createHermesDeliveryFixture(home: string): void {
   }
 }
 
-/** Append while T3 is subscribed; refresh Tasks or wait for its next 60-second poll. */
+/** Append while T3 is subscribed; its next 60-second poll observes the new completion. */
 export function appendHermesDeliveryFixture(
   home: string,
   options: {
