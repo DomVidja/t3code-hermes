@@ -269,6 +269,7 @@ function rememberPendingTaskModel(
 
 interface ClaudeSessionContext {
   session: ProviderSession;
+  readonly pendingContextRequests: Set<AbortController>;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
@@ -324,6 +325,19 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  /** Trusted, session-stable instructions appended to the native Claude Code preset. */
+  readonly systemPromptAppend?: string;
+  /** Resolves optional user-level context for each send, including steering messages.
+   * Preparation times out after 10 seconds. Callers own content-size bounds and
+   * must honor cancellation to release their IO; no memory writeback is performed.
+   */
+  readonly resolveTurnContext?: (request: {
+    readonly instanceId: ProviderInstanceId;
+    readonly threadId: ThreadId;
+    readonly cwd: string | undefined;
+    readonly input: string | undefined;
+    readonly signal: AbortSignal;
+  }) => Promise<string | undefined>;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
@@ -1286,11 +1300,15 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly fileSystem: FileSystem.FileSystem;
     readonly attachmentsDir: string;
     readonly boundInstanceId: ProviderInstanceId;
+    readonly turnContext?: string;
   },
 ) {
   const text = buildPromptText(input, dependencies.boundInstanceId);
   const sdkContent: Array<Record<string, unknown>> = [];
 
+  if (dependencies.turnContext) {
+    sdkContent.push({ type: "text", text: dependencies.turnContext });
+  }
   if (text.length > 0) {
     sdkContent.push({ type: "text", text });
   }
@@ -3697,6 +3715,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
 
     context.stopped = true;
+    for (const request of context.pendingContextRequests) request.abort();
 
     for (const taskId of Array.from(context.liveTaskIds)) {
       if (!context.liveTaskIds.delete(taskId)) {
@@ -4210,7 +4229,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          ...(options?.systemPromptAppend ? { append: options.systemPromptAppend } : {}),
+        },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.
@@ -4308,6 +4331,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const context: ClaudeSessionContext = {
         session,
         promptQueue,
+        pendingContextRequests: new Set(),
         query: queryRuntime,
         streamFiber: undefined,
         startedAt,
@@ -4416,6 +4440,68 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? input.modelSelection
         : undefined;
 
+    const resolveTurnContext = options?.resolveTurnContext;
+    const turnContext = resolveTurnContext
+      ? yield* Effect.tryPromise({
+          try: async (signal) => {
+            const controller = new AbortController();
+            context.pendingContextRequests.add(controller);
+            const requestSignal = AbortSignal.any([signal, controller.signal]);
+            let onAbort = () => {};
+            try {
+              return await Promise.race([
+                new Promise<never>((_resolve, reject) => {
+                  onAbort = () => reject(new Error("Context request cancelled."));
+                  requestSignal.addEventListener("abort", onAbort, { once: true });
+                  if (requestSignal.aborted) onAbort();
+                }),
+                resolveTurnContext({
+                  instanceId: boundInstanceId,
+                  threadId: input.threadId,
+                  cwd: context.session.cwd,
+                  input: input.input,
+                  signal: requestSignal,
+                }),
+              ]);
+            } finally {
+              requestSignal.removeEventListener("abort", onAbort);
+              context.pendingContextRequests.delete(controller);
+            }
+          },
+          catch: () =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "turn/context",
+              detail: "Failed to prepare Claude turn context.",
+            }),
+        }).pipe(
+          Effect.timeout("10 seconds"),
+          Effect.mapError(
+            () =>
+              new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "turn/context",
+                detail: "Failed to prepare Claude turn context.",
+              }),
+          ),
+        )
+      : undefined;
+    const message = yield* buildUserMessageEffect(input, {
+      fileSystem,
+      attachmentsDir: serverConfig.attachmentsDir,
+      boundInstanceId,
+      ...(turnContext ? { turnContext } : {}),
+    });
+    // Retrieval and attachment IO can outlive a stopped or replaced session.
+    const currentContext = yield* requireSession(input.threadId);
+    if (context.stopped || currentContext !== context) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "turn/context",
+        detail: "Claude session changed while preparing turn context.",
+      });
+    }
+
     // A sendTurn while a real turn is running is a steer: the message is
     // queued into the live SDK agent loop and the work continues as the same
     // turn — no synthetic turn boundary. Stale synthetic turns (from
@@ -4498,12 +4584,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         providerRefs: {},
       });
     }
-
-    const message = yield* buildUserMessageEffect(input, {
-      fileSystem,
-      attachmentsDir: serverConfig.attachmentsDir,
-      boundInstanceId,
-    });
 
     yield* Queue.offer(context.promptQueue, {
       type: "message",

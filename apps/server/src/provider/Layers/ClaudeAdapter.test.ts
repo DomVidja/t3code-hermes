@@ -25,6 +25,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Random from "effect/Random";
@@ -155,6 +156,8 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly systemPromptAppend?: string;
+  readonly resolveTurnContext?: ClaudeAdapterLiveOptions["resolveTurnContext"];
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -166,6 +169,8 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.systemPromptAppend ? { systemPromptAppend: config.systemPromptAppend } : {}),
+    ...(config?.resolveTurnContext ? { resolveTurnContext: config.resolveTurnContext } : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -267,6 +272,146 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
+  it.effect("injects instance-local context into actual SDK inputs on every send", () => {
+    const instanceId = ProviderInstanceId.make("clermes-test");
+    const calls: Array<string> = [];
+    const harness = makeHarness({
+      instanceId,
+      systemPromptAppend: "Clermes identity; memory writeback disabled.",
+      resolveTurnContext: async (request) => {
+        assert.equal(request.instanceId, instanceId);
+        assert.equal(request.threadId, THREAD_ID);
+        assert.equal(request.cwd, "/tmp/clermes-project");
+        calls.push(request.input ?? "");
+        return `Scoped context: ${request.input}`;
+      },
+    });
+    const vanilla = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: "/tmp/clermes-project",
+        runtimeMode: "full-access",
+      });
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.systemPrompt, {
+        type: "preset",
+        preset: "claude_code",
+        append: "Clermes identity; memory writeback disabled.",
+      });
+      for (const input of ["first", "steer"]) {
+        yield* adapter.sendTurn({ threadId: THREAD_ID, input, attachments: [] });
+        const message = yield* Effect.promise(() => readFirstPromptMessage(createInput));
+        assert.deepEqual(message?.message.content, [
+          { type: "text", text: `Scoped context: ${input}` },
+          { type: "text", text: input },
+        ]);
+      }
+      assert.deepEqual(calls, ["first", "steer"]);
+      yield* Effect.gen(function* () {
+        const plainAdapter = yield* ClaudeAdapter;
+        yield* plainAdapter.startSession({ threadId: THREAD_ID, runtimeMode: "full-access" });
+        yield* plainAdapter.sendTurn({ threadId: THREAD_ID, input: "vanilla", attachments: [] });
+        const plainInput = vanilla.getLastCreateQueryInput();
+        assert.deepEqual(plainInput?.options.systemPrompt, {
+          type: "preset",
+          preset: "claude_code",
+        });
+        assert.equal(yield* Effect.promise(() => readFirstPromptText(plainInput)), "vanilla");
+      }).pipe(Effect.provide(vanilla.layer));
+      assert.deepEqual(calls, ["first", "steer"]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  for (const action of ["interrupt", "stop", "timeout"] as const) {
+    it.effect(`prevents late context sends after ${action}`, () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<AbortSignal>();
+        const runtime = yield* Effect.context<never>();
+        const runFork = Effect.runForkWith(runtime);
+        let finish: (value: string) => void = () => {};
+        const harness = makeHarness({
+          resolveTurnContext: ({ signal }) =>
+            new Promise<string>((resolve) => {
+              finish = resolve;
+              runFork(Deferred.succeed(entered, signal));
+            }),
+        });
+        yield* Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+          yield* adapter.startSession({ threadId: THREAD_ID, runtimeMode: "full-access" });
+          const sending = yield* adapter
+            .sendTurn({
+              threadId: THREAD_ID,
+              input: "late",
+              attachments: [],
+              interactionMode: "plan",
+            })
+            .pipe(Effect.result, Effect.forkChild);
+          const signal = yield* Deferred.await(entered);
+          if (action === "interrupt") {
+            yield* Fiber.interrupt(sending);
+            assert.isTrue(signal.aborted);
+            finish("too late");
+            assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+          } else {
+            if (action === "stop") {
+              yield* adapter.stopSession(THREAD_ID);
+            } else {
+              yield* TestClock.adjust("10 seconds");
+            }
+            assert.isTrue(signal.aborted);
+            const result = yield* Fiber.join(sending);
+            assert.equal(result._tag, "Failure");
+          }
+          assert.deepEqual(harness.query.setPermissionModeCalls, []);
+        }).pipe(Effect.provide(harness.layer));
+      }),
+    );
+  }
+
+  for (const failureMode of ["throw", "reject"] as const) {
+    it.effect(`does not launch a turn when context resolution fails: ${failureMode}`, () => {
+      let fail = true;
+      const cause = new Error("private context service details");
+      const harness = makeHarness({
+        resolveTurnContext: () => {
+          if (fail) {
+            if (failureMode === "throw") throw cause;
+            return Promise.reject(cause);
+          }
+          return Promise.resolve(undefined);
+        },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({ threadId: THREAD_ID, runtimeMode: "full-access" });
+        const error = yield* adapter
+          .sendTurn({
+            threadId: THREAD_ID,
+            input: "must not be queued",
+            interactionMode: "plan",
+            attachments: [],
+          })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "ProviderAdapterRequestError");
+        assert.notInclude(error.message, cause.message);
+        assert.equal(error.cause, undefined);
+        assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+        assert.equal((yield* adapter.listSessions())[0]?.activeTurnId, undefined);
+        assert.deepEqual((yield* adapter.readThread(THREAD_ID)).turns, []);
+        assert.deepEqual(harness.query.setPermissionModeCalls, []);
+        fail = false;
+        yield* adapter.sendTurn({ threadId: THREAD_ID, input: "retry", attachments: [] });
+        assert.equal(
+          yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+          "retry",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    });
+  }
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -730,70 +875,77 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("embeds image attachments in Claude user messages", () => {
-    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));
-    const harness = makeHarness({
-      cwd: "/tmp/project-claude-attachments",
-      baseDir,
-    });
-    return Effect.gen(function* () {
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() =>
-          NodeFS.rmSync(baseDir, {
-            recursive: true,
-            force: true,
-          }),
-        ),
-      );
+  for (const turnContext of [undefined, "Scoped image context"]) {
+    it.effect(
+      `embeds image attachments in Claude user messages: ${turnContext ?? "vanilla"}`,
+      () => {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));
+        const harness = makeHarness({
+          cwd: "/tmp/project-claude-attachments",
+          baseDir,
+          resolveTurnContext: async () => turnContext,
+        });
+        return Effect.gen(function* () {
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() =>
+              NodeFS.rmSync(baseDir, {
+                recursive: true,
+                force: true,
+              }),
+            ),
+          );
 
-      const adapter = yield* ClaudeAdapter;
-      const { attachmentsDir } = yield* ServerConfig;
+          const adapter = yield* ClaudeAdapter;
+          const { attachmentsDir } = yield* ServerConfig;
 
-      const attachment = {
-        type: "image" as const,
-        id: "thread-claude-attachment-12345678-1234-1234-1234-123456789abc",
-        name: "diagram.png",
-        mimeType: "image/png",
-        sizeBytes: 4,
-      };
-      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
-      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
-      NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+          const attachment = {
+            type: "image" as const,
+            id: "thread-claude-attachment-12345678-1234-1234-1234-123456789abc",
+            name: "diagram.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+          };
+          const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+          NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+          NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
 
-      const session = yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        runtimeMode: "full-access",
-      });
+          const session = yield* adapter.startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            runtimeMode: "full-access",
+          });
 
-      yield* adapter.sendTurn({
-        threadId: session.threadId,
-        input: "What's in this image?",
-        attachments: [attachment],
-      });
+          yield* adapter.sendTurn({
+            threadId: session.threadId,
+            input: "What's in this image?",
+            attachments: [attachment],
+          });
 
-      const createInput = harness.getLastCreateQueryInput();
-      const promptMessage = yield* Effect.promise(() => readFirstPromptMessage(createInput));
-      assert.isDefined(promptMessage);
-      assert.deepEqual(promptMessage?.message.content, [
-        {
-          type: "text",
-          text: "What's in this image?",
-        },
-        {
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: "image/png",
-            data: "AQIDBA==",
-          },
-        },
-      ]);
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+          const createInput = harness.getLastCreateQueryInput();
+          const promptMessage = yield* Effect.promise(() => readFirstPromptMessage(createInput));
+          assert.isDefined(promptMessage);
+          assert.deepEqual(promptMessage?.message.content, [
+            ...(turnContext ? [{ type: "text" as const, text: turnContext }] : []),
+            {
+              type: "text",
+              text: "What's in this image?",
+            },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: "AQIDBA==",
+              },
+            },
+          ]);
+        }).pipe(
+          Effect.provideService(Random.Random, makeDeterministicRandomService()),
+          Effect.provide(harness.layer),
+        );
+      },
     );
-  });
+  }
 
   it.effect("maps Claude stream/runtime messages to canonical provider runtime events", () => {
     const harness = makeHarness();
