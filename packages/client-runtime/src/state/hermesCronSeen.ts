@@ -28,11 +28,12 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
-/** Called with the subscription's completion counter as runs land. */
-export function reportHermesCompletionSeq(environmentId: EnvironmentKey, seq: number): void {
-  const current = state(environmentId);
-  if (seq === current.latestSeq) return;
-  current.latestSeq = seq;
+/**
+ * Called once per finished run. Counts here rather than taking the
+ * subscription's own counter, which restarts from zero on every reconnect.
+ */
+export function reportHermesCompletion(environmentId: EnvironmentKey): void {
+  state(environmentId).latestSeq += 1;
   emit();
 }
 

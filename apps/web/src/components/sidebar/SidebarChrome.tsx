@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, ClockIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -6,6 +6,8 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
+import { useHermesEnvironmentId } from "../../state/hermesCron";
+import { useHermesTasksUnread } from "../../state/hermesCronSeen";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -95,7 +97,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
             onBackdrop ? "text-white/70" : "text-muted-foreground",
           )}
         >
-          Code
+          Hermes
         </span>
       </span>
     </Link>
@@ -106,10 +108,12 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  unread = false,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  unread?: boolean;
 }) {
   return (
     <SidebarMenuItem className="shrink-0">
@@ -123,6 +127,12 @@ function SidebarUtilityItem({
         />
         <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
+      {unread ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute top-1 right-1 size-1.5 rounded-full bg-primary"
+        />
+      ) : null}
     </SidebarMenuItem>
   );
 }
@@ -140,6 +150,8 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
   );
+  const hermesAvailable = useHermesEnvironmentId() !== null;
+  const hermesUnread = useHermesTasksUnread();
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -163,6 +175,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     }
     void navigate({ to: "/usage" });
   }, [isMobile, navigate, setOpenMobile]);
+
+  const handleHermesClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/hermes" });
+  }, [closeMobileSidebar, navigate]);
 
   const handleBackClick = useCallback(() => {
     closeMobileSidebar();
@@ -197,6 +214,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
+          {hermesAvailable ? (
+            <SidebarUtilityItem
+              icon={<ClockIcon />}
+              label={hermesUnread ? "Hermes — a task finished" : "Hermes"}
+              onClick={handleHermesClick}
+              unread={hermesUnread}
+            />
+          ) : null}
         </>
       )}
       <SidebarUpdatePill />

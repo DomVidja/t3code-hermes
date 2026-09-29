@@ -23,7 +23,7 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
-import type { AcpSessionModeState } from "./AcpRuntimeModel.ts";
+import type { AcpSessionModeState, AcpToolCallState } from "./AcpRuntimeModel.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 const HERMES_DRIVER_KIND = ProviderDriverKind.make("hermes");
@@ -123,6 +123,85 @@ export function hermesSessionInfoIndicatesCompaction(rawPayload: unknown): boole
     }
   }
   return false;
+}
+
+const HERMES_TERMINAL_RESULT_HEADINGS = new Set(["terminal result", "✅ terminal completed"]);
+const HERMES_RESULT_FIELD = /^- \*\*[\w-]+:\*\*/;
+const HERMES_OUTPUT_FIELD = "- **output:**";
+const HERMES_EXIT_CODE_FIELD = /^- \*\*exit_code:\*\* (-?\d+)$/;
+
+/**
+ * Hermes sends no `rawOutput` for its `terminal` tool. Its completion content
+ * is a markdown summary instead (`_format_generic_structured_result` in
+ * acp_adapter/tools.py):
+ *
+ *     terminal result
+ *     - **output:** <command output, possibly multi-line>
+ *     - **exit_code:** 0
+ *
+ * Clients only receive a one-line preview of tool content, so every Hermes
+ * command would read "terminal result". Move the output into
+ * `rawOutput.stdout` and drop the summary so the preview is the real output.
+ * Anything else, including Hermes's `terminal failed: <error>` text, passes
+ * through untouched.
+ */
+export function normalizeHermesTerminalResult(toolCall: AcpToolCallState): AcpToolCallState {
+  if (
+    toolCall.kind !== "execute" ||
+    (toolCall.status !== "completed" && toolCall.status !== "failed") ||
+    toolCall.data.rawOutput !== undefined ||
+    !Array.isArray(toolCall.data.content) ||
+    toolCall.data.content.length !== 1
+  ) {
+    return toolCall;
+  }
+  const entry = toolCall.data.content[0] as EffectAcpSchema.ToolCallContent;
+  if (entry.type !== "content" || entry.content.type !== "text") {
+    return toolCall;
+  }
+  const [heading = "", ...lines] = entry.content.text.split("\n");
+  if (!HERMES_TERMINAL_RESULT_HEADINGS.has(heading.trim())) {
+    return toolCall;
+  }
+
+  // Hermes writes `output`, then `exit_code`, then optional fields such as
+  // `cwd` or `hint`. The output can itself contain lines shaped like fields,
+  // so it runs to the last exit-code line rather than the next field.
+  const exitCodeIndex = lines.findLastIndex((line) => HERMES_EXIT_CODE_FIELD.test(line));
+  const exitCodeMatch =
+    exitCodeIndex === -1 ? null : HERMES_EXIT_CODE_FIELD.exec(lines[exitCodeIndex]!);
+  const exitCode = exitCodeMatch ? Number(exitCodeMatch[1]) : undefined;
+  const outputIndex = lines.findIndex((line) => line.startsWith(HERMES_OUTPUT_FIELD));
+  let stdout: string | undefined;
+  if (outputIndex !== -1) {
+    const nextFieldIndex = lines.findIndex(
+      (line, index) => index > outputIndex && HERMES_RESULT_FIELD.test(line),
+    );
+    const outputEnd =
+      exitCodeIndex > outputIndex
+        ? exitCodeIndex
+        : nextFieldIndex === -1
+          ? lines.length
+          : nextFieldIndex;
+    stdout = [
+      lines[outputIndex]!.slice(HERMES_OUTPUT_FIELD.length),
+      ...lines.slice(outputIndex + 1, outputEnd),
+    ]
+      .join("\n")
+      .trim();
+  }
+
+  const { content: _summary, ...data } = toolCall.data;
+  return {
+    ...toolCall,
+    data: {
+      ...data,
+      rawOutput: {
+        ...(stdout ? { stdout } : {}),
+        ...(exitCode !== undefined ? { exitCode } : {}),
+      },
+    },
+  };
 }
 
 /**

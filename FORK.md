@@ -236,17 +236,27 @@ Project Settings → default model.
 ## Tracking upstream
 
 Syncing is **merge-based, not rebase-based** — this fork's `main` is pushed, so rewriting it would
-break every clone — and it runs nightly at 05:30 UTC from
+break every clone — and it runs every three hours (at :50, matching upstream's nightly cadence) from
 [`.github/workflows/sync-upstream.yml`](./.github/workflows/sync-upstream.yml)
 (`workflow_dispatch` also works). The job merges `upstream/main` into `main`, pushes, and then
 dispatches `ci.yml` by hand, because pushes made with the default `GITHUB_TOKEN` do not trigger
 other workflows.
 
+The same job drives fork releases: every sync dispatches `release.yml` with `follow_upstream`, and
+the release's first job — running under the nightly concurrency lock, so queued runs cannot double
+publish — continues only when `main` contains the commit of upstream's latest nightly and no fork
+nightly has shipped it yet. `release.yml` has no schedule of its own, so fork nightlies track
+upstream's (a fork nightly may bundle several upstream nightlies if a conflict held the sync back).
+
 Two kinds of issue come out of it:
 
 - **`upstream-sync-conflict`** — the merge conflicted and was aborted, so `main` is untouched. The
-  issue lists the conflicted files and the run fails. Only one such issue is open at a time; resolve
-  it locally and close it. Note that the conflicted-file list comes from `git ls-files -u`, not from
+  issue lists the conflicted files and the run fails. Only one such issue is open at a time. The
+  Hermes `upstream-sync` profile receives the issue by webhook, merges upstream in an isolated
+  worktree, opens a `hermes/upstream-sync-<sha>` PR, merges it (merge commit, never squash) once CI is
+  green, and re-dispatches this workflow so the release follows. Where upstream now covers something
+  the fork built, the resolver takes upstream's version and re-applies only the Hermes behavior it
+  lacks. Note that the conflicted-file list comes from `git ls-files -u`, not from
   a grep for conflict markers: `apps/web/src/components/chat/ChatComposer.tsx` contains NUL bytes,
   so grep and rg classify it as binary and skip it silently (git will not even write conflict
   markers into it). Any sweep you write by hand must read the index, or use `grep -a`.
@@ -292,8 +302,8 @@ upstream-only infrastructure. This fork therefore diverges in `.github/workflows
   reusable workflow declares `AUR_SSH_PRIVATE_KEY` as required.) `ci.yml`, `pr-size.yml`,
   `thread-transfer-report.yml`, `mobile-fingerprint-check.yml`, and
   `mobile-showcase-screenshots.yml` run normally.
-- **Nightly release.** `release.yml` runs once a night at 07:00 UTC (upstream builds every three
-  hours) and produces the desktop artifacts — macOS dmg/zip, Linux AppImage, Windows nsis — plus the
+- **Nightly release.** `release.yml` is dispatched by the upstream sync whenever upstream has cut a
+  nightly the fork has not shipped (see "Tracking upstream") and produces the desktop artifacts — macOS dmg/zip, Linux AppImage, Windows nsis — plus the
   updater manifests, attached to a GitHub prerelease. Everything that needs upstream credentials
   degrades instead of failing: the T3 Connect config resolves to empty values (so builds ship with
   T3 Connect disabled), the npm `t3` publish is skipped, and the Vercel deploy, the version-bump

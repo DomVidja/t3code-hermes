@@ -91,7 +91,7 @@ function resolveDevProxyTarget(
 ): string | undefined {
   // Browser dev is single-origin: the backend port is proxied through this
   // server so the app works from any origin (localhost, tailnet, LAN, phone).
-  // T3CODE_PORT is set by scripts/dev-runner.ts for every non-desktop mode.
+  // T3HERMES_PORT is set by scripts/dev-runner.ts for every non-desktop mode.
   const port = Number(backendPort?.trim());
   if (Number.isInteger(port) && port > 0) {
     return `http://localhost:${port}/`;
@@ -119,7 +119,7 @@ function resolveDevProxyTarget(
   }
 }
 
-const devProxyTarget = resolveDevProxyTarget(process.env.T3CODE_PORT, configuredWsUrl);
+const devProxyTarget = resolveDevProxyTarget(process.env.T3HERMES_PORT, configuredWsUrl);
 
 // Vite's dev server sends JS uncompressed. On localhost that is free; over a
 // shared origin (tailnet, LAN) it is the whole cold-start: bundled dev serves

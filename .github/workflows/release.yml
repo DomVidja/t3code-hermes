@@ -6,10 +6,8 @@ on:
       - "v*.*.*"
       - "!v*-nightly.*"
       - "!v*-preview.*"
-  schedule:
-    # Once nightly, off minute zero because GitHub delays scheduled runs most
-    # at the top of the hour. The fork avoids upstream's three-hour cadence.
-    - cron: "38 7 * * *"
+  # No schedule on the fork: sync-upstream.yml dispatches a nightly whenever
+  # main has caught up to an upstream nightly the fork has not shipped yet.
   workflow_dispatch:
     inputs:
       channel:
@@ -25,6 +23,11 @@ on:
         description: "Stable version override (for example 1.2.3). Defaults to the version the latest nightly previewed."
         required: false
         type: string
+      follow_upstream:
+        description: "Fork-only, set by sync-upstream.yml: publish the nightly only if main has an upstream nightly the fork has not shipped."
+        required: false
+        default: false
+        type: boolean
 
 # Serialize nightlies (scheduled and manual) so overlapping runs cannot build
 # the same commit twice or publish out of order. Stable tag releases get their
@@ -65,12 +68,14 @@ jobs:
         uses: actions/github-script@v8
         env:
           DISPATCH_CHANNEL: ${{ inputs.channel }}
+          FOLLOW_UPSTREAM: ${{ inputs.follow_upstream }}
         with:
           script: |
             const {
               assertCommitOnDefaultBranch,
               assertReleaseSource,
               shouldReleaseNightly,
+              shouldFollowUpstreamNightly,
               resolveLatestNightlyCommit,
             } = require('./.github/scripts/check-nightly-release.cjs');
 
@@ -83,8 +88,15 @@ jobs:
 
             await assertReleaseSource({ github, context, releaseChannel });
 
+            if (process.env.FOLLOW_UPSTREAM === 'true' && releaseChannel !== 'nightly') {
+              throw new Error(`follow_upstream only applies to nightly releases, not ${releaseChannel}.`);
+            }
+
             if (context.eventName === 'schedule') {
               core.setOutput('has_changes', await shouldReleaseNightly({ github, context, core }));
+              core.setOutput('ref', context.sha);
+            } else if (context.eventName === 'workflow_dispatch' && process.env.FOLLOW_UPSTREAM === 'true') {
+              core.setOutput('has_changes', await shouldFollowUpstreamNightly({ github, context, core }));
               core.setOutput('ref', context.sha);
             } else if (context.eventName === 'workflow_dispatch' && dispatchChannel === 'stable') {
               const { tag, sha, version } = await resolveLatestNightlyCommit({ github, context, core });
@@ -101,7 +113,7 @@ jobs:
     needs: [resolve_commit]
     if: |
       needs.resolve_commit.result == 'success' &&
-      (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
+      ((github.event_name != 'schedule' && !inputs.follow_upstream) || needs.resolve_commit.outputs.has_changes == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     outputs:
@@ -340,7 +352,7 @@ jobs:
     needs: [resolve_commit]
     if: |
       needs.resolve_commit.result == 'success' &&
-      (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
+      ((github.event_name != 'schedule' && !inputs.follow_upstream) || needs.resolve_commit.outputs.has_changes == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment:
