@@ -125,6 +125,21 @@ describe("describeHermesRunDocument", () => {
     expect(describeHermesRunDocument(document, true)).toBe("");
   });
 
+  it("does not treat a line of inline code as an opening fence", () => {
+    const document = [
+      "# Cron Job: PR digest",
+      "",
+      "## Prompt",
+      "",
+      "```Run `gh pr list` first.```",
+      "",
+      "## Response",
+      "",
+      "Two PRs need review.",
+    ].join("\n");
+    expect(describeHermesRunDocument(document, true)).toBe("Two PRs need review.");
+  });
+
   it("keeps the error section of a failed agent run", () => {
     const document = [
       "# Cron Job: PR digest (FAILED)",

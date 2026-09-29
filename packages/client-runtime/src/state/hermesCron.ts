@@ -191,7 +191,9 @@ const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
  *
  * Follows CommonMark: a fence closes on a bare run of the same character at
  * least as long as the one that opened it, so an info-string line like
- * ` ```python ` inside a block is content, not a close.
+ * ` ```python ` inside a block is content, not a close. A backtick line whose
+ * info string holds another backtick, like ` ```x``` `, is inline code and
+ * opens nothing.
  */
 function resultHeadingLines(lines: readonly string[]): number[] {
   const headings: number[] = [];
@@ -199,8 +201,9 @@ function resultHeadingLines(lines: readonly string[]): number[] {
   lines.forEach((line, index) => {
     const marker = FENCE_LINE.exec(line);
     if (fence === null) {
-      if (marker !== null) fence = marker[1]!;
-      else if (line === "## Response" || line === "## Error") headings.push(index);
+      if (marker !== null && (marker[1]![0] === "~" || !marker[2]!.includes("`"))) {
+        fence = marker[1]!;
+      } else if (line === "## Response" || line === "## Error") headings.push(index);
     } else if (
       marker !== null &&
       marker[1]![0] === fence[0] &&
