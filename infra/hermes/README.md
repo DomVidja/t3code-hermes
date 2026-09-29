@@ -68,3 +68,42 @@ git apply /path/to/t3code/infra/hermes/0002-acp-central-ssh-execution.patch
 Restart the T3 Code server after applying the patch. Configure each approved SSH target as a
 separate Hermes provider instance; do not change the default Hermes instance away from local
 execution.
+
+## `0003-acp-delegation-progress.patch`
+
+**Needed by:** live, per-child delegation progress in T3 Code's Hermes ACP sessions. Stock Hermes
+suppresses `delegate_task`'s structured arguments/results and ignores child progress in its ACP
+adapter. The patch retains the existing human-readable content while exposing `rawInput` arguments,
+parsed `rawOutput` results, and bounded `rawOutput.hermesDelegation` child updates.
+
+Verified against hermes-agent `08b140d14e6c1d49f9b7ad02c9437fe940d54d65` with ACP SDK `0.9.0`.
+This patch applies independently; the earlier patches target older Hermes revisions and may need
+rebasing separately.
+
+```bash
+git -C /path/to/hermes-agent apply --check /path/to/t3code/infra/hermes/0003-acp-delegation-progress.patch
+git -C /path/to/hermes-agent apply /path/to/t3code/infra/hermes/0003-acp-delegation-progress.patch
+```
+
+Restart the T3 Code server after applying the patch so provider sessions spawn patched Hermes.
+No configuration changes are required. The patch does not change delegation execution or enable
+providers/toolsets.
+
+The patch routes child progress through the executor's copied context variables, not goals, task
+indices, or FIFO order: overlapping delegations can have identical goals and batch-local indices.
+Unknown or conflicting ownership is dropped. Alternative Hermes runtimes must propagate worker
+context for this routing to work. Registry-forced stalls and worker crashes notify the same child
+relay under the captured context, so detached work cannot remain falsely active.
+
+Child updates carry bounded per-child snapshots in `rawOutput.hermesDelegation`, keeping the ACP
+parent tool `in_progress` even when one child completes. The T3 adapter bypasses parent-wide update
+coalescing for this envelope. A parent result with `status: "dispatched"` only acknowledges launch;
+only child lifecycle events settle a background subagent. These updates require the original ACP
+process to remain connected; the patch does not recover missed results from disk.
+
+The patch's `tests/acp/test_delegation_progress.py` and `test_delegation_finalization.py` exercise
+executor preflight, child relays, copied worker contexts, and registry completion. Run them alongside
+`tests/acp/test_tools.py` and
+`tests/acp/test_events.py` in a scratch checkout with an isolated `HERMES_HOME` and
+`PYTHONDONTWRITEBYTECODE=1`. If the installed venv lacks ACP or pytest, install dependencies with
+`pip --target` into a temporary directory and add it to `PYTHONPATH`, not the live venv.

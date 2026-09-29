@@ -12,6 +12,7 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | Change                                              | Where                                                                                                                                                       |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hermes` provider driver (ACP over stdio)           | `apps/server/src/provider/{Drivers,Layers,Services,acp}/Hermes*.ts`                                                                                         |
+| Hermes delegated child agents                       | `apps/server/src/provider/acp/HermesDelegation.ts`, optional live-progress patch in `infra/hermes/`                                                         |
 | Hermes text generation (titles, commit messages, …) | `apps/server/src/textGeneration/HermesTextGeneration.ts`                                                                                                    |
 | `HermesSettings` + driver registration              | `packages/contracts/src/{settings,model}.ts`, `provider/builtInDrivers.ts`                                                                                  |
 | Hermes branding in the clients                      | `apps/web/src/components/**`, `apps/mobile/src/components/ProviderIcon.tsx`                                                                                 |
@@ -185,6 +186,14 @@ projects. An existing project keeps the default it was created with; change that
 Project Settings → default model.
 
 ## Known limitations
+
+- **Live delegation progress needs the carried Hermes patch.** Stock synchronous delegation results
+  appear as individual subagents. Current Hermes dispatches top-level delegations in the background,
+  but stock ACP never sends their terminal results; these show idle with a completion-unavailable
+  note instead of a false success or endless busy indicator. Apply
+  [`0003-acp-delegation-progress.patch`](./infra/hermes/README.md#0003-acp-delegation-progresspatch)
+  for live child progress and background completion. Updates require the original ACP process to
+  remain connected; results missed after it exits are not recovered from Hermes transcripts.
 
 - **Session modes are best-effort.** The adapter sends `session/set_mode` through the generic ACP
   request escape hatch and only logs a warning if Hermes rejects it. Approval enforcement is done
