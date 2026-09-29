@@ -6,6 +6,9 @@
  * every execution attempt to a durable SQLite ledger at
  * `<hermes home>/cron/executions.db`. Both are read here directly.
  *
+ * Each run also leaves a markdown document under
+ * `<hermes home>/cron/output/<job id>/`, read only when a client opens a run.
+ *
  * Reading the state rather than shelling out to `hermes cron list` is a
  * deliberate choice: as of Hermes 0.20.2 the `cron` subcommand has no `--json`
  * mode (its sibling `kanban` does), so `cron list` and `cron runs` emit
@@ -22,17 +25,20 @@
  *
  * @module hermesCronState
  */
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import {
   defaultInstanceIdForDriver,
+  HERMES_CRON_RUN_OUTPUT_MAX_CHARS,
   HERMES_CRON_RUNS_PER_JOB,
   HermesSettings,
   ProviderDriverKind,
   resolveProviderInstanceEnabled,
   type HermesCronJobState,
+  type HermesCronRunOutput,
   type HermesCronRunStatus,
   type ProviderInstanceConfig,
   type ServerSettings,
@@ -50,6 +56,7 @@ export interface HermesCronPaths {
   readonly cronDir: string;
   readonly jobsFile: string;
   readonly executionsDb: string;
+  readonly outputDir: string;
 }
 
 /**
@@ -67,6 +74,7 @@ export function resolveHermesCronPaths(
     cronDir,
     jobsFile: NodePath.join(cronDir, "jobs.json"),
     executionsDb: NodePath.join(cronDir, "executions.db"),
+    outputDir: NodePath.join(cronDir, "output"),
   };
 }
 
@@ -326,6 +334,8 @@ function parseHermesCronRun(row: ExecutionRow): ParsedHermesCronRun | null {
   };
 }
 
+const EXECUTION_COLUMNS = "id, job_id, status, source, claimed_at, started_at, finished_at, error";
+
 function parseHermesCronRuns(rows: readonly ExecutionRow[]): readonly ParsedHermesCronRun[] {
   const runs: ParsedHermesCronRun[] = [];
   for (const row of rows) {
@@ -388,7 +398,7 @@ export function readHermesCronRuns(
     // Hermes indexes `(job_id, claimed_at DESC, id DESC)`, so this mirrors its
     // own `list_executions` ordering and stays on the index.
     const statement = database.prepare(`
-      SELECT id, job_id, status, source, claimed_at, started_at, finished_at, error
+      SELECT ${EXECUTION_COLUMNS}
       FROM executions
       WHERE job_id = ?
       ORDER BY claimed_at DESC, id DESC
@@ -403,5 +413,137 @@ export function readHermesCronRuns(
     return null;
   } finally {
     database.close();
+  }
+}
+
+/** One attempt by id, or `null` when it is not in the ledger or the ledger cannot be read. */
+export function readHermesCronRun(
+  dbPath: string,
+  jobId: string,
+  runId: string,
+): ParsedHermesCronRun | null {
+  let database: NodeSqlite.DatabaseSync;
+  try {
+    database = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true, timeout: 5_000 });
+  } catch {
+    return null;
+  }
+  try {
+    const row = database
+      .prepare(`SELECT ${EXECUTION_COLUMNS} FROM executions WHERE id = ? AND job_id = ?`)
+      .get(runId, jobId) as ExecutionRow | undefined;
+    return row === undefined ? null : parseHermesCronRun(row);
+  } catch {
+    return null;
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * Filesystem timestamps can be as coarse as two seconds, so the run window is
+ * widened by that much on both ends.
+ */
+const OUTPUT_MTIME_SLACK_MS = 2_000;
+
+export interface HermesCronOutputFile {
+  readonly name: string;
+  readonly mtimeMs: number;
+}
+
+/**
+ * Which file in a job's output directory belongs to a run.
+ *
+ * Hermes does not record the file on the execution row. It names the file
+ * after the save time in *its* configured timezone (`HERMES_TIMEZONE`, then
+ * `config.yaml`, then host local), so the name alone cannot be compared with
+ * the ledger's UTC timestamps without re-implementing that resolution. The
+ * file's mtime has no timezone: Hermes saves the document after the work and
+ * before it marks the attempt finished, so the right file is the one written
+ * inside the run's own window. The newest wins if a diagnostic landed there too.
+ */
+export function pickHermesCronRunOutputFile(
+  run: Pick<ParsedHermesCronRun, "claimedAt" | "startedAt" | "finishedAt">,
+  files: readonly HermesCronOutputFile[],
+): string | null {
+  const start = parseTimestampMs(run.startedAt ?? run.claimedAt);
+  const end = parseTimestampMs(run.finishedAt);
+  // An attempt that has not finished has not saved its document yet.
+  if (start === null || end === null) return null;
+
+  let best: HermesCronOutputFile | null = null;
+  for (const file of files) {
+    if (!file.name.endsWith(".md")) continue;
+    if (file.mtimeMs < start - OUTPUT_MTIME_SLACK_MS) continue;
+    if (file.mtimeMs > end + OUTPUT_MTIME_SLACK_MS) continue;
+    if (best === null || file.mtimeMs > best.mtimeMs) best = file;
+  }
+  return best?.name ?? null;
+}
+
+/** Hermes's own `_job_output_dir` rule: the id must be one plain path component. */
+function isSafeJobDirName(jobId: string): boolean {
+  return (
+    jobId.length > 0 &&
+    jobId !== "." &&
+    jobId !== ".." &&
+    !jobId.includes("/") &&
+    !jobId.includes("\\") &&
+    !NodePath.isAbsolute(jobId)
+  );
+}
+
+const NO_RUN_OUTPUT: HermesCronRunOutput = { markdown: null, truncated: false };
+
+/**
+ * Reads the document Hermes saved for one run, bounded to
+ * {@link HERMES_CRON_RUN_OUTPUT_MAX_CHARS}.
+ *
+ * A missing directory or file is the ordinary answer for a run that is still
+ * going or whose document Hermes has pruned, so every failure reads as "no
+ * output" rather than an error.
+ */
+export function readHermesCronRunOutput(
+  outputDir: string,
+  jobId: string,
+  run: Pick<ParsedHermesCronRun, "claimedAt" | "startedAt" | "finishedAt">,
+): HermesCronRunOutput {
+  if (!isSafeJobDirName(jobId)) return NO_RUN_OUTPUT;
+  const jobDir = NodePath.join(outputDir, jobId);
+
+  let files: HermesCronOutputFile[];
+  try {
+    files = [];
+    for (const entry of NodeFS.readdirSync(jobDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      files.push({
+        name: entry.name,
+        mtimeMs: NodeFS.statSync(NodePath.join(jobDir, entry.name)).mtimeMs,
+      });
+    }
+  } catch {
+    return NO_RUN_OUTPUT;
+  }
+
+  const name = pickHermesCronRunOutputFile(run, files);
+  if (name === null) return NO_RUN_OUTPUT;
+
+  let fd: number | null = null;
+  try {
+    fd = NodeFS.openSync(NodePath.join(jobDir, name), "r");
+    const size = NodeFS.fstatSync(fd).size;
+    // A UTF-8 character is at most four bytes, so this always covers the cap.
+    const buffer = Buffer.alloc(Math.min(size, HERMES_CRON_RUN_OUTPUT_MAX_CHARS * 4));
+    const bytesRead = NodeFS.readSync(fd, buffer, 0, buffer.length, 0);
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    const truncated = bytesRead < size || text.length > HERMES_CRON_RUN_OUTPUT_MAX_CHARS;
+    return {
+      markdown: truncated ? text.slice(0, HERMES_CRON_RUN_OUTPUT_MAX_CHARS) : text,
+      truncated,
+    };
+  } catch {
+    return NO_RUN_OUTPUT;
+  } finally {
+    if (fd !== null) NodeFS.closeSync(fd);
   }
 }

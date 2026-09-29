@@ -51,7 +51,8 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useServerConfigs } from "../../state/entities";
-import { useHermesCron } from "../../state/hermesCron";
+import { useHermesCron, useHermesRunOutput } from "../../state/hermesCron";
+import { MarkdownPreviewBody } from "../files/FileMarkdownPreview";
 import { useHindsightMemory } from "../../state/hindsight";
 
 const HERMES_DRIVER = "hermes";
@@ -217,6 +218,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
   const renderItem = useCallback(
     ({ item }: LegendListRenderItemProps<HermesCronJob>) => (
       <TaskRow
+        environmentId={environmentId}
         job={item}
         expanded={expandedJobIds.has(item.id)}
         pending={cron.pendingJobIds.has(item.id)}
@@ -233,6 +235,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
       cron.pendingJobIds,
       cron.setEnabled,
       cron.setMuted,
+      environmentId,
       expandedJobIds,
       runMutation,
       toggleExpanded,
@@ -296,6 +299,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
 }
 
 function TaskRow(props: {
+  readonly environmentId: EnvironmentId;
   readonly job: HermesCronJob;
   readonly expanded: boolean;
   readonly pending: boolean;
@@ -370,7 +374,9 @@ function TaskRow(props: {
           {props.job.runs.length === 0 ? (
             <Text className="text-sm text-foreground-muted">No recorded runs yet.</Text>
           ) : (
-            props.job.runs.map((run) => <RunRow key={run.id} run={run} />)
+            props.job.runs.map((run) => (
+              <RunRow key={run.id} environmentId={props.environmentId} run={run} />
+            ))
           )}
         </View>
       ) : null}
@@ -378,12 +384,35 @@ function TaskRow(props: {
   );
 }
 
-function RunRow({ run }: { readonly run: HermesCronRun }) {
+function RunRow({
+  environmentId,
+  run,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly run: HermesCronRun;
+}) {
+  const mutedColor = useUniwindTheme()["--color-icon-muted"];
+  const [expanded, setExpanded] = useState(false);
   const when = formatHermesTimestamp(run.finishedAt ?? run.startedAt ?? run.claimedAt);
   const duration = formatHermesRunDuration(run.durationMs);
+  // Hermes saves the document as the run ends, so an unfinished run has none.
+  const hasOutput = run.finishedAt !== null;
   return (
     <View className="gap-1 border-t border-border-subtle pt-2">
-      <View className="flex-row flex-wrap items-center gap-x-2">
+      <Pressable
+        accessibilityRole={hasOutput ? "button" : undefined}
+        accessibilityState={hasOutput ? { expanded } : undefined}
+        disabled={!hasOutput}
+        onPress={() => setExpanded((value) => !value)}
+        className="flex-row flex-wrap items-center gap-x-2"
+      >
+        {hasOutput ? (
+          <IconChevronRight
+            color={String(mutedColor)}
+            size={14}
+            style={{ transform: [{ rotate: expanded ? "90deg" : "0deg" }] }}
+          />
+        ) : null}
         <Text
           className={
             run.status === "failed"
@@ -397,12 +426,44 @@ function RunRow({ run }: { readonly run: HermesCronRun }) {
         {duration === null ? null : (
           <Text className="text-xs text-foreground-muted">· {duration}</Text>
         )}
-      </View>
+      </Pressable>
       {run.error === null ? null : (
         <Text className="font-mono text-xs text-destructive" numberOfLines={4}>
           {run.error}
         </Text>
       )}
+      {expanded ? <RunOutput environmentId={environmentId} run={run} /> : null}
+    </View>
+  );
+}
+
+function RunOutput(props: { readonly environmentId: EnvironmentId; readonly run: HermesCronRun }) {
+  const output = useHermesRunOutput(props.environmentId, props.run.jobId, props.run.id);
+  if (output.error !== null) {
+    return <Text className="text-sm text-destructive">{output.error}</Text>;
+  }
+  if (output.isPending) {
+    return <Text className="text-sm text-foreground-muted">Loading output…</Text>;
+  }
+  if (output.document === null) {
+    return (
+      <Text className="text-sm text-foreground-muted">
+        Hermes kept no saved output for this run.
+      </Text>
+    );
+  }
+  return (
+    <View className="gap-2 rounded-xl border border-border-subtle px-3 py-2">
+      {output.document.length === 0 ? (
+        <Text className="text-sm text-foreground-muted">This run produced no output.</Text>
+      ) : (
+        <MarkdownPreviewBody markdown={output.document} />
+      )}
+      {output.truncated ? (
+        <Text className="text-xs text-foreground-muted">
+          Output truncated. The full document is in the Hermes cron output directory.
+        </Text>
+      ) : null}
     </View>
   );
 }

@@ -2703,6 +2703,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.hermesCronSetMuted, hermesCron.setMuted(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.hermesCronGetRunOutput]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesCronGetRunOutput, hermesCron.getRunOutput(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.hindsightListBanks]: (input) =>
           observeRpcEffect(WS_METHODS.hindsightListBanks, hindsight.listBanks(input), {
             "rpc.aggregate": "server",

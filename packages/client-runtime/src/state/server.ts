@@ -1104,6 +1104,16 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.hermesCronSetMuted,
     }),
     /**
+     * A finished run's saved document never changes, so an opened run stays
+     * cached while the panel is collapsed and reopened.
+     */
+    hermesCronRunOutput: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:hermes-cron-run-output",
+      tag: WS_METHODS.hermesCronGetRunOutput,
+      staleTimeMs: 5 * 60_000,
+      idleTtlMs: 5 * 60_000,
+    }),
+    /**
      * Hindsight memory. Queries rather than a subscription: Hindsight has no
      * change feed, and the panel only wants an answer when the user asks a
      * question. Banks are cached briefly because the picker re-reads them on

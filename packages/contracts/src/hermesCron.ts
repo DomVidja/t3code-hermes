@@ -197,6 +197,34 @@ export const HermesCronSetMutedInput = Schema.Struct({
 });
 export type HermesCronSetMutedInput = typeof HermesCronSetMutedInput.Type;
 
+/**
+ * Output of one run, read on demand when a run row is opened.
+ *
+ * Hermes writes a markdown document per run under `cron/output/<job id>/`.
+ * It is never part of the snapshot: a job that fires every few minutes would
+ * otherwise resend twenty documents on every change.
+ */
+export const HermesCronRunOutputInput = Schema.Struct({
+  jobId: HermesCronJobId,
+  runId: TrimmedNonEmptyString,
+});
+export type HermesCronRunOutputInput = typeof HermesCronRunOutputInput.Type;
+
+/** Longest run document sent to a client. Longer documents arrive truncated. */
+export const HERMES_CRON_RUN_OUTPUT_MAX_CHARS = 64_000;
+
+export const HermesCronRunOutput = Schema.Struct({
+  /**
+   * The run document as Hermes saved it, or null when none is on disk — the run
+   * is still going, Hermes pruned it (by default it keeps the newest 50 per job), or it
+   * predates the output directory.
+   */
+  markdown: Schema.NullOr(Schema.String),
+  /** True when `markdown` was cut at {@link HERMES_CRON_RUN_OUTPUT_MAX_CHARS}. */
+  truncated: Schema.Boolean,
+});
+export type HermesCronRunOutput = typeof HermesCronRunOutput.Type;
+
 /** Every mutation answers with the snapshot that reflects it. */
 export const HermesCronMutationResult = Schema.Struct({
   snapshot: HermesCronSnapshot,

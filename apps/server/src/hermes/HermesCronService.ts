@@ -30,6 +30,8 @@ import {
   HERMES_CRON_CONTRACT_VERSION,
   HermesCronError,
   type HermesCronJob,
+  type HermesCronRunOutput,
+  type HermesCronRunOutputInput,
   type HermesCronSetEnabledInput,
   type HermesCronSetMutedInput,
   type HermesCronSnapshot,
@@ -69,6 +71,8 @@ import {
 import {
   groupRunsByJob,
   parseHermesCronJobs,
+  readHermesCronRun,
+  readHermesCronRunOutput,
   readHermesCronRuns,
   resolveEnabledHermesInstance,
   resolveHermesCronPaths,
@@ -108,6 +112,11 @@ export class HermesCronService extends Context.Service<
     readonly setMuted: (
       input: HermesCronSetMutedInput,
     ) => Effect.Effect<HermesCronSnapshot, HermesCronError>;
+
+    /** The document Hermes saved for one run, read on demand. */
+    readonly getRunOutput: (
+      input: HermesCronRunOutputInput,
+    ) => Effect.Effect<HermesCronRunOutput, HermesCronError>;
 
     /**
      * Snapshot followed by changes. Holding a subscription is what keeps the
@@ -490,6 +499,25 @@ export const make = Effect.gen(function* () {
       return yield* poll;
     });
 
+  const getRunOutput = (input: HermesCronRunOutputInput) =>
+    Effect.gen(function* () {
+      const instance = yield* requireEnabled;
+      const snapshot = yield* currentSnapshot;
+      // The job id becomes a path component, so it must be one Hermes knows.
+      if (!snapshot.jobs.some((job) => job.id === input.jobId)) {
+        return yield* new HermesCronError({
+          reason: "unknownJob",
+          detail: "That scheduled task no longer exists.",
+        });
+      }
+      const paths = resolveHermesCronPaths(instance.env);
+      return yield* Effect.sync(() => {
+        const run = readHermesCronRun(paths.executionsDb, input.jobId, input.runId);
+        if (run === null) return { markdown: null, truncated: false };
+        return readHermesCronRunOutput(paths.outputDir, input.jobId, run);
+      });
+    });
+
   const subscribe = Effect.gen(function* () {
     yield* Effect.addFinalizer(() => releasePoller.pipe(Effect.ignore));
     yield* retainPoller;
@@ -508,6 +536,7 @@ export const make = Effect.gen(function* () {
     list: (input) => (input.refresh === true ? poll : currentSnapshot),
     setEnabled,
     setMuted,
+    getRunOutput,
     subscribe,
   });
 });
@@ -524,6 +553,10 @@ export const layerTest = Layer.succeed(
         new HermesCronError({ reason: "providerDisabled", detail: "Hermes is not enabled." }),
       ),
     setMuted: () =>
+      Effect.fail(
+        new HermesCronError({ reason: "providerDisabled", detail: "Hermes is not enabled." }),
+      ),
+    getRunOutput: () =>
       Effect.fail(
         new HermesCronError({ reason: "providerDisabled", detail: "Hermes is not enabled." }),
       ),

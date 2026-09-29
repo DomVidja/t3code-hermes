@@ -259,6 +259,8 @@ import {
 import {
   HermesCronError,
   HermesCronListInput,
+  HermesCronRunOutput,
+  HermesCronRunOutputInput,
   HermesCronSetEnabledInput,
   HermesCronSetMutedInput,
   HermesCronSnapshot,
@@ -422,6 +424,7 @@ export const WS_METHODS = {
   hermesCronList: "hermes.cronList",
   hermesCronSetEnabled: "hermes.cronSetEnabled",
   hermesCronSetMuted: "hermes.cronSetMuted",
+  hermesCronGetRunOutput: "hermes.cronGetRunOutput",
   hindsightListBanks: "hindsight.listBanks",
   hindsightBrowse: "hindsight.browse",
   hindsightRecall: "hindsight.recall",
@@ -728,6 +731,12 @@ const WsHermesCronSetEnabledRpc = Rpc.make(WS_METHODS.hermesCronSetEnabled, {
 const WsHermesCronSetMutedRpc = Rpc.make(WS_METHODS.hermesCronSetMuted, {
   payload: HermesCronSetMutedInput,
   success: HermesCronSnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesCronError]),
+});
+
+const WsHermesCronGetRunOutputRpc = Rpc.make(WS_METHODS.hermesCronGetRunOutput, {
+  payload: HermesCronRunOutputInput,
+  success: HermesCronRunOutput,
   error: Schema.Union([EnvironmentAuthorizationError, HermesCronError]),
 });
 
@@ -1558,6 +1567,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsHermesCronListRpc,
   WsHermesCronSetEnabledRpc,
   WsHermesCronSetMutedRpc,
+  WsHermesCronGetRunOutputRpc,
   WsHindsightListBanksRpc,
   WsHindsightBrowseRpc,
   WsHindsightRecallRpc,

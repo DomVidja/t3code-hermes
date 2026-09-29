@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   describeHermesCronEmptyState,
+  describeHermesRunDocument,
   emptyHermesCronView,
   type HermesCronView,
 } from "@t3tools/client-runtime/state/hermes-cron";
@@ -112,4 +113,33 @@ export function useHermesCron() {
   const jobs = useMemo(() => state.view.snapshot?.jobs ?? [], [state.view.snapshot]);
 
   return { ...state, jobs, setEnabled, setMuted };
+}
+
+export interface HermesRunOutputState {
+  /** The readable part of the saved document; `null` when Hermes kept none. */
+  readonly document: string | null;
+  readonly truncated: boolean;
+  readonly isPending: boolean;
+  readonly error: string | null;
+}
+
+/** The document Hermes saved for one finished run, fetched when the row opens. */
+export function useHermesRunOutput(jobId: HermesCronJobId, runId: string): HermesRunOutputState {
+  const environmentId = useHermesEnvironmentId();
+  const query = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.hermesCronRunOutput({ environmentId, input: { jobId, runId } }),
+  );
+  const markdown = query.data?.markdown ?? null;
+  const document = useMemo(
+    () => (markdown === null ? null : describeHermesRunDocument(markdown)),
+    [markdown],
+  );
+  return {
+    document,
+    truncated: query.data?.truncated ?? false,
+    isPending: query.isPending && query.data === null,
+    error: query.data === null ? query.error : null,
+  };
 }

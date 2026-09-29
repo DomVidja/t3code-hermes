@@ -15,6 +15,7 @@ import * as NodeSqlite from "node:sqlite";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  HERMES_CRON_RUN_OUTPUT_MAX_CHARS,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerSettings,
@@ -30,6 +31,8 @@ import {
   effectiveJobState,
   groupRunsByJob,
   parseHermesCronJobs,
+  readHermesCronRun,
+  readHermesCronRunOutput,
   readHermesCronRuns,
   resolveEnabledHermesInstance,
   resolveHermesCronPaths,
@@ -360,5 +363,102 @@ describe("groupRunsByJob", () => {
     const grouped = groupRunsByJob(runs, 2);
     expect(grouped.get("a")?.map((run) => run.id)).toEqual(["a3", "a2"]);
     expect(grouped.get("b")?.map((run) => run.id)).toEqual(["b1"]);
+  });
+});
+
+describe("readHermesCronRun", () => {
+  it("finds one attempt by id, scoped to its job", () => {
+    withExecutionsDb(
+      [
+        makeHermesExecutionRow({ id: "exec-1", job_id: "job-1" }),
+        makeHermesExecutionRow({ id: "exec-2", job_id: "job-2" }),
+      ],
+      (dbPath) => {
+        expect(readHermesCronRun(dbPath, "job-1", "exec-1")?.id).toBe("exec-1");
+        expect(readHermesCronRun(dbPath, "job-1", "exec-2")).toBeNull();
+      },
+    );
+  });
+});
+
+describe("readHermesCronRunOutput", () => {
+  /** Writes each file with the given mtime, the way Hermes leaves them on disk. */
+  function withOutputDir(
+    files: Record<string, { readonly text: string; readonly mtime: string }>,
+    run: (outputDir: string) => void,
+  ): void {
+    const outputDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-hermes-output-"));
+    try {
+      NodeFS.mkdirSync(NodePath.join(outputDir, "job-1"));
+      for (const [name, file] of Object.entries(files)) {
+        const filePath = NodePath.join(outputDir, "job-1", name);
+        NodeFS.writeFileSync(filePath, file.text);
+        const mtimeSeconds = Date.parse(file.mtime) / 1_000;
+        NodeFS.utimesSync(filePath, mtimeSeconds, mtimeSeconds);
+      }
+      run(outputDir);
+    } finally {
+      NodeFS.rmSync(outputDir, { recursive: true, force: true });
+    }
+  }
+
+  const run = {
+    claimedAt: "2026-09-29T22:00:18Z",
+    startedAt: "2026-09-29T22:00:19Z",
+    finishedAt: "2026-09-29T22:00:26Z",
+  };
+
+  it("matches the run by write time, whatever timezone Hermes named the file in", () => {
+    // Hermes names files in its configured timezone; these are UTC+7.
+    withOutputDir(
+      {
+        "2026-09-30_04-57-25.md": { text: "previous run", mtime: "2026-09-29T21:57:25Z" },
+        "2026-09-30_05-00-25.md": { text: "this run", mtime: "2026-09-29T22:00:25Z" },
+        "2026-09-30_05-03-25.md": { text: "next run", mtime: "2026-09-29T22:03:25Z" },
+      },
+      (outputDir) => {
+        expect(readHermesCronRunOutput(outputDir, "job-1", run)).toEqual({
+          markdown: "this run",
+          truncated: false,
+        });
+      },
+    );
+  });
+
+  it("has nothing for an attempt that has not finished or whose file was pruned", () => {
+    withOutputDir(
+      { "2026-09-29_21-57-25.md": { text: "older run", mtime: "2026-09-29T21:57:25Z" } },
+      (outputDir) => {
+        expect(readHermesCronRunOutput(outputDir, "job-1", run).markdown).toBeNull();
+        expect(
+          readHermesCronRunOutput(outputDir, "job-1", { ...run, finishedAt: null }).markdown,
+        ).toBeNull();
+        expect(readHermesCronRunOutput(outputDir, "job-2", run).markdown).toBeNull();
+      },
+    );
+  });
+
+  it("bounds an oversized document", () => {
+    const text = "x".repeat(HERMES_CRON_RUN_OUTPUT_MAX_CHARS * 5);
+    withOutputDir(
+      { "2026-09-29_22-00-25.md": { text, mtime: "2026-09-29T22:00:25Z" } },
+      (outputDir) => {
+        const output = readHermesCronRunOutput(outputDir, "job-1", run);
+        expect(output.truncated).toBe(true);
+        expect(output.markdown).toHaveLength(HERMES_CRON_RUN_OUTPUT_MAX_CHARS);
+      },
+    );
+  });
+
+  it("refuses a job id that would leave the output directory", () => {
+    withOutputDir(
+      { "2026-09-29_22-00-25.md": { text: "this run", mtime: "2026-09-29T22:00:25Z" } },
+      (outputDir) => {
+        const nested = NodePath.join(outputDir, "nested");
+        NodeFS.mkdirSync(nested);
+        expect(readHermesCronRunOutput(nested, "../job-1", run).markdown).toBeNull();
+        expect(readHermesCronRunOutput(nested, "..", run).markdown).toBeNull();
+      },
+    );
   });
 });

@@ -1,5 +1,6 @@
 import {
   describeHermesCronEmptyState,
+  describeHermesRunDocument,
   emptyHermesCronView,
   type HermesCronView,
 } from "@t3tools/client-runtime/state/hermes-cron";
@@ -80,5 +81,28 @@ export function useHermesCron(environmentId: EnvironmentId | null) {
     refresh: query.refresh,
     setEnabled,
     setMuted,
+  };
+}
+
+/** The document Hermes saved for one finished run, fetched when the row opens. */
+export function useHermesRunOutput(
+  environmentId: EnvironmentId,
+  jobId: HermesCronJobId,
+  runId: string,
+) {
+  const query = useEnvironmentQuery(
+    serverEnvironment.hermesCronRunOutput({ environmentId, input: { jobId, runId } }),
+  );
+  const markdown = query.data?.markdown ?? null;
+  const document = useMemo(
+    () => (markdown === null ? null : describeHermesRunDocument(markdown)),
+    [markdown],
+  );
+  return {
+    /** The readable part of the saved document; `null` when Hermes kept none. */
+    document,
+    truncated: query.data?.truncated ?? false,
+    isPending: query.isPending && query.data === null,
+    error: query.data === null ? query.error : null,
   };
 }

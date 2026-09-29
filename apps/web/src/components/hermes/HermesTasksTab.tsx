@@ -3,6 +3,7 @@
  *
  * Read-mostly by design. Creating and editing tasks stays in chat, so the only
  * controls here are the two reversible ones: pause/resume and mute/unmute.
+ * Opening a finished run shows the document Hermes saved for it.
  *
  * The component is deliberately dumb; everything that decides anything lives in
  * `useHermesCron` and the client-runtime fold behind it.
@@ -26,7 +27,8 @@ import {
 import { useCallback, useState } from "react";
 
 import { cn } from "../../lib/utils";
-import { useHermesCron } from "../../state/hermesCron";
+import { useHermesCron, useHermesRunOutput } from "../../state/hermesCron";
+import ChatMarkdown from "../ChatMarkdown";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
@@ -58,26 +60,85 @@ function StatusChip({ job }: { readonly job: HermesCronJob }) {
   );
 }
 
+function RunOutput({ run }: { readonly run: HermesCronRun }) {
+  const { document, truncated, isPending, error } = useHermesRunOutput(run.jobId, run.id);
+  if (error !== null) {
+    return <p className="text-xs text-destructive">{error}</p>;
+  }
+  if (isPending) {
+    return <Skeleton className="h-4 w-48" />;
+  }
+  if (document === null) {
+    return (
+      <p className="text-xs text-muted-foreground">Hermes kept no saved output for this run.</p>
+    );
+  }
+  return (
+    <div className="max-h-96 overflow-y-auto rounded-md border border-border/60 px-3 py-2">
+      {document.length === 0 ? (
+        <p className="text-xs text-muted-foreground">This run produced no output.</p>
+      ) : (
+        <ChatMarkdown text={document} cwd={undefined} parseRawHtml={false} />
+      )}
+      {truncated ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Output truncated. The full document is in the Hermes cron output directory.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function RunRow({ run }: { readonly run: HermesCronRun }) {
+  const [expanded, setExpanded] = useState(false);
+  const toggleExpanded = useCallback(() => setExpanded((value) => !value), []);
   const when = formatHermesTimestamp(run.finishedAt ?? run.startedAt ?? run.claimedAt);
   const duration = formatHermesRunDuration(run.durationMs);
+  // Hermes saves the document as the run ends, so an unfinished run has none.
+  const hasOutput = run.finishedAt !== null;
+  const summary = (
+    <>
+      {hasOutput ? (
+        <ChevronRightIcon
+          className={cn("size-3.5 shrink-0 text-muted-foreground", expanded && "rotate-90")}
+        />
+      ) : (
+        <span className="size-3.5 shrink-0" />
+      )}
+      <span
+        className={cn(
+          "font-medium",
+          run.status === "failed" ? "text-destructive" : "text-muted-foreground",
+        )}
+      >
+        {run.status}
+      </span>
+      {when === null ? null : <span className="text-muted-foreground">{when}</span>}
+      {duration === null ? null : <span className="text-muted-foreground">· {duration}</span>}
+    </>
+  );
   return (
     <li className="flex flex-col gap-0.5 border-t border-border/40 py-1.5 text-xs">
-      <div className="flex items-center gap-2">
-        <span
-          className={cn(
-            "font-medium",
-            run.status === "failed" ? "text-destructive" : "text-muted-foreground",
-          )}
+      {hasOutput ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={toggleExpanded}
+          className="flex items-center gap-2 text-left"
         >
-          {run.status}
-        </span>
-        {when === null ? null : <span className="text-muted-foreground">{when}</span>}
-        {duration === null ? null : <span className="text-muted-foreground">· {duration}</span>}
-      </div>
+          {summary}
+        </button>
+      ) : (
+        <div className="flex items-center gap-2">{summary}</div>
+      )}
       {run.error === null ? null : (
         <p className="break-words font-mono text-2xs text-destructive">{run.error}</p>
       )}
+      {expanded ? (
+        <div className="mt-1">
+          <RunOutput run={run} />
+        </div>
+      ) : null}
     </li>
   );
 }

@@ -14,14 +14,13 @@ Tasks tab.
 
 ## Tasks
 
-The Tasks tab lists every scheduled task with its schedule, when it last ran, how long that run took,
-and a status chip — OK, Failed, Paused, Scheduled, Completed, or Error. Expanding a row shows the
-recent run history and the reason for the most recent failure.
-
 The Tasks tab lists every scheduled task with its schedule, when it last ran, how long that run
-took, and a status chip — OK, Failed, or Paused. Expanding a row shows the recent run history and
-the reason for the most recent failure, so you can tell a task that is quietly broken from one that
-simply has not come due yet.
+took, and a status chip — OK, Failed, Paused, Scheduled, Completed, or Error. Expanding a row shows
+the recent run history and the reason for the most recent failure, so you can tell a task that is
+quietly broken from one that simply has not come due yet.
+
+Open a finished run to read what it produced: the agent's reply, a script's output, or the error it
+hit. Hermes keeps the output of the most recent 50 runs of each task by default, so older runs show none.
 
 Each row has two controls, and both are reversible:
 

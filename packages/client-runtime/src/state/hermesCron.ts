@@ -177,3 +177,55 @@ export function describeHermesCronEmptyState(
       };
   }
 }
+
+/** Header fields a run row already shows, so the document body drops them. */
+const REDUNDANT_RUN_FIELDS = new Set(["Job ID", "Run Time", "Schedule"]);
+const RUN_FIELD_LINE = /^\*\*([^*]+):\*\*\s/;
+/** Hermes's reply for a run with nothing new to say; it suppresses delivery. */
+const SILENT_RESPONSE = "[SILENT]";
+
+/**
+ * The part of a Hermes run document worth reading under a run row.
+ *
+ * Hermes saves each run as `# Cron Job: <name>`, a block of `**Field:**`
+ * lines, then `## Prompt`, and finally `## Response` or, for a failed agent
+ * run, `## Error`. The row already shows the name and time, and the prompt is
+ * the job's own instructions plus a long scheduler preamble, identical on every
+ * run. What is left is the result: the response, the error, or the status note
+ * Hermes wrote for a script, silent, or blocked run.
+ *
+ * The prompt can itself contain whole earlier run documents — a job that reads
+ * its previous output gets it pasted in, headings and all — so the result is
+ * the *last* `## Response` or `## Error`, never the first heading after the
+ * prompt.
+ */
+export function describeHermesRunDocument(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  let index = 0;
+  if (lines[0]?.startsWith("# Cron Job:")) index = 1;
+
+  const fields: string[] = [];
+  for (; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (line.trim() === "") continue;
+    const field = RUN_FIELD_LINE.exec(line);
+    if (field === null) break;
+    if (!REDUNDANT_RUN_FIELDS.has(field[1]!)) fields.push(line);
+  }
+
+  let body = lines.slice(index);
+  if (body[0] === "## Prompt") {
+    const result = body.findLastIndex((line) => line === "## Response" || line === "## Error");
+    if (result <= 0) body = [];
+    // The response heading is the only one left, so it says nothing; an error
+    // heading is the one signal that the run failed.
+    else body = body.slice(body[result] === "## Response" ? result + 1 : result);
+  }
+
+  let result = body.join("\n").trim();
+  if (result === SILENT_RESPONSE) result = "_Nothing new to report, so nothing was delivered._";
+
+  // Hermes separates the fields with single newlines, which markdown would run
+  // together into one paragraph.
+  return [fields.join("  \n"), result].filter((part) => part.length > 0).join("\n\n");
+}
