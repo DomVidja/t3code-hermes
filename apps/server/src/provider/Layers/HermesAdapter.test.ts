@@ -313,8 +313,10 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
         (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
       );
       const requestLogPath = NodePath.join(requestLogDir, "requests.jsonl");
-      const { adapter, events, textArrived, turnCompleted, finishFirstTurn } =
-        yield* startRedirectableTurn(threadId, requestLogPath);
+      const { adapter, events, turnCompleted, finishFirstTurn } = yield* startRedirectableTurn(
+        threadId,
+        requestLogPath,
+      );
 
       // Resolves while the original prompt is still waiting on its approval.
       yield* adapter.sendTurn({
@@ -322,7 +324,6 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
         input: "change the task while the tool runs",
         attachments: [],
       });
-      yield* Deferred.await(textArrived("Redirected the active turn with your correction."));
       assert.isFalse(events.some((event) => event.type === "turn.completed"));
 
       yield* finishFirstTurn;
@@ -339,12 +340,14 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
       assert.equal(turnStarted.length, 1);
       assert.equal(turnsCompleted.length, 1);
       assert.equal(turnsCompleted[0]?.turnId, turnStarted[0]?.turnId);
+      // Hermes's redirect confirmation is dropped; the steer message already shows it.
+      assert.isUndefined(findDelta(events, "Redirected the active turn with your correction."));
       // The steer starts a new assistant message rather than splicing into the old one.
       const before = findDelta(events, "Working on the original task.");
-      const after = findDelta(events, "Redirected the active turn with your correction.");
+      const after = findDelta(events, "Finished the redirected task.");
       assert.isDefined(before?.itemId);
+      assert.isDefined(after?.itemId);
       assert.notEqual(after?.itemId, before?.itemId);
-      assert.isDefined(findDelta(events, "Finished the redirected task."));
     }).pipe(Effect.scoped, TestClock.withLive),
   );
 
@@ -358,8 +361,10 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
         (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
       );
       const requestLogPath = NodePath.join(requestLogDir, "requests.jsonl");
-      const { adapter, events, textArrived, turnCompleted, finishFirstTurn } =
-        yield* startRedirectableTurn(threadId, requestLogPath);
+      const { adapter, events, turnCompleted, finishFirstTurn } = yield* startRedirectableTurn(
+        threadId,
+        requestLogPath,
+      );
 
       const steer = yield* adapter
         .sendTurn({
@@ -376,10 +381,10 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
           ],
         })
         .pipe(Effect.forkScoped);
-      // A later text steer still goes live, so the turn is provably still running
-      // after the attachment steer was accepted.
+      // A later text steer still goes live (it resolves before the approval is
+      // answered), so the turn is provably still running after the attachment
+      // steer was accepted.
       yield* adapter.sendTurn({ threadId, input: "and keep it short", attachments: [] });
-      yield* Deferred.await(textArrived("Redirected the active turn with your correction."));
       yield* finishFirstTurn;
       yield* Fiber.join(steer);
       yield* Deferred.await(turnCompleted);
