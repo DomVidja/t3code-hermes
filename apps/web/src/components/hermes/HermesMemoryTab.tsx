@@ -10,7 +10,8 @@ import {
   HINDSIGHT_STATS_PENDING_LABEL,
 } from "@t3tools/client-runtime/state/hindsight";
 import type { HindsightBankId, HindsightBankStats, HindsightMemory } from "@t3tools/contracts";
-import { PlugZapIcon, RefreshCwIcon, SparklesIcon, XIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { PlugZapIcon, RefreshCwIcon, SettingsIcon, SparklesIcon, XIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { useHindsightMemory } from "../../state/hindsight";
@@ -199,7 +200,10 @@ function HindsightMemorySection() {
     retain,
     reflect,
     dismissReflection,
+    enabled,
+    environmentId,
   } = useHindsightMemory();
+  const navigate = useNavigate();
 
   const [draft, setDraft] = useState("");
 
@@ -216,14 +220,29 @@ function HindsightMemorySection() {
     clearQuery();
   }, [clearQuery]);
 
-  const unavailable = describeHindsightUnavailable(status);
+  const unavailable = describeHindsightUnavailable(status, { enabled });
 
-  if (unavailable !== null && !unavailable.retryable) {
+  if (status?.availability === "notConfigured") {
     return (
-      <p className="text-xs text-muted-foreground">
-        Hindsight is optional and adds searchable, long-term recall. Configure it in the environment
-        to use it alongside native Hermes memory.
-      </p>
+      <div className="flex flex-col items-start gap-2">
+        <p className="text-xs text-muted-foreground">
+          Hindsight is optional and adds searchable, long-term recall. Configure it in Memory
+          settings to use it alongside native Hermes memory.
+        </p>
+        <Button
+          onClick={() =>
+            void navigate({
+              to: "/settings/integrations",
+              search: environmentId === null ? {} : { machine: environmentId },
+              hash: "memory",
+            })
+          }
+          variant="outline"
+        >
+          <SettingsIcon />
+          Memory settings
+        </Button>
+      </div>
     );
   }
 

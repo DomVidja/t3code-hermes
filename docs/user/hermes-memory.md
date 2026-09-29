@@ -30,29 +30,21 @@ section remains separate from Hermes's built-in notes; neither service copies en
 
 ### Setting up Hindsight
 
-Hindsight has to run on the same machine as the T3 Code server. Only the server ever talks to it,
-so it can stay bound to loopback and the Memory tab still works from your phone, from
-app.t3.codes, or through a tunnel — and the API key never leaves the machine it was typed on.
+If Hermes already uses Hindsight for its memory, there is nothing to do: the Memory tab reads
+Hermes' own Hindsight config and opens on the same bank. That is the file Hermes' `hermes memory
+setup` writes, `~/.hermes/hindsight/config.json` (or `$HERMES_HOME/hindsight/config.json`).
 
-Add an `integrations` block to the environment's settings file and restart the server:
+To point Memory somewhere else, open **Settings → Integrations → Memory** on web and desktop, or
+**Settings → Environments →** your environment **→ Memory** on mobile. The connection line there
+says whether Hindsight is answering and whether the address came from Hermes or from these
+settings. Each field you fill in (server URL, default bank, API key) replaces that one value from
+Hermes; clearing it goes back to Hermes'. Changes apply on the next read, with no restart.
 
-```json
-{
-  "integrations": {
-    "hindsight": {
-      "enabled": true,
-      "baseUrl": "http://127.0.0.1:8888",
-      "apiKey": "optional-if-your-instance-requires-one",
-      "defaultBank": "hermes"
-    }
-  }
-}
-```
+Only the T3 Code server ever talks to Hindsight, so a loopback or tailnet address keeps working
+from your phone, from app.t3.codes, or through a tunnel, and the API key never leaves the server.
+Hermes' key is only ever sent to Hermes' own Hindsight address, never to one you typed in Settings.
 
-Only `enabled` is required. `baseUrl` defaults to `http://127.0.0.1:8888`, which is where Hindsight
-listens out of the box. `defaultBank` is the bank the tab opens on when you have more than one;
-leave it out and the tab opens on the first one Hindsight lists.
-
+Switch Memory off in the same place to stop the environment from contacting Hindsight at all.
 Without Hindsight configured, you can still browse and edit Hermes memory above it.
 
 ## Recalling and browsing
@@ -102,8 +94,8 @@ actions in **Hermes memory** affect only Hermes's built-in files.
 The tab distinguishes between the reasons it has nothing to show, because each one has a different
 fix:
 
-- **Not set up** — there is no Hindsight configured for this environment. The tab points at the
-  settings block above.
+- **Not set up** — neither Hermes nor Settings names a Hindsight server for this environment, or
+  Memory is switched off. The tab links to the Memory settings.
 - **Not answering** — Hindsight is configured but nothing is listening. Start it and press **Try
   again**; nothing needs restarting on the T3 Code side.
 - **A version T3 Code does not understand** — Hindsight answered, but in a shape this build does not
