@@ -88,6 +88,10 @@ jobs:
 
             await assertReleaseSource({ github, context, releaseChannel });
 
+            if (process.env.FOLLOW_UPSTREAM === 'true' && releaseChannel !== 'nightly') {
+              throw new Error(`follow_upstream only applies to nightly releases, not ${releaseChannel}.`);
+            }
+
             if (context.eventName === 'schedule') {
               core.setOutput('has_changes', await shouldReleaseNightly({ github, context, core }));
               core.setOutput('ref', context.sha);
