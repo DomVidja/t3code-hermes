@@ -7,23 +7,27 @@
  * as it is connected — which is the same thing "at least one client is
  * subscribed" means to the environment, and costs one small frame per change.
  */
+import type { HermesCronView } from "@t3tools/client-runtime/state/hermes-cron";
 import { useEffect, useRef } from "react";
 
 import { useHermesCron } from "../../state/hermesCron";
-import { reportHermesCompletionSeq } from "../../state/hermesCronSeen";
+import { reportHermesCompletion } from "../../state/hermesCronSeen";
 import { toastManager } from "../ui/toast";
 
 export function useHermesCronNotifications(): void {
   const { view, environmentId } = useHermesCron();
-  const lastToastedSeq = useRef(0);
+  // Each finished run arrives as a new object that snapshot folds carry along
+  // unchanged, so identity marks "already toasted". `completionSeq` would not:
+  // it restarts on every reconnect and differs per environment.
+  const lastToasted = useRef<HermesCronView["lastCompletion"]>(null);
 
   useEffect(() => {
-    const { completionSeq, lastCompletion } = view;
-    if (environmentId === null || completionSeq === 0 || lastCompletion === null) return;
-    if (completionSeq === lastToastedSeq.current) return;
-    lastToastedSeq.current = completionSeq;
+    const { lastCompletion } = view;
+    if (environmentId === null || lastCompletion === null) return;
+    if (lastCompletion === lastToasted.current) return;
+    lastToasted.current = lastCompletion;
 
-    reportHermesCompletionSeq(environmentId, completionSeq);
+    reportHermesCompletion(environmentId);
     toastManager.add(
       lastCompletion.status === "failed"
         ? {

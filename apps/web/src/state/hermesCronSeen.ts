@@ -14,7 +14,7 @@ import { useHermesEnvironmentId } from "./hermesCron";
 
 export {
   markHermesTasksSeen,
-  reportHermesCompletionSeq,
+  reportHermesCompletion,
 } from "@t3tools/client-runtime/state/hermes-cron-seen";
 
 /** Lights the sidebar dot when a Hermes run lands while the Tasks panel is closed. */
