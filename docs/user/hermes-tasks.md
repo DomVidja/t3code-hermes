@@ -14,14 +14,10 @@ Tasks tab.
 
 ## Tasks
 
-The Tasks tab lists every scheduled task with its schedule, when it last ran, how long that run took,
-and a status chip — OK, Failed, Paused, Scheduled, Completed, or Error. Expanding a row shows the
-recent run history and the reason for the most recent failure.
-
-The Tasks tab lists every scheduled task with its schedule, when it last ran, how long that run
-took, and a status chip — OK, Failed, or Paused. Expanding a row shows the recent run history and
-the reason for the most recent failure, so you can tell a task that is quietly broken from one that
-simply has not come due yet.
+The Tasks tab lists each task's schedule, latest outcome, and recent run history. Expand a run to
+read its message as formatted text and see its delivery target and outcome. Long messages load
+when opened, keeping the task list light. If Hermes no longer has the message, the run says so;
+an unrecorded delivery outcome does not mean the message was sent.
 
 Each row has two controls, and both are reversible:
 
@@ -30,8 +26,11 @@ Each row has two controls, and both are reversible:
 - **Mute** stops notifications about that task without stopping the task. Muting is local to T3 Code
   and only affects what you are told; the task keeps running and its history keeps filling in.
 
-When a task finishes or fails, T3 Code raises a notification and marks the sidebar button, so a
-failure overnight is waiting for you rather than lost.
+While connected, web and desktop announce new completions with a message preview and an **Open**
+action that takes you to that run. They follow the same notification, sound, and focus settings as
+chat, including desktop notifications when enabled and permitted. Muted tasks stay quiet. Connecting
+later does not replay old notifications; their results remain in history. Mobile shows the messages
+in run history, but does not send scheduled-task push notifications.
 
 ## Creating a task
 
