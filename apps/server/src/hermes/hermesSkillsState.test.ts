@@ -273,3 +273,18 @@ it("bounds detail bytes and excludes hidden or linked files", async () => {
     }
   });
 });
+
+it("rejects a skill file hard-linked to content outside the store", async () => {
+  await withDirectory(async (outside) => {
+    await withDirectory(async (root) => {
+      await NodeFSP.writeFile(NodePath.join(outside, "secret.md"), markdown + "outside secret\n");
+      await NodeFSP.mkdir(NodePath.join(root, "example"));
+      await NodeFSP.link(
+        NodePath.join(outside, "secret.md"),
+        NodePath.join(root, "example/SKILL.md"),
+      );
+      await expect(readHermesSkillDetail(root, "example")).rejects.toThrow();
+      expect(JSON.stringify(await readHermesSkills(root))).not.toContain("outside secret");
+    });
+  });
+});

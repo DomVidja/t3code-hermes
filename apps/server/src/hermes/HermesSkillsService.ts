@@ -63,7 +63,7 @@ const emptySnapshot = (readAt: string): HermesSkillsSnapshot => ({
   truncated: false,
 });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const fs = yield* FileSystem.FileSystem;
   const changes = yield* Effect.acquireRelease(

@@ -211,7 +211,12 @@ function isMissing(error: unknown) {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-async function readBounded(file: string, limit: number) {
+/**
+ * Reads at most `limit` bytes of a regular, singly linked file. With `containedIn`, the opened
+ * descriptor must be the file its real path names inside that directory, so a parent directory
+ * swapped for a link between validation and open cannot redirect the read.
+ */
+async function readBounded(file: string, limit: number, containedIn?: string) {
   // O_NOFOLLOW is unavailable on some hosts; reject links before opening there too.
   if (!(await NodeFSP.lstat(file)).isFile()) throw new Error("Not a regular file");
   const handle = await NodeFSP.open(
@@ -220,7 +225,22 @@ async function readBounded(file: string, limit: number) {
   );
   try {
     const stat = await handle.stat();
-    if (!stat.isFile()) throw new Error("Not a regular file");
+    // A hard link is indistinguishable from the original, so it could expose a file elsewhere.
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error("Not a regular file");
+    if (containedIn !== undefined) {
+      const [real, base] = await Promise.all([
+        NodeFSP.realpath(file),
+        NodeFSP.realpath(containedIn),
+      ]);
+      const named = await NodeFSP.stat(real);
+      if (
+        !real.startsWith(base + NodePath.sep) ||
+        named.dev !== stat.dev ||
+        named.ino !== stat.ino
+      ) {
+        throw new Error("Skill file is outside the skills directory");
+      }
+    }
     const buffer = Buffer.alloc(Math.min(stat.size, limit) + 1);
     let bytesRead = 0;
     while (bytesRead < buffer.length) {
@@ -377,7 +397,11 @@ export async function readHermesSkillDetail(
     const stat = await NodeFSP.lstat(current);
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Not a skill directory");
   }
-  const content = await readBounded(NodePath.join(current, "SKILL.md"), SKILL_LIMITS.detailBytes);
+  const content = await readBounded(
+    NodePath.join(current, "SKILL.md"),
+    SKILL_LIMITS.detailBytes,
+    root,
+  );
   const listing = await walk(current, SKILL_LIMITS.files, false);
   const { data, body } = parseSkillDocument(content.text);
   return {
