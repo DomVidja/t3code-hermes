@@ -74,7 +74,7 @@ function contentText(tool: AcpToolCallState): string {
     .join("\n");
 }
 
-export function isHermesDelegation(tool: AcpToolCallState): boolean {
+function isHermesDelegation(tool: AcpToolCallState): boolean {
   const args = record(tool.data.rawInput);
   if (args.action !== undefined && args.action !== "spawn") return false;
   return (

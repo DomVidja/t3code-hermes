@@ -830,7 +830,7 @@ export function deriveAgentPanelModel({
   let waitingCount = 0;
   let idleCount = 0;
   let settledCount = 0;
-  let totalTokens: number | null = null;
+  const counted: RuntimeSubagent[] = [];
   for (const agent of source) {
     // A workflow coordinator with members is a container for those members, not
     // work of its own: it reports running for the whole run and aggregates their
@@ -841,9 +841,9 @@ export function deriveAgentPanelModel({
     else if (agent.status === "waiting") waitingCount += 1;
     else if (agent.status === "idle") idleCount += 1;
     else settledCount += 1;
-    if (agent.usage?.totalTokens !== undefined)
-      totalTokens = (totalTokens ?? 0) + agent.usage.totalTokens;
+    counted.push(agent);
   }
+  const totalTokens = sumSubagentTokens(counted);
 
   return {
     workflows: workflowGroups,
@@ -879,6 +879,19 @@ export function formatSubagentModelLabel(
     .replace(/-\d{8}$/, "")
     .replace(/-latest$/, "");
   return effort ? `${compact} · ${effort}` : compact;
+}
+
+/**
+ * Token total across agents, or null when any agent has no reported total:
+ * a sum of only the known counts would present an undercount as the total.
+ */
+export function sumSubagentTokens(agents: ReadonlyArray<RuntimeSubagent>): number | null {
+  let total = 0;
+  for (const agent of agents) {
+    if (agent.usage?.totalTokens === undefined) return null;
+    total += agent.usage.totalTokens;
+  }
+  return agents.length > 0 ? total : null;
 }
 
 export function formatSubagentTokenCount(totalTokens: number | null | undefined): string {

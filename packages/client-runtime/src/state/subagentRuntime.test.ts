@@ -5,6 +5,7 @@ import {
   foldSubagentActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
+  sumSubagentTokens,
 } from "./subagentRuntime.ts";
 
 let sequence = 0;
@@ -277,6 +278,18 @@ describe("foldSubagentActivities", () => {
     ]);
     expect(agents[0]!.usage).toEqual({ totalTokens: 123, durationMs: 2500 });
     expect(deriveAgentPanelModel({ agents }).totalTokens).toBe(123);
+  });
+
+  it("reports an unknown total rather than an undercount for mixed rosters", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "counted", taskType: "subagent" }),
+      activity("task.progress", { taskId: "counted", typedUsage: { totalTokens: 1_200 } }),
+      activity("task.started", { taskId: "duration-only", taskType: "subagent" }),
+      activity("task.progress", { taskId: "duration-only", typedUsage: { durationMs: 2500 } }),
+    ]);
+    expect(deriveAgentPanelModel({ agents }).totalTokens).toBeNull();
+    expect(sumSubagentTokens(agents.filter((agent) => agent.id === "counted"))).toBe(1_200);
+    expect(sumSubagentTokens([])).toBeNull();
   });
 
   it("partial terminal usage preserves known breakdown fields", () => {

@@ -19,6 +19,7 @@ import type {
 import {
   formatSubagentModelLabel,
   formatSubagentTokenCount,
+  sumSubagentTokens,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
@@ -466,11 +467,7 @@ function CollapsedWorkflowSection({
   const failed = members.filter((member) => member.status === "failed").length;
   // Coordinator usage may already aggregate members (panel-footer rule):
   // count it only when there are no member rows to sum.
-  const tokenCounts = (members.length === 0 ? [group.workflow] : members).flatMap((member) =>
-    member.usage?.totalTokens === undefined ? [] : [member.usage.totalTokens],
-  );
-  const totalTokens =
-    tokenCounts.length > 0 ? tokenCounts.reduce((sum, value) => sum + value, 0) : null;
+  const totalTokens = sumSubagentTokens(members.length === 0 ? [group.workflow] : members);
   const elapsed =
     group.workflow.startedAt && group.workflow.completedAt
       ? elapsedBetween(group.workflow.startedAt, group.workflow.completedAt)
