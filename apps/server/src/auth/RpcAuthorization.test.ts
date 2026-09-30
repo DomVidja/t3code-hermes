@@ -89,3 +89,13 @@ it("requires operate permission for tool updates even alongside a read-only chec
   );
   expect(requiredScopeForDeviceList({ updateTool: "hub" })).toBe(AuthOrchestrationOperateScope);
 });
+
+it("allows Hermes memory reads but requires operate permission for edits", () => {
+  expect(requiredScopeForRpcMethod(WS_METHODS.hermesMemoryRead)).toBe(AuthOrchestrationReadScope);
+  expect(requiredScopeForRpcMethod(WS_METHODS.subscribeHermesMemory)).toBe(
+    AuthOrchestrationReadScope,
+  );
+  expect(requiredScopeForRpcMethod(WS_METHODS.hermesMemoryMutate)).toBe(
+    AuthOrchestrationOperateScope,
+  );
+});

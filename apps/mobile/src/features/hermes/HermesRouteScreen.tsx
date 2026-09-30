@@ -65,6 +65,7 @@ import { serverEnvironment } from "../../state/server";
 import { useHermesCron } from "../../state/hermesCron";
 import { useHermesPatches } from "../../state/hermesPatches";
 import { useHindsightMemory } from "../../state/hindsight";
+import { HermesNativeMemorySection } from "./HermesNativeMemorySection";
 import { HermesRunDelivery } from "./HermesRunDelivery";
 
 const HERMES_DRIVER = "hermes";
@@ -544,6 +545,21 @@ function HermesPatchesScreen({ environmentId }: { readonly environmentId: Enviro
 }
 
 function HermesMemoryScreen({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  return (
+    <HindsightMemoryScreen
+      environmentId={environmentId}
+      nativeSection={<HermesNativeMemorySection environmentId={environmentId} />}
+    />
+  );
+}
+
+function HindsightMemoryScreen({
+  environmentId,
+  nativeSection,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly nativeSection: React.ReactNode;
+}) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const iconColor = useUniwindTheme()["--color-icon"];
@@ -580,39 +596,7 @@ function HermesMemoryScreen({ environmentId }: { readonly environmentId: Environ
     Alert.alert("Reflection ready", "The result is shown above the memory list.");
   }, [memory]);
 
-  if (unavailable !== null) {
-    return (
-      <CenteredState
-        title={unavailable.title}
-        description={unavailable.description}
-        actionLabel={unavailable.retryable ? "Try again" : undefined}
-        onAction={unavailable.retryable ? memory.retry : undefined}
-      >
-        {memory.status?.availability === "notConfigured" ? (
-          <ActionButton
-            label="Memory settings"
-            icon={<IconSettings size={18} color={String(iconColor)} />}
-            onPress={() =>
-              navigation.navigate("SettingsSheet", {
-                screen: "SettingsContent",
-                params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
-              })
-            }
-          />
-        ) : null}
-      </CenteredState>
-    );
-  }
-  if (memory.error !== null) {
-    return (
-      <CenteredState
-        title="Memory is unavailable"
-        description={memory.error}
-        actionLabel="Try again"
-        onAction={memory.retry}
-      />
-    );
-  }
+  const hindsightAvailable = unavailable === null && memory.error === null;
 
   const emptyState = describeHindsightEmptyList(memory.submittedQuery);
   return (
@@ -624,33 +608,75 @@ function HermesMemoryScreen({ environmentId }: { readonly environmentId: Environ
         paddingHorizontal: 16,
         paddingTop: 12,
       }}
-      data={memory.memories}
+      data={hindsightAvailable ? memory.memories : []}
       estimatedItemSize={130}
       keyExtractor={(item) => `${item.pathway}:${item.id}`}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       ListHeaderComponent={
-        <MemoryHeader
-          banks={memory.banks}
-          bank={memory.bank}
-          onSelectBank={memory.selectBank}
-          pathway={memory.pathway}
-          onSelectPathway={memory.selectPathway}
-          draft={draft}
-          submittedQuery={memory.submittedQuery}
-          onChangeDraft={setDraft}
-          onSubmit={submitRecall}
-          onClear={clearRecall}
-          reflection={memory.reflection}
-          onDismissReflection={memory.dismissReflection}
-          stats={memory.stats}
-          isStatsPending={memory.isStatsPending}
-        />
+        <>
+          {nativeSection}
+          <Text
+            accessibilityRole="header"
+            className="mb-3 text-base font-t3-semibold text-foreground"
+          >
+            Hindsight
+          </Text>
+          {hindsightAvailable ? (
+            <MemoryHeader
+              banks={memory.banks}
+              bank={memory.bank}
+              onSelectBank={memory.selectBank}
+              pathway={memory.pathway}
+              onSelectPathway={memory.selectPathway}
+              draft={draft}
+              submittedQuery={memory.submittedQuery}
+              onChangeDraft={setDraft}
+              onSubmit={submitRecall}
+              onClear={clearRecall}
+              reflection={memory.reflection}
+              onDismissReflection={memory.dismissReflection}
+              stats={memory.stats}
+              isStatsPending={memory.isStatsPending}
+            />
+          ) : null}
+        </>
       }
       ListEmptyComponent={
-        memory.isPending ? (
+        memory.status?.availability === "notConfigured" ? (
+          <View className="gap-2">
+            <Text className="text-sm leading-5 text-foreground-muted">
+              Hindsight is optional and adds searchable, long-term recall. Configure it in Memory
+              settings to use it alongside native Hermes memory.
+            </Text>
+            <ActionButton
+              label="Memory settings"
+              icon={<IconSettings size={18} color={String(iconColor)} />}
+              onPress={() =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
+                })
+              }
+            />
+          </View>
+        ) : unavailable !== null ? (
           <CenteredState
-            title="Loading memory"
+            title={unavailable.title}
+            description={unavailable.description}
+            actionLabel="Try again"
+            onAction={memory.retry}
+          />
+        ) : memory.error !== null ? (
+          <CenteredState
+            title="Hindsight is unavailable"
+            description={memory.error}
+            actionLabel="Try again"
+            onAction={memory.retry}
+          />
+        ) : memory.isPending ? (
+          <CenteredState
+            title="Loading Hindsight"
             description="Reading the selected Hindsight bank…"
           />
         ) : (
@@ -658,23 +684,25 @@ function HermesMemoryScreen({ environmentId }: { readonly environmentId: Environ
         )
       }
       ListFooterComponent={
-        <MemoryFooter
-          bankAvailable={memory.bank !== null}
-          hasMore={memory.hasMore}
-          memoryCount={memory.memories.length}
-          retainOpen={retainOpen}
-          retainText={retainText}
-          isRetaining={memory.isRetaining}
-          isReflecting={memory.isReflecting}
-          onChangeRetainText={setRetainText}
-          onOpenRetain={() => setRetainOpen(true)}
-          onCancelRetain={() => {
-            setRetainText("");
-            setRetainOpen(false);
-          }}
-          onRetain={() => void retain()}
-          onReflect={() => void reflect()}
-        />
+        hindsightAvailable ? (
+          <MemoryFooter
+            bankAvailable={memory.bank !== null}
+            hasMore={memory.hasMore}
+            memoryCount={memory.memories.length}
+            retainOpen={retainOpen}
+            retainText={retainText}
+            isRetaining={memory.isRetaining}
+            isReflecting={memory.isReflecting}
+            onChangeRetainText={setRetainText}
+            onOpenRetain={() => setRetainOpen(true)}
+            onCancelRetain={() => {
+              setRetainText("");
+              setRetainOpen(false);
+            }}
+            onRetain={() => void retain()}
+            onReflect={() => void reflect()}
+          />
+        ) : null
       }
       renderItem={({ item }: LegendListRenderItemProps<HindsightMemory>) => (
         <MemoryRow memory={item} />

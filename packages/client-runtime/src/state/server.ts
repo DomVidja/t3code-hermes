@@ -1083,6 +1083,16 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
     }),
+    // Built-in memory streams only while its tab is mounted.
+    hermesMemory: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:hermes-memory",
+      tag: WS_METHODS.subscribeHermesMemory,
+      idleTtlMs: 0,
+    }),
+    hermesMemoryMutate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-memory-mutate",
+      tag: WS_METHODS.hermesMemoryMutate,
+    }),
     /**
      * Hermes scheduled tasks. A subscription rather than a query because the
      * environment polls Hermes only while someone is watching, and pushes a

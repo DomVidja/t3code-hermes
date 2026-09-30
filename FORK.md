@@ -22,6 +22,7 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | Shared slash-command dedupe (was Claude-private)    | `apps/server/src/provider/slashCommands.ts`                                                                                                                      |
 | Hermes Tasks and delivery notifications             | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                             |
 | Hermes Memory panel (Hindsight)                     | `apps/server/src/integrations/hindsight/`, `packages/contracts/src/hindsight.ts`, `apps/web/src/{state/hindsight.ts,components/hermes/HermesMemoryTab.tsx}`      |
+| Hermes built-in memory (browse and edit)            | `apps/server/src/hermes/HermesMemoryService.ts`, `packages/contracts/src/hermesMemory.ts`, `packages/client-runtime/src/state/hermesMemory.ts`                   |
 | Reasoning-effort selector (Hermes `config.yaml`)    | `apps/server/src/hermes/hermesReasoning*.ts`                                                                                                                     |
 | Central Hermes execution on shell-only SSH targets  | `infra/hermes/0002-acp-central-ssh-execution.patch`                                                                                                              |
 | Hermes Patches tab (applies the carried patches)    | `apps/server/src/hermes/{HermesPatchService,hermesPatches}.ts`, `packages/contracts/src/hermesPatches.ts`, `apps/web/src/components/hermes/HermesPatchesTab.tsx` |
@@ -101,11 +102,11 @@ node apps/server/src/bin.ts pair --ttl 2h
 check `<T3HERMES_HOME>/caches/hermes.json` — a working setup reports `"status": "ready"`, the Hermes
 version, and a populated `models` array.
 
-## Enable the Memory tab (optional)
+## Enable Hindsight memory (optional)
 
-The Hermes panel's Memory tab reads an open-source [Hindsight](https://github.com/vectorize-io/hindsight)
-agent-memory service. Run Hindsight on the same host as the T3 server — it can stay bound to
-loopback, because every request is proxied through the server, which is what keeps the tab working
+The Hermes panel's Memory tab always shows Hermes's built-in notes. It can also read an open-source
+[Hindsight](https://github.com/vectorize-io/hindsight) agent-memory service. Run Hindsight on the same
+host as the T3 server — it can stay bound to loopback, because every request is proxied through the server, which is what keeps the tab working
 from the mobile app and over T3 Connect. Add to the same `settings.json`:
 
 ```json
@@ -219,15 +220,15 @@ Project Settings → default model.
   task in natural language is the better interface and the CLI covers the rest. Profiles are still
   not exposed; use the `hermes` CLI for those. Chat, streaming, tool calls, approvals, resume,
   model switching, slash commands, and the context-window meter all work.
-- **Memory browsing goes through Hindsight, not Hermes's own notes.** The panel's Memory tab talks
+- **Hindsight remains a separate, optional memory store.** The panel's Hindsight section talks
   to a [Hindsight](https://github.com/vectorize-io/hindsight) service (HTTP API 0.9.1) over the T3
   websocket, never client-to-Hindsight, so a loopback-bound Hindsight still works from mobile and
   through a tunnel. Recall, browsing by pathway, retaining one note, and triggering a reflection are
-  built; editing and deleting memories deliberately are not. Mental models have no meaning-based
-  search in Hindsight's API, so a query matches them by text and they sort after the ranked results.
-  Hermes's _own_ `~/.hermes` notes remain unexposed — a Hermes with no Hindsight has no Memory tab
-  content, and the tab says so. Fixture-pinned tests fail loudly if a Hindsight upgrade changes a
-  response shape.
+  built; editing and deleting Hindsight memories deliberately are not. Mental models have no
+  meaning-based search in Hindsight's API, so a query matches them by text and they sort after the ranked results.
+  Hermes's built-in `memories/MEMORY.md` and `memories/USER.md` are shown and editable independently,
+  with live updates, character limits, and lock-respecting writes; Hindsight is not required.
+  Fixture-pinned tests fail loudly if a Hindsight upgrade changes a response shape.
 - **Task data is read from Hermes's own state files.** `hermes cron` has no JSON output mode as of
   Hermes 0.20.2, so T3 Code reads `cron/jobs.json` and the `cron/executions.db` ledger directly and
   shells out to `hermes cron pause`/`resume` for the one mutation. Delivery outcomes come from
