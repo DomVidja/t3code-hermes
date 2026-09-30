@@ -62,7 +62,9 @@ export class HermesSkillsError extends Schema.TaggedError<HermesSkillsError>()(
   "HermesSkillsError",
   {
     reason: Schema.Literals(["providerDisabled", "unknownSkill", "unreadable"]),
+    /** Stable, bounded description. The underlying failure travels in `cause`. */
     detail: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

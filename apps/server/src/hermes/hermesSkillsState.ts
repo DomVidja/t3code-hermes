@@ -1,3 +1,5 @@
+// Node builtins are required here: Effect FileSystem has no O_NOFOLLOW open, lstat, or inode
+// identity, which the store-boundary checks below depend on.
 // @effect-diagnostics nodeBuiltinImport:off
 /** Hermes 0.21 skill files. Bounded, read-only; never follow links into other stores. */
 import * as NodeFS from "node:fs";

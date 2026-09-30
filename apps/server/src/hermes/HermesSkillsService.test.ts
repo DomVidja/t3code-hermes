@@ -22,7 +22,9 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as ServerSettings from "../serverSettings.ts";
-import { HermesSkillsService, layer } from "./HermesSkillsService.ts";
+import { HermesSkillsService, make } from "./HermesSkillsService.ts";
+
+const layer = Layer.effect(HermesSkillsService, make);
 
 const body = (name: string) =>
   `---\nname: ${name}\ndescription: A learned procedure\n---\n# ${name}\n`;

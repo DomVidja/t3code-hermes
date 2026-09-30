@@ -63,7 +63,7 @@ const emptySnapshot = (readAt: string): HermesSkillsSnapshot => ({
   truncated: false,
 });
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const fs = yield* FileSystem.FileSystem;
   const changes = yield* Effect.acquireRelease(
@@ -192,10 +192,11 @@ const make = Effect.gen(function* () {
         });
       return yield* Effect.tryPromise({
         try: () => readHermesSkillDetail(root, input.path),
-        catch: () =>
+        catch: (cause) =>
           new HermesSkillsError({
             reason: "unknownSkill",
             detail: "This skill is no longer available or could not be read.",
+            cause,
           }),
       });
     }),
