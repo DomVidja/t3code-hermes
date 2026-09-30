@@ -34,6 +34,13 @@ export const HERMES_PATCHES: ReadonlyArray<HermesPatchDefinition> = [
       "Hermes instances that run tools on an SSH host without copying credentials, skills, or cache to it.",
     content: bundledPatch("0002-acp-central-ssh-execution.patch"),
   },
+  {
+    id: HermesPatchId.make("acp-delegation-progress"),
+    title: "Live subagent progress",
+    neededFor:
+      "Live progress and background results for subagents Hermes delegates to. Without it, background subagents show as idle once dispatched.",
+    content: bundledPatch("0003-acp-delegation-progress.patch"),
+  },
 ];
 
 /**

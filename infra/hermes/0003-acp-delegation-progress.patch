@@ -1,18 +1,18 @@
 diff --git a/acp_adapter/events.py b/acp_adapter/events.py
-index 88d1b351ac..3dc262eafb 100644
+index 7bcc1d0598..0caf1a840d 100644
 --- a/acp_adapter/events.py
 +++ b/acp_adapter/events.py
-@@ -9,6 +9,8 @@ thread-safely onto the loop.
- import asyncio
+@@ -10,6 +10,8 @@ import asyncio
  import logging
+ import uuid
  from collections import deque
 +from contextvars import ContextVar
 +from threading import Lock
  from typing import Any, Callable, Deque, Dict
  
  import acp
-@@ -71,6 +73,131 @@ def _upgrade_queue(tool_call_ids: Dict[str, Deque[str]], name: str) -> Deque[str
-     return queue
+@@ -116,6 +118,131 @@ def flush_open_tool_calls(
+     return flushed
  
  
 +# Only these child events and scalar fields cross the ACP boundary. In particular,
@@ -143,11 +143,12 @@ index 88d1b351ac..3dc262eafb 100644
  def make_tool_progress_cb(
      conn: acp.Client, session_id: str, loop: asyncio.AbstractEventLoop, tool_call_ids: Dict[str, Deque[str]],
      tool_call_meta: Dict[str, Dict[str, Any]],
-@@ -81,13 +208,23 @@ def make_tool_progress_cb(
-     Signature: ``tool_progress_callback(event_type, name, preview, args, **kwargs)``.
+@@ -128,9 +255,19 @@ def make_tool_progress_cb(
      Emits ``ToolCallStart`` for ``tool.started`` and tracks IDs in a FIFO per tool
      name so parallel same-name calls complete against the right ACP tool call.
--    Other event types (``tool.completed``, ``reasoning.available``) are ignored."""
+     ``tool.completed`` closes that call with its own result — the step callback
+-    only fires on the *next* step, which leaves a turn's last tools open."""
++    only fires on the *next* step, which leaves a turn's last tools open.
 +    Child progress carries bounded structured metadata on its originating delegate
 +    call; a child completion never completes the parent ACP tool call."""
 +
@@ -160,7 +161,10 @@ index 88d1b351ac..3dc262eafb 100644
 +                if update is not None:
 +                    _send_update(conn, session_id, loop, update)
 +            return
-         if event_type != "tool.started":
+         if event_type == "tool.completed" and name:
+             if turn_state is not None:
+                 turn_state["saw_completion"] = True
+@@ -144,6 +281,7 @@ def make_tool_progress_cb(
              return
          args = coerce_tool_args(args)
          tc_id = make_tool_call_id()
@@ -169,10 +173,10 @@ index 88d1b351ac..3dc262eafb 100644
          if queue is None:
              queue = tool_call_ids[name] = deque()
 diff --git a/acp_adapter/tools.py b/acp_adapter/tools.py
-index bf1541a6a2..f294964bbf 100644
+index e2cf2a9313..5981fe0aee 100644
 --- a/acp_adapter/tools.py
 +++ b/acp_adapter/tools.py
-@@ -850,12 +850,15 @@ def build_tool_start(tool_call_id: str, tool_name: str, arguments: Args, *, edit
+@@ -791,12 +791,15 @@ def build_tool_start(tool_call_id: str, tool_name: str, arguments: Args, *, edit
      except Exception as exc:  # noqa: BLE001 — a tool-call render must never abort the turn
          logger.debug("ACP tool-start render failed for %r: %s", tool_name, exc)
          safe_name = tool_name if isinstance(tool_name, str) and tool_name else "tool"
@@ -190,7 +194,7 @@ index bf1541a6a2..f294964bbf 100644
      if tool_name in ("patch", "write_file") and edit_diff is not None:
          content = [acp.tool_diff_content(path=edit_diff.path, old_text=edit_diff.old_text, new_text=edit_diff.new_text)]
      elif tool_name in _START_CONTENT_BUILDERS:
-@@ -884,11 +887,14 @@ def build_tool_complete(
+@@ -827,11 +830,14 @@ def build_tool_complete(
          content = [_text(error_text)] if error_text else None
      else:
          content = _build_tool_complete_content(tool_name, result, function_args=function_args, snapshot=snapshot)
@@ -199,7 +203,7 @@ index bf1541a6a2..f294964bbf 100644
 +    structured = isinstance(parsed, (dict, list))
      return acp.update_tool_call(
          tool_call_id, kind=get_tool_kind(tool_name),
-         status="failed" if _tool_result_failed(result, tool_name) else "completed", content=content,
+         status="failed" if is_error or _tool_result_failed(result, tool_name) else "completed", content=content,
 -        raw_output=None if tool_name in _POLISHED_TOOLS or structured else result,
 +        raw_output=(parsed if structured else result) if tool_name == "delegate_task" else (
 +            None if tool_name in _POLISHED_TOOLS or structured else result
@@ -207,14 +211,16 @@ index bf1541a6a2..f294964bbf 100644
      )
  
  
-diff --git a/tests/acp/test_delegation_finalization.py b/tests/acp/test_delegation_finalization.py
+diff --git a/tests/acp_adapter/test_delegation_finalization.py b/tests/acp_adapter/test_delegation_finalization.py
 new file mode 100644
-index 0000000000..37279d9f95
+index 0000000000..04ad64758f
 --- /dev/null
-+++ b/tests/acp/test_delegation_finalization.py
-@@ -0,0 +1,172 @@
++++ b/tests/acp_adapter/test_delegation_finalization.py
+@@ -0,0 +1,219 @@
 +"""Async registry terminal outcomes must reach the originating ACP child."""
 +
++import threading
++from concurrent.futures import Future
 +from contextvars import Context, copy_context
 +from types import SimpleNamespace
 +from unittest.mock import patch
@@ -228,16 +234,43 @@ index 0000000000..37279d9f95
 +from tools.process_registry import process_registry
 +
 +
++class _ManualExecutor:
++    """Registry pool whose workers run only when a test says so (real Futures keep retirement balanced)."""
++
++    def __init__(self):
++        self.jobs = {}
++
++    def submit(self, fn):
++        future = Future()
++        self.jobs[len(self.jobs)] = (fn, future)
++        return future
++
++    def run(self, index):
++        fn, future = self.jobs[index]
++        try:
++            fn()
++        finally:
++            future.set_result(None)
++
++    def release(self):
++        for _, future in self.jobs.values():
++            if not future.done():
++                future.set_result(None)
++
++
 +@pytest.fixture
 +def registry(monkeypatch, tmp_path):
 +    ad._reset_for_tests()
 +    monkeypatch.setattr(ad, "_db_path", lambda: tmp_path / "state.db")
-+    workers = []
-+    monkeypatch.setattr(ad, "_get_executor", lambda _: SimpleNamespace(submit=workers.append))
++    executor = _ManualExecutor()
++    monkeypatch.setattr(ad, "_get_executor", lambda _: executor)
++    real_monitor = ad._ensure_stale_monitor
 +    monkeypatch.setattr(ad, "_ensure_stale_monitor", lambda: None)
++    executor.start_monitor = real_monitor
 +    while not process_registry.completion_queue.empty():
 +        process_registry.completion_queue.get_nowait()
-+    yield workers
++    yield executor
++    executor.release()
 +    ad._reset_for_tests()
 +    while not process_registry.completion_queue.empty():
 +        process_registry.completion_queue.get_nowait()
@@ -252,6 +285,7 @@ index 0000000000..37279d9f95
 +
 +
 +def dispatch(callback, batch_id, indexes=(0, 1)):
++    """One real delegate invocation context: parent tool.started, child relays, then registry dispatch."""
 +    def start():
 +        tasks = [{"goal": "Same goal"} for _ in range(max(indexes) + 1)]
 +        callback("tool.started", "delegate_task", None, {"tasks": tasks})
@@ -266,8 +300,8 @@ index 0000000000..37279d9f95
 +            child = SimpleNamespace(tool_progress_callback=relay, model=f"test/model-{index}")
 +            children.append((index, tasks[index], child))
 +        unit = SimpleNamespace(children=children, task_list=tasks, context=None, top_role="leaf",
-+                               creds={"model": "test/parent"})
-+        _dispatch_unit(unit, batch_id, None, {"session_key": ""})
++                               creds={"model": "test/parent"}, live_writers=[])
++        assert _dispatch_unit(unit, batch_id, None, {"session_key": ""})["status"] == "dispatched"
 +        return copy_context(), children
 +
 +    return Context().run(start)
@@ -277,18 +311,30 @@ index 0000000000..37279d9f95
 +    return [call.args[3] for call in send.call_args_list]
 +
 +
-+def test_forced_stall_reaches_original_parent_and_only_unfinished_children(registry, progress):
++def fast_stall(monkeypatch):
++    monkeypatch.setattr(ad, "_STALE_CHECK_INTERVAL", 0.01)
++    monkeypatch.setattr(ad, "_STALE_IDLE_SECONDS", 0.0)
++    monkeypatch.setattr(ad, "_STALL_GRACE_SECONDS", 0.0)
++
++
++def test_forced_stall_reaches_original_parent_and_only_unfinished_children(registry, progress, monkeypatch):
 +    callback, step, ids, send = progress
 +    first_context, children = dispatch(callback, "batch-a")
-+    wrong_context, _ = dispatch(callback, "batch-b")
++    dispatch(callback, "batch-b")  # Identical, overlapping, never started: must stay untouched.
 +    first_id = ids["delegate_task"][0]
 +    first_context.run(children[0][2].tool_progress_callback, "subagent.complete", status="completed",
 +                      summary="Already completed", duration_seconds=1)
 +    step(1, [{"name": "delegate_task", "result": '{"status":"dispatched"}'}] * 2)
 +    send.reset_mock()
-+    # The real stale-monitor producer supplies a lazy synthesized result, from
-+    # a shared thread whose context may belong to an entirely different caller.
-+    wrong_context.run(ad._finalize, "batch-a", lambda record: ad._stalled_result("batch-a", record), "stalled")
++    terminal_sent = threading.Event()
++    send.side_effect = lambda *_: terminal_sent.set()
++    fast_stall(monkeypatch)
++    with ad._records_lock:
++        ad._records["batch-a"]["_started"] = True  # The worker began; its token then freezes.
++    # The real monitor is one shared thread started with an empty Context, not the dispatcher's.
++    Context().run(registry.start_monitor)
++    assert terminal_sent.wait(5)
++    ad._monitor_stop.set()
 +    terminal, = updates(send)
 +    payload = terminal.raw_output["hermesDelegation"]
 +    assert terminal.tool_call_id == first_id and terminal.status == "in_progress"
@@ -296,14 +342,16 @@ index 0000000000..37279d9f95
 +    assert payload["task_index"] == 1 and payload["goal"] == "Same goal"
 +    assert payload["model"] == "test/model-1" and payload["subagent_id"] == "batch-a-child-1"
 +    assert payload["delegation_id"] == "batch-a"
-+    assert "stalled" in payload["error"] and payload["summary"] == payload["error"]
++    assert "stopped responding" in payload["error"] and payload["summary"] == payload["error"]
 +    assert payload["duration_seconds"] >= 0
-+    assert process_registry.completion_queue.get_nowait()["status"] == "stalled"
++    assert process_registry.completion_queue.get(timeout=5)["status"] == "stalled"
 +    assert "_on_finalize" not in ad._records["batch-a"]
 +    send.reset_mock()
++    # The ignored worker finally returns: neither its relays nor its registry result reopen the child.
 +    first_context.run(children[1][2].tool_progress_callback, "subagent.text", preview="late text")
 +    first_context.run(children[1][2].tool_progress_callback, "subagent.complete", status="completed")
-+    ad._finalize("batch-a", {"results": []}, "completed")
++    with patch("tools.delegate_tool_dispatch._execute_and_aggregate", return_value={"results": []}):
++        registry.run(0)
 +    assert not send.called and process_registry.completion_queue.empty()
 +
 +
@@ -313,7 +361,7 @@ index 0000000000..37279d9f95
 +    parent_id = ids["delegate_task"][0]
 +    send.reset_mock()
 +    with patch("tools.delegate_tool_dispatch._execute_and_aggregate", side_effect=RuntimeError("runner died")):
-+        registry[0]()
++        registry.run(0)
 +    terminal = updates(send)
 +    assert [u.raw_output["hermesDelegation"]["task_index"] for u in terminal] == [1, 3]
 +    assert all(u.tool_call_id == parent_id and u.status == "in_progress" for u in terminal)
@@ -326,10 +374,11 @@ index 0000000000..37279d9f95
 +    callback, _, _, send = progress
 +    dispatch(callback, "mixed")
 +    send.reset_mock()
-+    ad._finalize("mixed", {"results": [
++    with patch("tools.delegate_tool_dispatch._execute_and_aggregate", return_value={"results": [
 +        {"task_index": 0, "status": "completed", "summary": "Good", "duration_seconds": 1},
 +        {"task_index": 1, "status": "error", "error": "Bad", "duration_seconds": 2},
-+    ]}, "completed")
++    ]}):
++        registry.run(0)
 +    first, second = [u.raw_output["hermesDelegation"] for u in updates(send)]
 +    assert first["status"] == "completed" and first["summary"] == "Good" and first["duration_seconds"] == 1
 +    assert second["status"] == "error" and second["error"] == "Bad" and second["duration_seconds"] == 2
@@ -338,6 +387,7 @@ index 0000000000..37279d9f95
 +def test_observer_failure_does_not_break_durable_completion(registry):
 +    def observer(result, status):
 +        assert not ad._records_lock.locked()
++        assert ad._records[delegation_id]["status"] == "finalizing"
 +        raise RuntimeError("observer failed")
 +
 +    handle = ad.dispatch_async_delegation_batch(
@@ -346,15 +396,29 @@ index 0000000000..37279d9f95
 +    )
 +    delegation_id = handle["delegation_id"]
 +    assert all("_on_finalize" not in row for row in ad.list_async_delegations())
-+    registry[0]()
++    registry.run(0)
 +    assert ad._records[delegation_id]["status"] == "completed"
 +    assert "_on_finalize" not in ad._records[delegation_id]
 +    assert process_registry.completion_queue.get_nowait()["delegation_id"] == delegation_id
 +    assert ad.get_durable_delegation(delegation_id)["state"] == "completed"
 +
 +
++def test_durable_write_failure_still_reports_terminal_child(registry, progress):
++    callback, _, _, send = progress
++    dispatch(callback, "broken-ledger", indexes=(0,))
++    send.reset_mock()
++    with patch("tools.async_delegation._persist_completion", side_effect=OSError("ledger unavailable")), \
++         patch("tools.delegate_tool_dispatch._execute_and_aggregate", side_effect=RuntimeError("Worker died")):
++        registry.run(0)
++    terminal, = updates(send)
++    assert terminal.raw_output["hermesDelegation"]["status"] == "error"
++    assert "Worker died" in terminal.raw_output["hermesDelegation"]["error"]
++    assert process_registry.completion_queue.get_nowait()["delegation_id"] == "broken-ledger"
++
++
 +def test_nested_terminal_does_not_finish_ancestor_or_sibling(progress):
 +    callback, _, _, send = progress
++
 +    def run():
 +        callback("tool.started", "delegate_task", None, {"goal": "Parent child"})
 +        relay = _build_child_progress_callback(
@@ -366,31 +430,18 @@ index 0000000000..37279d9f95
 +        relay("subagent.text", preview="Ancestor remains live")
 +        relay("subagent.complete", status="completed", summary="Ancestor done")
 +        relay("subagent.complete", status="error", summary="Late fallback")
++
 +    Context().run(run)
 +    payloads = [u.raw_output["hermesDelegation"] for u in updates(send)[1:]]
 +    assert [(p["subagent_id"], p["event"]) for p in payloads] == [
 +        ("inner", "subagent.complete"), ("outer", "subagent.text"), ("outer", "subagent.complete"),
 +    ]
-+
-+
-+def test_publication_failure_still_reports_terminal_child(registry, progress):
-+    callback, _, _, send = progress
-+    dispatch(callback, "broken-ledger", indexes=(0,))
-+    send.reset_mock()
-+    with patch("tools.async_delegation._push_completion_event", side_effect=OSError("ledger unavailable")):
-+        with pytest.raises(OSError, match="ledger unavailable"):
-+            ad._finalize("broken-ledger", {"results": [], "error": "Worker stalled"}, "stalled")
-+    terminal, = updates(send)
-+    assert terminal.raw_output["hermesDelegation"]["status"] == "stalled"
-+    assert terminal.raw_output["hermesDelegation"]["error"] == "Worker stalled"
-+    # Preserve stock durable-failure behavior; do not pretend persistence succeeded.
-+    assert ad._records["broken-ledger"]["status"] == "finalizing"
-diff --git a/tests/acp/test_delegation_progress.py b/tests/acp/test_delegation_progress.py
+diff --git a/tests/acp_adapter/test_delegation_progress.py b/tests/acp_adapter/test_delegation_progress.py
 new file mode 100644
-index 0000000000..135bca4fee
+index 0000000000..64526c9f7e
 --- /dev/null
-+++ b/tests/acp/test_delegation_progress.py
-@@ -0,0 +1,342 @@
++++ b/tests/acp_adapter/test_delegation_progress.py
+@@ -0,0 +1,360 @@
 +"""Structured delegation payloads and child progress over ACP."""
 +
 +import json
@@ -733,21 +784,39 @@ index 0000000000..135bca4fee
 +    assert Context().run(progress.update, "subagent.text", None, "ambiguous", {
 +        "task_index": 0, "delegation_id": "conflict",
 +    }) is None
++
++
++def test_executor_tool_completed_closes_parent_with_structured_result(relay_harness):
++    cb, _, ids, meta, send = relay_harness
++    arguments = {"goal": "A", "model": "test/model"}
++    result = {"status": "dispatched", "mode": "background", "delegation_id": "batch", "subagent_ids": ["child"]}
++    context = _start_in_context(cb, arguments)
++    parent_id = ids["delegate_task"][0]
++    send.reset_mock()
++    # Upstream closes the call from the executor's ``tool.completed``, outside the delegation context.
++    cb("tool.completed", "delegate_task", None, None, result=json.dumps(result), is_error=False)
++    closed, = _updates(send)
++    assert closed.tool_call_id == parent_id and closed.status == "completed"
++    assert closed.raw_output == result and not ids and not meta
++    send.reset_mock()
++    context.run(cb, "subagent.text", None, "still live", None, task_index=0, delegation_id="batch")
++    assert _updates(send)[0].tool_call_id == parent_id
++    assert _updates(send)[0].status == "in_progress"
 diff --git a/tools/async_delegation.py b/tools/async_delegation.py
-index 99330e84f7..5b3c6985c8 100644
+index 643a890c6e..1ed302d0fd 100644
 --- a/tools/async_delegation.py
 +++ b/tools/async_delegation.py
-@@ -546,6 +546,7 @@ def _dispatch(
-     origin_session_id: str, interrupt_fn: Optional[Callable[[], None]], max_async_children: int,
+@@ -730,6 +730,7 @@ def _dispatch_admitted(
      progress_fn: Optional[Callable[[], tuple]], capacity_error: str, slot_key: Optional[str] = None,
      task_indexes: Optional[List[int]] = None,
+     task_transcripts: Optional[Dict[str, str]] = None,
 +    on_finalize: Optional[Callable[[Dict[str, Any], str], None]] = None,
  ) -> Dict[str, Any]:
      """Shared dispatch core for single (``goals is None``) and batch units. Capacity check +
      record insert happen under ONE lock hold so concurrent dispatches can't both pass the check
-@@ -570,7 +571,8 @@ def _dispatch(
-         # Which of the call's ``goals`` this unit runs (None = all of them).
-         **({"task_indexes": list(task_indexes)} if task_indexes is not None else {}),
+@@ -758,7 +759,8 @@ def _dispatch_admitted(
+         # a forced finalization runs under the dispatcher's so it settles the same state.db.
+         "_context": contextvars.copy_context(),
          # Stale-monitor bookkeeping (see _stale_monitor_loop).
 -        "_progress_token": None, "_progress_ts": dispatched_at, "_interrupted_at": None}
 +        "_progress_token": None, "_progress_ts": dispatched_at, "_interrupted_at": None,
@@ -755,10 +824,10 @@ index 99330e84f7..5b3c6985c8 100644
      with _records_lock:
          active_slots = {r.get("slot_key") or r["delegation_id"] for r in _records.values() if r.get("status") in _ACTIVE_STATES}
          if record["slot_key"] not in active_slots and len(active_slots) >= max_async_children:
-@@ -640,12 +642,14 @@ def dispatch_async_delegation_batch(
-     max_async_children: int = _DEFAULT_MAX_ASYNC_CHILDREN, delegation_id: Optional[str] = None,
+@@ -843,12 +845,14 @@ def dispatch_async_delegation_batch(
      progress_fn: Optional[Callable[[], tuple]] = None, slot_key: Optional[str] = None,
      task_indexes: Optional[List[int]] = None,
+     task_transcripts: Optional[Dict[str, str]] = None,
 +    on_finalize: Optional[Callable[[Dict[str, Any], str], None]] = None,
  ) -> Dict[str, Any]:
      """Dispatch a fan-out unit (a whole batch, or one ``group`` of a delegate_task call) as ONE
@@ -771,16 +840,16 @@ index 99330e84f7..5b3c6985c8 100644
      delegation_id = delegation_id or _new_delegation_id()
      # ``goals`` is the whole call (result task_index indexes it); the unit's own goals label the record.
      unit_goals = [goals[i] for i in task_indexes] if task_indexes is not None else list(goals)
-@@ -657,7 +661,7 @@ def dispatch_async_delegation_batch(
+@@ -860,7 +864,7 @@ def dispatch_async_delegation_batch(
          parent_session_id=parent_session_id, runner=runner,
          origin_ui_session_id=origin_ui_session_id, origin_session_id=origin_session_id,
          interrupt_fn=interrupt_fn, max_async_children=max_async_children, progress_fn=progress_fn, slot_key=slot_key,
--        task_indexes=task_indexes,
-+        task_indexes=task_indexes, on_finalize=on_finalize,
+-        task_indexes=task_indexes, task_transcripts=task_transcripts,
++        task_indexes=task_indexes, task_transcripts=task_transcripts, on_finalize=on_finalize,
          capacity_error=(
              f"Async delegation capacity reached ({max_async_children} running). Wait for one to finish "
              "(its result will re-enter the chat), or raise delegation.max_concurrent_children in "
-@@ -683,8 +687,19 @@ def _finalize(delegation_id: str, result: Any, status: str) -> None:
+@@ -886,8 +890,16 @@ def _finalize(delegation_id: str, result: Any, status: str) -> None:
          record["completed_at"] = time.time()
          record["interrupt_fn"] = None  # drop the closure; child is done
          record["progress_fn"] = None  # stop stale-monitor sampling
@@ -788,32 +857,29 @@ index 99330e84f7..5b3c6985c8 100644
          snapshot = dict(record)
 -    _push_completion_event(snapshot, result(snapshot) if callable(result) else result, status)
 +    result = result(snapshot) if callable(result) else result
-+    try:
-+        _push_completion_event(snapshot, result, status)
-+    finally:
-+        # A failed ledger write must not hide the terminal child outcome. Keep
-+        # the record finalizing until observers drain, just like queue delivery.
-+        if on_finalize is not None:
-+            try:
-+                on_finalize(result, status)
-+            except Exception:
-+                logger.warning("Async delegation %s finalization observer failed", delegation_id, exc_info=True)
++    _push_completion_event(snapshot, result, status)
++    # Still "finalizing": observers drain before the record reads as terminal.
++    if on_finalize is not None:
++        try:
++            on_finalize(result, status)
++        except Exception:
++            logger.warning("Async delegation %s finalization observer failed", delegation_id, exc_info=True)
      with _records_lock:
          if delegation_id in _records:
              _records[delegation_id]["status"] = status
 diff --git a/tools/delegate_tool_dispatch.py b/tools/delegate_tool_dispatch.py
-index 09f8a42da4..f3502739d0 100644
+index 2d23e03919..7147c3425d 100644
 --- a/tools/delegate_tool_dispatch.py
 +++ b/tools/delegate_tool_dispatch.py
-@@ -332,6 +332,30 @@ def _dispatch_unit(unit: _Batch, unit_id: Optional[str], slot_key: Optional[str]
-     """Hand ONE unit to the async registry; the runner joins on that unit's children only."""
+@@ -388,6 +388,28 @@ def _dispatch_unit(unit: _Batch, unit_id: Optional[str], slot_key: Optional[str]
      from tools.async_delegation import dispatch_async_delegation_batch
      child_agents = [c for (_, _, c) in unit.children]
-+    # The stale monitor is a shared bare thread. Keep THIS invocation's context,
-+    # including its ACP parent, rather than whichever session started the monitor.
-+    completion_context = contextvars.copy_context()
-+
-+    def _complete(result, status):
+ 
++    def _on_finalize(result, status):
++        """Terminal ``subagent.complete`` per child, including registry-synthesized crash/stall results
++        whose children never reported. ``_finalize`` runs under this dispatcher's context (the worker's
++        propagated copy, or the record's ``_context`` on a forced stall), so progress callbacks keep
++        their originating owner; relays drop a child already completed by its own worker."""
 +        entries = {r["task_index"]: r for r in (result.get("results") or [])
 +                   if isinstance(r, dict) and type(r.get("task_index")) is int}
 +        for index, task, child in unit.children:
@@ -831,34 +897,32 @@ index 09f8a42da4..f3502739d0 100644
 +                    duration_seconds=entry.get("duration_seconds", result.get("total_duration_seconds")),
 +                )
 +
-+    def _on_finalize(result, status):
-+        completion_context.copy().run(_complete, result, status)
- 
      def _interrupt():
          for c in child_agents:
-@@ -345,7 +369,7 @@ def _dispatch_unit(unit: _Batch, unit_id: Optional[str], slot_key: Optional[str]
-         runner=lambda: _execute_and_aggregate(unit, honor_parent_interrupt=False),
-         interrupt_fn=_interrupt, delegation_id=unit_id, slot_key=slot_key,
-         task_indexes=[i for (i, _, _) in unit.children] if len(unit.children) < len(unit.task_list) else None,
+             _signal_child_stop(c, "Async delegation cancelled")
+@@ -404,7 +426,7 @@ def _dispatch_unit(unit: _Batch, unit_id: Optional[str], slot_key: Optional[str]
+         task_transcripts={str(i): str(unit.live_writers[i].path) for i, _, _ in unit.children
+                           if i < len(unit.live_writers) and unit.live_writers[i] is not None
+                           and unit.live_writers[i].path is not None},
 -        progress_fn=lambda: _batch_progress_token(child_agents), **routing,
 +        progress_fn=lambda: _batch_progress_token(child_agents), on_finalize=_on_finalize, **routing,
      )
  
- def _dispatch_background(batch: _Batch) -> str:
+ def _restore_parent_cancellation(unit: _Batch) -> None:
 diff --git a/tools/delegate_tool_progress.py b/tools/delegate_tool_progress.py
-index f9823c11cc..342703f048 100644
+index f5903a1ed9..c2602de970 100644
 --- a/tools/delegate_tool_progress.py
 +++ b/tools/delegate_tool_progress.py
-@@ -269,6 +269,8 @@ class _ChildProgressRelay:
-         )
+@@ -303,6 +303,8 @@ class _ChildProgressRelay:
          self.batch: List[str] = []
+         self.parent_scope: Any = None  # owning parent agent; set by _build_child_progress_callback
          self.tool_count = 0  # per-subagent running counter
 +        self._terminal_ids = set()
 +        self._event_lock = threading.RLock()
  
      def _prefix(self) -> str:
          # The batch tag is resolved lazily from session_ref: the relay is built
-@@ -370,7 +372,15 @@ class _ChildProgressRelay:
+@@ -413,7 +415,15 @@ class _ChildProgressRelay:
          key = _normalize_event(event_type)
          method = None if key is None else _EVENT_HANDLERS.get(key, "_on_tool_started")
          if method is not None:
