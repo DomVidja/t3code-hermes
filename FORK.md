@@ -21,7 +21,7 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | Shared slash-command dedupe (was Claude-private)    | `apps/server/src/provider/slashCommands.ts`                                                                                                                 |
 | Hermes Tasks panel (cron jobs)                      | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                        |
 | Hermes Memory panel (Hindsight)                     | `apps/server/src/integrations/hindsight/`, `packages/contracts/src/hindsight.ts`, `apps/web/src/{state/hindsight.ts,components/hermes/HermesMemoryTab.tsx}` |
-| Reasoning-effort selector (Hermes `config.yaml`)    | `apps/server/src/hermes/hermesReasoning*.ts`, `infra/hermes/`                                                                                               |
+| Reasoning-effort selector (Hermes `config.yaml`)    | `apps/server/src/hermes/hermesReasoning*.ts`                                                                                                                |
 | Central Hermes execution on shell-only SSH targets  | `infra/hermes/0002-acp-central-ssh-execution.patch`                                                                                                         |
 | `triage` files on the fork, not upstream            | `.github/triage/PLAYBOOK.md`, `apps/server/src/cli/triagePrompt.ts`                                                                                         |
 | Telemetry reports to the fork's PostHog project     | `apps/server/src/telemetry/AnalyticsService.ts`                                                                                                             |
@@ -221,15 +221,12 @@ Project Settings → default model.
   Hermes 0.20.2, so T3 Code reads `cron/jobs.json` and the `cron/executions.db` ledger directly and
   shells out to `hermes cron pause`/`resume` for the one mutation. Fixture-pinned tests fail loudly
   if a Hermes upgrade changes either shape.
-- **Reasoning effort needs a Hermes patch, and applies on the next turn.** ACP has no reasoning
-  channel, so the composer's Reasoning selector writes a per-model entry under
+- **Reasoning effort needs Hermes v0.21.4 or newer, and applies on the next turn.** ACP has no
+  reasoning channel, so the composer's Reasoning selector writes a per-model entry under
   `agent.reasoning_overrides` in your own `~/.hermes/config.yaml` — the same file the `hermes` CLI
-  reads, so a level picked in T3 Code is the level the terminal uses. **Stock Hermes ignores that
-  file on the ACP surface**: `acp_adapter/session.py`'s `_make_agent` never passes
-  `reasoning_config` to `AIAgent`, so ACP is the one Hermes surface that skips the
-  `resolve_reasoning_config` chokepoint and always takes the provider default. Apply
-  [`infra/hermes/0001-acp-honor-reasoning-config.patch`](./infra/hermes) to your Hermes checkout —
-  without it the selector still appears but changes nothing. With it, Hermes reads the level when
+  reads, so a level picked in T3 Code is the level the terminal uses. Hermes before v0.21.4
+  (v2026.9.21) ignored that file on the ACP surface: `_make_agent` never passed `reasoning_config`,
+  so the selector still appears there but changes nothing. From v0.21.4 Hermes reads the level when
   it builds an agent, and because `session/set_model` rebuilds the agent, T3 Code re-sends the
   current model when the level changes so a new level lands on the next turn rather than only on a
   new session. The levels offered per model come from Hermes's own
