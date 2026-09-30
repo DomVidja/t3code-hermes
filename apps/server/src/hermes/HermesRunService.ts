@@ -29,6 +29,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   HermesRunError,
+  hermesRunIdPrefix,
   ProjectId,
   pullRequestHostOf,
   ProviderDriverKind,
@@ -718,7 +719,7 @@ const make = Effect.gen(function* () {
           readHermesRunRoots(path.join(profile.home, "state.db"), source.sourceKey, since),
         );
         for (const root of roots ?? []) {
-          const prefix = `hermes-run:${profile.profile}:${root.id}`;
+          const prefix = hermesRunIdPrefix({ profile: profile.profile, sessionId: root.id });
           if (runs.has(prefix) || settledRoots.has(prefix)) continue;
           const threadId = ThreadId.make(prefix);
           const existing = yield* snapshots
@@ -767,7 +768,7 @@ const make = Effect.gen(function* () {
       for (const thread of snapshot.threads) {
         const hermesRun = thread.hermesRun;
         if (hermesRun?.live !== true) continue;
-        const prefix = `hermes-run:${hermesRun.profile}:${hermesRun.sessionId}`;
+        const prefix = hermesRunIdPrefix(hermesRun);
         if (runs.has(prefix)) continue;
         const profile = context?.profiles.find((entry) => entry.profile === hermesRun.profile);
         const run: TrackedRun = {

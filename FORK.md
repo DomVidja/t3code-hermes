@@ -19,7 +19,7 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | Model picker falls back to a populated provider     | `apps/web/src/components/chat/ModelPickerContent.tsx`                                                                                                            |
 | ACP `available_commands_update` / `usage_update`    | `apps/server/src/provider/acp/{AcpRuntimeModel,AcpSessionRuntime}.ts`                                                                                            |
 | Shared slash-command dedupe (was Claude-private)    | `apps/server/src/provider/slashCommands.ts`                                                                                                                      |
-| Hermes Tasks panel (cron jobs)                      | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                             |
+| Hermes Tasks and delivery notifications             | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                             |
 | Hermes Memory panel (Hindsight)                     | `apps/server/src/integrations/hindsight/`, `packages/contracts/src/hindsight.ts`, `apps/web/src/{state/hindsight.ts,components/hermes/HermesMemoryTab.tsx}`      |
 | Hermes built-in memory (browse and edit)            | `apps/server/src/hermes/HermesMemoryService.ts`, `packages/contracts/src/hermesMemory.ts`, `packages/client-runtime/src/state/hermesMemory.ts`                   |
 | Reasoning-effort selector (Hermes `config.yaml`)    | `apps/server/src/hermes/hermesReasoning*.ts`                                                                                                                     |
@@ -222,8 +222,11 @@ Project Settings → default model.
   Fixture-pinned tests fail loudly if a Hindsight upgrade changes a response shape.
 - **Task data is read from Hermes's own state files.** `hermes cron` has no JSON output mode as of
   Hermes 0.20.2, so T3 Code reads `cron/jobs.json` and the `cron/executions.db` ledger directly and
-  shells out to `hermes cron pause`/`resume` for the one mutation. Fixture-pinned tests fail loudly
-  if a Hermes upgrade changes either shape.
+  shells out to `hermes cron pause`/`resume` for the one mutation. Delivery outcomes come from
+  `cron/deliveries.db`; messages fall back to the cron session in `state.db` (verified on 0.21.0).
+  Hermes immediately clears terminal queue payloads, so observed payloads are cached in memory,
+  with bounded previews on subscriptions and larger text fetched on demand. Script-only runs and
+  early failures may have no retained message. Fixture-pinned tests guard these storage shapes.
 - **Reasoning effort needs Hermes v0.21.4 or newer, and applies on the next turn.** ACP has no
   reasoning channel, so the composer's Reasoning selector writes a per-model entry under
   `agent.reasoning_overrides` in your own `~/.hermes/config.yaml` — the same file the `hermes` CLI

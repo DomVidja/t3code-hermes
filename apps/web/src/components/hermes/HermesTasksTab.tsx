@@ -10,11 +10,9 @@
 import {
   describeHermesJobStatus,
   describeHermesJobSummary,
-  formatHermesRunDuration,
-  formatHermesTimestamp,
   type HermesCronStatusTone,
 } from "@t3tools/client-runtime/state/hermes-cron";
-import type { HermesCronJob, HermesCronJobId, HermesCronRun } from "@t3tools/contracts";
+import type { EnvironmentId, HermesCronJob, HermesCronJobId } from "@t3tools/contracts";
 import {
   BellIcon,
   BellOffIcon,
@@ -32,7 +30,11 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+import { HermesRunRow } from "./HermesRunRow";
+import { EMPTY_HERMES_SEARCH, type HermesSearch } from "./hermesNavigation";
+
 export interface HermesTasksTabProps {
+  readonly target?: HermesSearch;
   /** Closes the panel and drops a scheduling prompt into the composer. */
   readonly onNewTask: () => void;
 }
@@ -58,40 +60,22 @@ function StatusChip({ job }: { readonly job: HermesCronJob }) {
   );
 }
 
-function RunRow({ run }: { readonly run: HermesCronRun }) {
-  const when = formatHermesTimestamp(run.finishedAt ?? run.startedAt ?? run.claimedAt);
-  const duration = formatHermesRunDuration(run.durationMs);
-  return (
-    <li className="flex flex-col gap-0.5 border-t border-border/40 py-1.5 text-xs">
-      <div className="flex items-center gap-2">
-        <span
-          className={cn(
-            "font-medium",
-            run.status === "failed" ? "text-destructive" : "text-muted-foreground",
-          )}
-        >
-          {run.status}
-        </span>
-        {when === null ? null : <span className="text-muted-foreground">{when}</span>}
-        {duration === null ? null : <span className="text-muted-foreground">· {duration}</span>}
-      </div>
-      {run.error === null ? null : (
-        <p className="break-words font-mono text-2xs text-destructive">{run.error}</p>
-      )}
-    </li>
-  );
-}
-
 function TaskRow({
   job,
+  environmentId,
+  targetRunId,
+  targeted,
   onSetEnabled,
   onSetMuted,
 }: {
   readonly job: HermesCronJob;
+  readonly environmentId: EnvironmentId;
+  readonly targetRunId: string | undefined;
+  readonly targeted: boolean;
   readonly onSetEnabled: (jobId: HermesCronJobId, enabled: boolean) => void;
   readonly onSetMuted: (jobId: HermesCronJobId, muted: boolean) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(targeted);
   const toggleExpanded = useCallback(() => setExpanded((value) => !value), []);
   const pauseLabel = job.enabled ? "Pause task" : "Resume task";
   const muteLabel = job.muted ? "Unmute notifications" : "Mute notifications";
@@ -102,6 +86,7 @@ function TaskRow({
         <button
           type="button"
           aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} task ${job.name}`}
           onClick={toggleExpanded}
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
@@ -153,17 +138,29 @@ function TaskRow({
       {expanded ? (
         <div className="mt-2 pl-6">
           {job.deliver.length > 0 ? (
-            <p className="text-xs text-muted-foreground">Delivers to {job.deliver.join(", ")}</p>
+            <p className="text-xs text-muted-foreground">
+              Configured targets: {job.deliver.join(", ")}
+            </p>
           ) : null}
           {job.lastError === null ? null : (
             <p className="mt-1 break-words font-mono text-2xs text-destructive">{job.lastError}</p>
           )}
+          {targeted && targetRunId && !job.runs.some((run) => run.id === targetRunId) ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              The requested run is no longer in recent history.
+            </p>
+          ) : null}
           {job.runs.length === 0 ? (
             <p className="mt-1 text-xs text-muted-foreground">No recorded runs yet.</p>
           ) : (
             <ul className="mt-1">
               {job.runs.map((run) => (
-                <RunRow key={run.id} run={run} />
+                <HermesRunRow
+                  key={`${run.id}:${targeted && run.id === targetRunId}`}
+                  run={run}
+                  environmentId={environmentId}
+                  targeted={targeted && run.id === targetRunId}
+                />
               ))}
             </ul>
           )}
@@ -187,8 +184,9 @@ function TasksGhost() {
   );
 }
 
-export function HermesTasksTab({ onNewTask }: HermesTasksTabProps) {
-  const { jobs, isPending, error, emptyState, view, setEnabled, setMuted } = useHermesCron();
+export function HermesTasksTab({ onNewTask, target = EMPTY_HERMES_SEARCH }: HermesTasksTabProps) {
+  const { jobs, environmentId, isPending, error, emptyState, view, setEnabled, setMuted } =
+    useHermesCron(target.environmentId);
 
   return (
     <div className="flex flex-col gap-3">
@@ -215,10 +213,24 @@ export function HermesTasksTab({ onNewTask }: HermesTasksTabProps) {
               Run history is unavailable, so only the latest outcome is shown.
             </p>
           ) : null}
+          {target.jobId && !jobs.some((job) => job.id === target.jobId) ? (
+            <p className="text-xs text-muted-foreground">
+              The requested task is no longer available on this environment.
+            </p>
+          ) : null}
           <ul className="flex flex-col gap-2">
-            {jobs.map((job) => (
-              <TaskRow key={job.id} job={job} onSetEnabled={setEnabled} onSetMuted={setMuted} />
-            ))}
+            {environmentId !== null &&
+              jobs.map((job) => (
+                <TaskRow
+                  key={`${environmentId}:${job.id}:${job.id === target.jobId ? (target.runId ?? "target") : ""}`}
+                  job={job}
+                  environmentId={environmentId}
+                  targeted={job.id === target.jobId}
+                  targetRunId={target.runId}
+                  onSetEnabled={setEnabled}
+                  onSetMuted={setMuted}
+                />
+              ))}
           </ul>
         </>
       )}

@@ -18,6 +18,29 @@ shift 4
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+platform=ios
+for arg in "$@"; do
+  if [[ "$arg" == "android" || "$arg" == "--serial" ]]; then platform=android; fi
+done
+
+# Read the development variant's scheme and app ID from app.config.ts, as the native client build does.
+if ! app_identity="$({
+  cd apps/mobile
+  APP_VARIANT=development T3CODE_IOS_PERSONAL_TEAM=0 vp exec expo config --type public --json
+} | PLATFORM="$platform" node -e '
+let input = "";
+process.stdin.on("data", (chunk) => (input += chunk)).on("end", () => {
+  const config = JSON.parse(input);
+  const scheme = [config.scheme].flat()[0];
+  const appId = process.env.PLATFORM === "android" ? config.android.package : config.ios.bundleIdentifier;
+  process.stdout.write(`${scheme} ${appId}`);
+});
+')"; then
+  echo "Could not read the mobile app scheme and ID from apps/mobile/app.config.ts." >&2
+  exit 1
+fi
+read -r app_scheme app_id <<<"$app_identity"
+
 if ! pairing_output="$({
   T3CODE_PORT="$server_port" node apps/server/src/bin.ts auth pairing create \
     --base-dir "$base_dir" \
@@ -35,19 +58,19 @@ if [[ -z "$pairing_url" ]]; then
   exit 1
 fi
 
-deep_link="$(PAIRING_URL="$pairing_url" node - <<'NODE'
+deep_link="$(PAIRING_URL="$pairing_url" APP_SCHEME="$app_scheme" node - <<'NODE'
 const query = new URLSearchParams({
   pairingUrl: process.env.PAIRING_URL,
   autoConnect: "1",
 });
-process.stdout.write(`t3code-dev://connections/new?${query}`);
+process.stdout.write(`${process.env.APP_SCHEME}://connections/new?${query}`);
 NODE
 )"
 
-if ! "$agent_device_command" open com.t3tools.t3code.dev "$deep_link" "$@" \
+if ! "$agent_device_command" open "$app_id" "$deep_link" "$@" \
   >/dev/null 2>&1; then
   echo "AgentDevice could not open the pairing route. Check the Device panel and retry with a fresh credential." >&2
   exit 1
 fi
 
-echo "Opened the existing Add Environment route with a fresh pairing credential."
+echo "Opened $app_id's existing Add Environment route with a fresh pairing credential."

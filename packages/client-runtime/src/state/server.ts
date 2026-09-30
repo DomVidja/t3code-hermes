@@ -1105,6 +1105,10 @@ export function createServerEnvironmentAtoms<R, E>(
       transform: (stream) =>
         stream.pipe(Stream.mapAccum(() => emptyHermesCronView, foldHermesCronView)),
     }),
+    hermesCronGetRunOutput: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-cron-get-run-output",
+      tag: WS_METHODS.hermesCronGetRunOutput,
+    }),
     hermesCronSetEnabled: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:hermes-cron-set-enabled",
       tag: WS_METHODS.hermesCronSetEnabled,

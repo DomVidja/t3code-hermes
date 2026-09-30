@@ -7,6 +7,8 @@
  *
  * @module hermesCronNotifications
  */
+import type { HermesCronDelivery } from "@t3tools/contracts";
+
 import type { ParsedHermesCronJob, ParsedHermesCronRun } from "./hermesCronState.ts";
 
 /**
@@ -23,6 +25,7 @@ export interface HermesCronRunNotification {
   readonly status: "completed" | "failed";
   readonly finishedAt: string | null;
   readonly error: string | null;
+  readonly delivery?: HermesCronDelivery;
 }
 
 /**
@@ -81,6 +84,7 @@ export function diffCompletedRuns(input: DiffRunsInput): readonly HermesCronRunN
       status: run.status as "completed" | "failed",
       finishedAt: run.finishedAt,
       error: run.error,
+      ...(run.delivery === undefined ? {} : { delivery: run.delivery }),
     });
   }
 
@@ -97,11 +101,12 @@ export function describeRunNotification(notification: HermesCronRunNotification)
   if (notification.status === "failed") {
     return {
       title: `Task failed: ${notification.jobName}`,
-      body: notification.error ?? "Hermes did not record a reason.",
+      body:
+        notification.delivery?.preview ?? notification.error ?? "Hermes did not record a reason.",
     };
   }
   return {
     title: `Task finished: ${notification.jobName}`,
-    body: "Scheduled run completed.",
+    body: notification.delivery?.preview ?? "Scheduled run completed.",
   };
 }

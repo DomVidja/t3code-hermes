@@ -59,6 +59,43 @@ export type HermesCronRunStatus = typeof HermesCronRunStatus.Type;
 export const HermesCronJobState = Schema.Literals(["scheduled", "paused", "completed", "error"]);
 export type HermesCronJobState = typeof HermesCronJobState.Type;
 
+/** Snapshots carry previews only; full output is fetched when a run is opened. */
+export const HERMES_CRON_PREVIEW_LENGTH = 600;
+/** Safety ceiling for a single on-demand response, not a websocket snapshot. */
+export const HERMES_CRON_OUTPUT_LENGTH = 262_144;
+
+export const HermesCronOutputSource = Schema.NullOr(Schema.Literals(["delivery", "session"]));
+export const HermesCronDelivery = Schema.Struct({
+  preview: Schema.NullOr(Schema.String.check(Schema.isMaxLength(HERMES_CRON_PREVIEW_LENGTH))),
+  contentAvailable: Schema.Boolean,
+  truncated: Schema.Boolean,
+  source: HermesCronOutputSource,
+  targets: Schema.Array(Schema.String),
+  /** `unrecorded` is not a claim that a message was delivered. */
+  status: Schema.Literals([
+    "pending",
+    "delivering",
+    "delivered",
+    "failed",
+    "unknown",
+    "unrecorded",
+  ]),
+  error: Schema.NullOr(Schema.String),
+});
+export type HermesCronDelivery = typeof HermesCronDelivery.Type;
+
+export const HermesCronGetRunOutputInput = Schema.Struct({
+  jobId: HermesCronJobId,
+  runId: TrimmedNonEmptyString,
+});
+export type HermesCronGetRunOutputInput = typeof HermesCronGetRunOutputInput.Type;
+export const HermesCronRunOutput = Schema.Struct({
+  content: Schema.NullOr(Schema.String.check(Schema.isMaxLength(HERMES_CRON_OUTPUT_LENGTH))),
+  truncated: Schema.Boolean,
+  source: HermesCronOutputSource,
+});
+export type HermesCronRunOutput = typeof HermesCronRunOutput.Type;
+
 /** One recorded execution attempt. */
 export const HermesCronRun = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -73,6 +110,7 @@ export const HermesCronRun = Schema.Struct({
   durationMs: Schema.NullOr(Schema.Number),
   /** Failure text as Hermes recorded it, already truncated for display. */
   error: Schema.NullOr(Schema.String),
+  delivery: Schema.optionalKey(HermesCronDelivery),
 });
 export type HermesCronRun = typeof HermesCronRun.Type;
 
@@ -151,6 +189,7 @@ export const HermesCronRunCompleted = Schema.Struct({
   status: Schema.Literals(["completed", "failed"]),
   finishedAt: Schema.NullOr(IsoDateTime),
   error: Schema.NullOr(Schema.String),
+  delivery: Schema.optionalKey(HermesCronDelivery),
 });
 export type HermesCronRunCompleted = typeof HermesCronRunCompleted.Type;
 

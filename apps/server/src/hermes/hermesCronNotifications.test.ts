@@ -160,3 +160,39 @@ describe("describeRunNotification", () => {
     expect(described.body).toBe("Hermes did not record a reason.");
   });
 });
+
+describe("completion delivery content", () => {
+  const delivery = {
+    preview: "## Digest: all checks passed.",
+    contentAvailable: true,
+    truncated: false,
+    source: "session" as const,
+    targets: ["telegram"],
+    status: "delivered" as const,
+    error: null,
+  };
+  it("carries message copy and outcome without replaying history or muted completions", () => {
+    const completed = run({ id: "message-run", delivery });
+    const input = {
+      jobs: JOBS,
+      runs: [completed],
+      previous: buildRunLedger([]),
+      mutedJobIds: new Set<string>(),
+    };
+    const notification = diffCompletedRuns(input)[0]!;
+    expect(notification.delivery).toEqual(delivery);
+    expect(describeRunNotification(notification).body).toBe(delivery.preview);
+    expect(diffCompletedRuns({ ...input, previous: null })).toEqual([]);
+    expect(diffCompletedRuns({ ...input, previous: buildRunLedger([completed]) })).toEqual([]);
+    expect(diffCompletedRuns({ ...input, mutedJobIds: new Set(["job-1"]) })).toEqual([]);
+  });
+  it("prefers a composed failure delivery over a generic failure reason", () => {
+    const notification = diffCompletedRuns({
+      jobs: JOBS,
+      runs: [run({ id: "failure-message", status: "failed", error: "raw error", delivery })],
+      previous: buildRunLedger([]),
+      mutedJobIds: new Set(),
+    })[0]!;
+    expect(describeRunNotification(notification).body).toBe(delivery.preview);
+  });
+});

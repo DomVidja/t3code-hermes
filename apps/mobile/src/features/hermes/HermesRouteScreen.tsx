@@ -57,7 +57,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { ScreenScrollView } from "../../components/ScreenScrollView";
-import { ProviderIcon } from "../../components/ProviderIcon";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -67,6 +66,7 @@ import { useHermesCron } from "../../state/hermesCron";
 import { useHermesPatches } from "../../state/hermesPatches";
 import { useHindsightMemory } from "../../state/hindsight";
 import { HermesNativeMemorySection } from "./HermesNativeMemorySection";
+import { HermesRunDelivery } from "./HermesRunDelivery";
 
 const HERMES_DRIVER = "hermes";
 type HermesTab = "tasks" | "memory" | "patches";
@@ -159,16 +159,6 @@ function HermesHeader(props: {
 }) {
   return (
     <View className="gap-3 border-b border-border px-5 pb-3 pt-3">
-      <View className="flex-row items-center gap-3">
-        <View className="size-11 items-center justify-center rounded-full bg-subtle">
-          <ProviderIcon provider="hermes" size={24} />
-        </View>
-        <View className="min-w-0 flex-1">
-          <Text className="text-lg font-t3-semibold text-foreground">Hermes</Text>
-          <Text className="text-sm text-foreground-muted">Scheduled work, memory, and patches</Text>
-        </View>
-      </View>
-
       {props.environments.length > 1 ? (
         <View className="flex-row flex-wrap gap-2" accessibilityRole="radiogroup">
           {props.environments.map((environment) => (
@@ -239,6 +229,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
   const renderItem = useCallback(
     ({ item }: LegendListRenderItemProps<HermesCronJob>) => (
       <TaskRow
+        environmentId={environmentId}
         job={item}
         expanded={expandedJobIds.has(item.id)}
         pending={cron.pendingJobIds.has(item.id)}
@@ -255,6 +246,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
       cron.pendingJobIds,
       cron.setEnabled,
       cron.setMuted,
+      environmentId,
       expandedJobIds,
       runMutation,
       toggleExpanded,
@@ -286,6 +278,9 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
       }}
       data={cron.jobs}
       estimatedItemSize={124}
+      // Rows read expansion and pending state through renderItem, but LegendList only
+      // re-renders mounted rows when data or extraData changes.
+      extraData={renderItem}
       keyExtractor={(job) => job.id}
       ListEmptyComponent={empty}
       ListHeaderComponent={
@@ -318,6 +313,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
 }
 
 function TaskRow(props: {
+  readonly environmentId: EnvironmentId;
   readonly job: HermesCronJob;
   readonly expanded: boolean;
   readonly pending: boolean;
@@ -336,11 +332,11 @@ function TaskRow(props: {
         onPress={props.onToggleExpanded}
         className="min-h-16 flex-row items-center gap-3 px-4 py-3"
       >
-        <IconChevronRight
-          color={String(mutedColor)}
-          size={18}
-          style={{ transform: [{ rotate: props.expanded ? "90deg" : "0deg" }] }}
-        />
+        {/* Rotate a wrapper: react-native-svg applies a root `style.transform` to the drawing
+            around its origin, which moves the chevron out of its box on iOS. */}
+        <View className={props.expanded ? "rotate-90" : undefined}>
+          <IconChevronRight color={String(mutedColor)} size={18} />
+        </View>
         <View className="min-w-0 flex-1 gap-0.5">
           <Text className="text-base font-t3-semibold text-foreground" numberOfLines={1}>
             {props.job.name}
@@ -392,7 +388,9 @@ function TaskRow(props: {
           {props.job.runs.length === 0 ? (
             <Text className="text-sm text-foreground-muted">No recorded runs yet.</Text>
           ) : (
-            props.job.runs.map((run) => <RunRow key={run.id} run={run} />)
+            props.job.runs.map((run) => (
+              <RunRow key={run.id} environmentId={props.environmentId} run={run} />
+            ))
           )}
         </View>
       ) : null}
@@ -400,7 +398,13 @@ function TaskRow(props: {
   );
 }
 
-function RunRow({ run }: { readonly run: HermesCronRun }) {
+function RunRow({
+  environmentId,
+  run,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly run: HermesCronRun;
+}) {
   const when = formatHermesTimestamp(run.finishedAt ?? run.startedAt ?? run.claimedAt);
   const duration = formatHermesRunDuration(run.durationMs);
   return (
@@ -425,6 +429,7 @@ function RunRow({ run }: { readonly run: HermesCronRun }) {
           {run.error}
         </Text>
       )}
+      <HermesRunDelivery environmentId={environmentId} run={run} />
     </View>
   );
 }
