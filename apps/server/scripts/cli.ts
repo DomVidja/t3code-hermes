@@ -11,6 +11,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
+import { CLI_ARCHIVE_PLATFORM_KEYS, NPM_PLATFORM_PACKAGE_NAMES } from "@t3tools/shared/cliRelease";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   ServerCliBuildAssetMissingError,
@@ -193,14 +194,14 @@ const publishCmd = Command.make(
       const packagesDir = path.resolve(config.packagesDir);
       const scopeDir = packagesDir;
       const launcherTarball = path.join(packagesDir, "t3-hermes.tgz");
-      const platformTarballs = (yield* fs
-        .readDirectory(scopeDir)
-        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])))
-        // Every tarball but the launcher is a platform package; their names
-        // are not all `t3-hermes-*` (see NPM_PLATFORM_PACKAGE_NAMES).
-        .filter((entry) => entry.endsWith(".tgz") && entry !== path.basename(launcherTarball))
-        .sort()
-        .map((entry) => path.join(scopeDir, entry));
+      // Only known platform packages, so a stray tarball is never published.
+      // A partial (--allow-missing) build simply lacks some of them.
+      const platformTarballs = yield* Effect.filter(
+        CLI_ARCHIVE_PLATFORM_KEYS.map((key) =>
+          path.join(scopeDir, `${NPM_PLATFORM_PACKAGE_NAMES[key]}.tgz`),
+        ),
+        (tarball) => fs.exists(tarball),
+      );
       if (platformTarballs.length === 0) {
         return yield* new ServerCliBuildAssetMissingError({
           assetPath: path.join(scopeDir, "t3-<platform>.tgz"),
