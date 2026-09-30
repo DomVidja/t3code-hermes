@@ -101,3 +101,27 @@ export function isHermesRunSourceBusy(
       thread.hermesRun.sourceKey === run.sourceKey,
   );
 }
+
+/** `hermes-run:<profile>:<root session>`: a mirrored run's thread id, turn id, and id prefix. */
+export function hermesRunIdPrefix(run: Pick<ThreadHermesRun, "profile" | "sessionId">): string {
+  return `hermes-run:${run.profile}:${run.sessionId}`;
+}
+
+/**
+ * Whether a thread's latest turn is a mirrored cron run that Hermes Tasks already announces.
+ * Tasks reads the default profile's cron ledger and alerts every run of it (with the delivered
+ * message and per-job mute), including runs that never become threads, so the thread must not
+ * alert a second time. Webhook runs, other profiles, and replies in the thread still alert.
+ */
+export function isHermesTasksAnnouncedTurn(thread: {
+  readonly hermesRun?: ThreadHermesRun | null | undefined;
+  readonly latestTurn?: { readonly turnId: string } | null | undefined;
+}): boolean {
+  const run = thread.hermesRun;
+  return (
+    run != null &&
+    run.profile === "default" &&
+    run.sourceKey.startsWith("cron:") &&
+    thread.latestTurn?.turnId === hermesRunIdPrefix(run)
+  );
+}

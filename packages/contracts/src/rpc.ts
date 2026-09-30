@@ -259,6 +259,8 @@ import {
 import {
   HermesCronError,
   HermesCronListInput,
+  HermesCronGetRunOutputInput,
+  HermesCronRunOutput,
   HermesCronSetEnabledInput,
   HermesCronSetMutedInput,
   HermesCronSnapshot,
@@ -432,6 +434,7 @@ export const WS_METHODS = {
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
   hermesCronList: "hermes.cronList",
+  hermesCronGetRunOutput: "hermes.cronGetRunOutput",
   hermesCronSetEnabled: "hermes.cronSetEnabled",
   hermesCronSetMuted: "hermes.cronSetMuted",
   hermesRunSourcesList: "hermes.runSourcesList",
@@ -728,6 +731,12 @@ const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
+const WsHermesCronGetRunOutputRpc = Rpc.make(WS_METHODS.hermesCronGetRunOutput, {
+  payload: HermesCronGetRunOutputInput,
+  success: HermesCronRunOutput,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesCronError]),
 });
 
 const WsHermesCronListRpc = Rpc.make(WS_METHODS.hermesCronList, {
@@ -1603,6 +1612,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
   WsHermesCronListRpc,
+  WsHermesCronGetRunOutputRpc,
   WsHermesCronSetEnabledRpc,
   WsHermesCronSetMutedRpc,
   WsHermesRunSourcesListRpc,

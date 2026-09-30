@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, HermesCronJobId, type HermesCronRunCompleted } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -13,13 +13,26 @@ const state = vi.hoisted(() => ({
   sound: vi.fn(),
   badge: vi.fn(),
   environmentIds: ["one", "two"],
+  hermes: new Map<string, HermesCronRunCompleted | null>(),
+  location: { pathname: "/", search: {} as Record<string, string> },
+  reportHermes: vi.fn(),
+  markHermesSeen: vi.fn(),
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: (id: string) => state.shells.get(id) }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
   useParams: () => ({}),
+  useRouterState: () => state.location,
 }));
-vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
+vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast, close: vi.fn() } }));
+vi.mock("../state/hermesCron", () => ({
+  useHermesEnvironmentEnabled: (id: string) => state.hermes.has(id),
+  useHermesCron: (id: string) => ({ view: { lastCompletion: state.hermes.get(id) ?? null } }),
+}));
+vi.mock("../state/hermesCronSeen", () => ({
+  reportHermesCompletion: state.reportHermes,
+  markHermesTasksSeen: state.markHermesSeen,
+}));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: (id: string) => id } }));
 vi.mock("../state/environments", () => ({
   useEnvironments: () => ({
@@ -91,6 +104,8 @@ beforeEach(() => {
   state.mode = "notifications";
   state.inApp = false;
   state.environmentIds = ["one", "two"];
+  state.hermes.clear();
+  state.location = { pathname: "/", search: {} };
   state.shells.set("one", shell());
   state.shells.set("two", shell());
   focused = false;
@@ -102,12 +117,11 @@ beforeEach(() => {
   vi.stubGlobal("window", Object.assign(new EventTarget(), { focus: vi.fn() }));
   vi.stubGlobal(
     "document",
-    Object.assign(new EventTarget(), {
-      hasFocus: () => focused,
-      get visibilityState() {
-        return visibility;
-      },
-    }),
+    Object.defineProperty(
+      Object.assign(new EventTarget(), { hasFocus: () => focused }),
+      "visibilityState",
+      { get: () => visibility },
+    ),
   );
 });
 
@@ -255,5 +269,143 @@ it("badges background failures with in-app notifications enabled", async () => {
   await render();
   expect(TestNotification.sent[0]?.title).toBe("Thread failed");
   expect(state.badge).toHaveBeenLastCalledWith(1);
+  expect(state.toast).not.toHaveBeenCalled();
+});
+
+function completeHermes(environment = "two", overrides: Partial<HermesCronRunCompleted> = {}) {
+  state.hermes.set(environment, {
+    jobId: HermesCronJobId.make("job"),
+    jobName: "Morning report",
+    runId: "run",
+    status: "completed",
+    finishedAt: null,
+    error: null,
+    delivery: {
+      preview: "The report is ready.",
+      contentAvailable: true,
+      source: "delivery",
+      truncated: false,
+      targets: ["local"],
+      status: "delivered",
+      error: null,
+    },
+    ...overrides,
+  });
+}
+
+it("shares Hermes and thread badge counts and opens the exact remote run", async () => {
+  state.hermes.set("two", null);
+  await render();
+  complete("one");
+  await render();
+  completeHermes();
+  await render();
+  expect(state.badge).toHaveBeenLastCalledWith(2);
+  const notification = TestNotification.sent.at(-1)!;
+  expect(notification.options).toMatchObject({ body: "The report is ready.", silent: true });
+  notification.dispatchEvent(new Event("click"));
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/hermes",
+    search: { environmentId: "two", jobId: "job", runId: "run" },
+  });
+  state.environmentIds = ["one"];
+  await render();
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+  window.dispatchEvent(new Event("focus"));
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+});
+
+it("previews a focused Hermes completion without a badge and does not replay it on preference changes", async () => {
+  state.mode = "off";
+  state.inApp = true;
+  focused = true;
+  state.hermes.set("two", null);
+  await render();
+  completeHermes();
+  await render();
+  expect(state.toast).toHaveBeenCalledOnce();
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      description: "The report is ready.",
+      actionProps: expect.objectContaining({ children: "Open" }),
+    }),
+  );
+  state.toast.mock.calls[0]![0].actionProps.onClick();
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/hermes",
+    search: { environmentId: "two", jobId: "job", runId: "run" },
+  });
+  state.mode = "notifications-and-sound";
+  focused = false;
+  await render();
+  expect(state.toast).toHaveBeenCalledOnce();
+  expect(state.reportHermes).toHaveBeenCalledOnce();
+  expect(TestNotification.sent).toHaveLength(0);
+  expect(state.sound).not.toHaveBeenCalled();
+});
+
+it("observes completions while every alert is disabled without replaying them when enabled", async () => {
+  state.mode = "off";
+  state.hermes.set("two", null);
+  await render();
+  completeHermes();
+  await render();
+  state.mode = "notifications";
+  await render();
+  expect(state.reportHermes).toHaveBeenCalledOnce();
+  expect(TestNotification.sent).toHaveLength(0);
+  expect(state.toast).not.toHaveBeenCalled();
+});
+
+it.each(["off", "sound", "denied", "default", "focused"])(
+  "does not show Hermes OS alerts when %s",
+  async (condition) => {
+    if (condition === "off" || condition === "sound") state.mode = condition;
+    if (condition === "focused") focused = true;
+    if (condition === "denied" || condition === "default") TestNotification.permission = condition;
+    state.hermes.set("two", null);
+    await render();
+    completeHermes();
+    await render();
+    expect(TestNotification.sent).toHaveLength(0);
+    expect(state.toast).not.toHaveBeenCalled();
+    expect(state.badge.mock.calls.every(([count]) => count === 0)).toBe(true);
+  },
+);
+
+it("suppresses the current run's in-app alert but still plays sound and marks it seen", async () => {
+  state.mode = "notifications-and-sound";
+  state.inApp = true;
+  focused = true;
+  state.location = {
+    pathname: "/hermes",
+    search: { environmentId: "two", jobId: "job", runId: "run" },
+  };
+  state.hermes.set("two", null);
+  await render();
+  completeHermes();
+  await render();
+  expect(state.toast).not.toHaveBeenCalled();
+  expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+  expect(state.markHermesSeen).toHaveBeenCalledWith("two");
+  expect(TestNotification.sent).toHaveLength(0);
+});
+
+it("falls back to execution errors for legacy completions and treats hidden windows as unfocused", async () => {
+  state.inApp = true;
+  focused = true;
+  visibility = "hidden";
+  state.hermes.set("two", null);
+  await render();
+  state.hermes.set("two", {
+    jobId: HermesCronJobId.make("job"),
+    jobName: "Report",
+    runId: "run",
+    status: "failed",
+    finishedAt: null,
+    error: "Provider unavailable",
+  });
+  await render();
+  expect(TestNotification.sent.at(-1)?.options.body).toBe("Provider unavailable");
   expect(state.toast).not.toHaveBeenCalled();
 });
