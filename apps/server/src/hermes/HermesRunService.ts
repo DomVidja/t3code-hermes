@@ -96,6 +96,7 @@ import {
 const HERMES = ProviderDriverKind.make("hermes");
 const STATE_FILENAME = "hermes-run-sources.json";
 const IDLE_INTERVAL = Duration.seconds(30);
+const HERMES_OFF_REASON = "Hermes was turned off before this run finished.";
 const LIVE_INTERVAL = Duration.seconds(5);
 /** Window the settings list counts recent runs over. */
 const RECENT_RUN_WINDOW_SECONDS = 30 * 24 * 60 * 60;
@@ -468,6 +469,17 @@ const make = Effect.gen(function* () {
       createdAt: at,
     });
 
+  /**
+   * Ends a run that can no longer be followed, so its source's replies unlock.
+   * A failure fails the pass, and the close is retried next tick.
+   */
+  const closeRun = (run: TrackedRun, reason: string) =>
+    Effect.gen(function* () {
+      const at = DateTime.formatIso(yield* DateTime.now);
+      yield* dispatch(sessionCommand(run, "error", "error", at, reason));
+      yield* setHermesRun(run, false, "ended", at);
+    });
+
   const writeBinding = (run: TrackedRun, primer: string | null, workspaceRoot: string) =>
     directory.upsert(
       {
@@ -558,7 +570,7 @@ const make = Effect.gen(function* () {
           }).pipe(
             // Already linked is the decider saying the thread knew; anything
             // else fails the pass so the batch, link included, is retried.
-            Effect.catchTag("OrchestrationCommandInvariantError", () => Effect.void),
+            Effect.catchTags({ OrchestrationCommandInvariantError: () => Effect.void }),
           );
           run.pullRequestUrls.add(url);
         }),
@@ -570,7 +582,17 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const dbPath = path.join(run.profile.home, "state.db");
       const chain = yield* Effect.sync(() => readHermesRunChain(dbPath, run.rootSessionId));
-      if (chain === null || chain.length === 0) return false;
+      if (chain === null) {
+        // Unreadable is usually a lock and passes; a missing store never will.
+        const exists = yield* fs.exists(dbPath).pipe(Effect.orElseSucceed(() => true));
+        if (exists) return false;
+        if (run.created) yield* closeRun(run, "Its Hermes profile no longer exists.");
+        return true;
+      }
+      if (chain.length === 0) {
+        if (run.created) yield* closeRun(run, "Hermes no longer has this run's session.");
+        return true;
+      }
       const root = chain[0]!;
       run.latestSessionId = chain.at(-1)!.id;
       const project = Option.getOrUndefined(
@@ -733,10 +755,13 @@ const make = Effect.gen(function* () {
    * own thread and never leaves replies locked.
    */
   let resumedLiveRuns = false;
-  const resumeLiveRuns = (context: {
-    readonly instanceId: ProviderInstanceId;
-    readonly profiles: ReadonlyArray<HermesProfileHome>;
-  }) =>
+  let closedWhileOff = false;
+  const resumeLiveRuns = (
+    context: {
+      readonly instanceId: ProviderInstanceId;
+      readonly profiles: ReadonlyArray<HermesProfileHome>;
+    } | null,
+  ) =>
     Effect.gen(function* () {
       const snapshot = yield* snapshots.getShellSnapshot({ unsettledOnly: true });
       for (const thread of snapshot.threads) {
@@ -744,11 +769,14 @@ const make = Effect.gen(function* () {
         if (hermesRun?.live !== true) continue;
         const prefix = `hermes-run:${hermesRun.profile}:${hermesRun.sessionId}`;
         if (runs.has(prefix)) continue;
-        const profile = context.profiles.find((entry) => entry.profile === hermesRun.profile);
+        const profile = context?.profiles.find((entry) => entry.profile === hermesRun.profile);
         const run: TrackedRun = {
           ids: { threadId: thread.id, turnId: TurnId.make(prefix), prefix },
           profile: profile ?? { profile: hermesRun.profile, home: "" },
-          instanceId: context.instanceId,
+          instanceId:
+            context?.instanceId ??
+            thread.session?.providerInstanceId ??
+            thread.modelSelection.instanceId,
           sourceKey: hermesRun.sourceKey,
           projectId: thread.projectId,
           sourceLabel: hermesRun.sourceLabel,
@@ -761,15 +789,14 @@ const make = Effect.gen(function* () {
           toolCalls: new Map(),
           pullRequestUrls: new Set(),
         };
+        // A run that can never be read again is closed rather than left
+        // holding its source's replies.
+        if (context === null) {
+          yield* closeRun(run, HERMES_OFF_REASON);
+          continue;
+        }
         if (profile === undefined) {
-          // The profile is gone, so the run can never be read again: close it
-          // rather than leave its source's replies locked.
-          const at = DateTime.formatIso(yield* DateTime.now);
-          // A failure here fails the pass, so the whole resume is retried.
-          yield* dispatch(
-            sessionCommand(run, "error", "error", at, "Its Hermes profile no longer exists."),
-          );
-          yield* setHermesRun(run, false, "ended", at);
+          yield* closeRun(run, "Its Hermes profile no longer exists.");
           continue;
         }
         runs.set(prefix, run);
@@ -780,7 +807,21 @@ const make = Effect.gen(function* () {
   /** One pass. Returns whether any followed run is still live. */
   const tick = Effect.gen(function* () {
     const context = yield* hermesContext;
-    if (context === null) return false;
+    if (context === null) {
+      // With Hermes off, its runs can't be followed: end them once per off
+      // period so nothing stays reply-locked. One read, then idle.
+      if (!closedWhileOff) {
+        for (const run of runs.values()) {
+          if (run.created) yield* closeRun(run, HERMES_OFF_REASON);
+        }
+        runs.clear();
+        yield* resumeLiveRuns(null);
+        resumedLiveRuns = false;
+        closedWhileOff = true;
+      }
+      return false;
+    }
+    closedWhileOff = false;
     if (!resumedLiveRuns) yield* resumeLiveRuns(context);
     if ((yield* Ref.get(enabledRef)).length > 0) yield* discover(context);
     const nowSeconds = (yield* Clock.currentTimeMillis) / 1000;

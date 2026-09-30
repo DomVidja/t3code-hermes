@@ -447,4 +447,76 @@ describe("HermesRunService", () => {
       });
     }).pipe(Effect.provide(layer));
   });
+
+  it.live("ends a live run once Hermes is turned off, so replies unlock", () => {
+    const hermes = makeHermesHome();
+    const liveThread = {
+      id: ThreadId.make("hermes-run:upstream-sync:run-off"),
+      projectId: PROJECT_ID,
+      modelSelection: { instanceId: ProviderInstanceId.make("hermes"), model: "hermes-4" },
+      session: null,
+      hermesRun: {
+        profile: "upstream-sync",
+        sourceKey: "webhook:upstream-sync",
+        sourceLabel: "webhook/upstream-sync",
+        sessionId: "run-off",
+        latestSessionId: "run-off",
+        live: true,
+      },
+    } as unknown as OrchestrationThreadShell;
+    const { layer, dispatched } = makeLayer(hermes.root, {
+      hermesEnabled: false,
+      liveThreads: [liveThread],
+    });
+    return Effect.gen(function* () {
+      const service = yield* HermesRunService.HermesRunService;
+      yield* service.sync;
+      expect(dispatched).toMatchObject([
+        { type: "thread.session.set", session: { status: "error" } },
+        { type: "thread.hermes-run.set", hermesRun: { live: false } },
+      ]);
+      // Once per off period: later passes read nothing and dispatch nothing.
+      dispatched.length = 0;
+      yield* service.sync;
+      expect(dispatched).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("ends a run whose profile store disappears mid-run", () => {
+    const hermes = makeHermesHome();
+    const { layer, dispatched } = makeLayer(hermes.root);
+    return Effect.gen(function* () {
+      const service = yield* HermesRunService.HermesRunService;
+      yield* service.setSource({
+        profile: "upstream-sync",
+        sourceKey: "webhook:upstream-sync",
+        projectId: PROJECT_ID,
+      });
+      const startedAt = (yield* nowSeconds) + 1;
+      hermes.withDb((db) => {
+        insertHermesSession(db, {
+          id: "run-gone",
+          source: "webhook",
+          route: "upstream-sync",
+          startedAt,
+          toolCallCount: 1,
+        });
+        insertHermesMessage(db, {
+          sessionId: "run-gone",
+          role: "assistant",
+          toolCalls: [{ id: "call-g", name: "terminal", args: { command: "git fetch" } }],
+          timestamp: startedAt,
+        });
+      });
+      yield* service.sync;
+      expect(dispatched.some((command) => command.type === "thread.create")).toBe(true);
+      NodeFS.rmSync(NodePath.join(hermes.home, "state.db"));
+      dispatched.length = 0;
+      yield* service.sync;
+      expect(dispatched).toMatchObject([
+        { type: "thread.session.set", session: { status: "error" } },
+        { type: "thread.hermes-run.set", hermesRun: { live: false } },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
 });
