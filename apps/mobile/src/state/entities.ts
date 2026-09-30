@@ -64,6 +64,15 @@ export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | n
   return useAtomValue(ref === null ? EMPTY_PROJECT_ATOM : environmentProjects.projectAtom(ref));
 }
 
+const FALSE_ATOM = Atom.make(false).pipe(Atom.withLabel("mobile-false"));
+
+/** Whether replies to a Hermes-run thread wait on a live run of its source. */
+export function useHermesRunReplyBlocked(ref: ScopedThreadRef | null): boolean {
+  return useAtomValue(
+    ref === null ? FALSE_ATOM : environmentThreadShells.hermesRunReplyBlockedAtom(ref),
+  );
+}
+
 export function useThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadShell | null {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_SHELL_ATOM : environmentThreadShells.threadShellAtom(ref),

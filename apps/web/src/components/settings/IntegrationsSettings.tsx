@@ -3,6 +3,7 @@ import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
+import { HermesRunsSettingsSection } from "./HermesRunsSettings";
 import { MemorySettingsSection } from "./MemorySettings";
 /**
  * Integrations settings - preferences for surfaces T3 Code embeds rather than
@@ -1458,6 +1459,7 @@ export function IntegrationsSettingsPanel() {
       </SettingsSection>
       <DeviceIntegrationSettings />
       <MemorySettingsSection />
+      <HermesRunsSettingsSection />
     </SettingsPageContainer>
   );
 }

@@ -156,6 +156,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
+import * as HermesRunService from "./hermes/HermesRunService.ts";
 import * as HindsightService from "./integrations/hindsight/HindsightService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -674,6 +675,7 @@ const makeWsRpcLayer = (
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
       const hermesCron = yield* HermesCronService.HermesCronService;
+      const hermesRuns = yield* HermesRunService.HermesRunService;
       const hindsight = yield* HindsightService.HindsightService;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
@@ -2701,6 +2703,14 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.hermesCronSetMuted]: (input) =>
           observeRpcEffect(WS_METHODS.hermesCronSetMuted, hermesCron.setMuted(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesRunSourcesList]: (_input) =>
+          observeRpcEffect(WS_METHODS.hermesRunSourcesList, hermesRuns.listSources, {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesRunSourceSet]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesRunSourceSet, hermesRuns.setSource(input), {
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.hindsightListBanks]: (input) =>

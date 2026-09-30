@@ -58,7 +58,7 @@ import {
   countComposerDraftAttachmentsAfterSelection,
 } from "../../state/use-composer-drafts";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
-import { useProject } from "../../state/entities";
+import { useHermesRunReplyBlocked, useProject } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/AppText";
@@ -298,8 +298,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     () => composerStripAttachments(props.draftAttachments),
     [props.draftAttachments],
   );
+  const hermesRunBlocked = useHermesRunReplyBlocked(
+    useMemo(
+      () => ({ environmentId: props.environmentId, threadId: props.selectedThread.id }),
+      [props.environmentId, props.selectedThread.id],
+    ),
+  );
+  // A mirrored Hermes run has no session here to stop.
   const showStopAction =
     !hasContent &&
+    props.selectedThread.hermesRun?.live !== true &&
     (props.selectedThread.session?.status === "running" ||
       props.selectedThread.session?.status === "starting");
 
@@ -417,6 +425,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const contextImports = useAtomValue(composerContextImportsAtom);
   const sendBlockedReason =
     props.sendBlockedReason ??
+    (hermesRunBlocked ? "Hermes is still running this task" : null) ??
     (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
     attachmentBlockReason;
   const canSend =

@@ -176,6 +176,20 @@ describe("applyHermesAcpModelSelection", () => {
     }),
   );
 
+  it.effect("keeps the profile's model when asked for the bare placeholder", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyHermesAcpModelSelection({
+        runtime,
+        currentModelId: "cliproxyapi:claude-opus-5-5",
+        requestedModelId: "hermes-4",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toBe("cliproxyapi:claude-opus-5-5");
+    }),
+  );
+
   it.effect("skips set_model when requested matches current or is absent", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();

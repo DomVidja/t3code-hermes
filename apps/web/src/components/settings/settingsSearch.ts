@@ -591,6 +591,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "hermes-runs",
+    title: "Hermes runs",
+    to: "/settings/integrations",
+    searchTerms: [
+      "hermes background runs tasks webhook cron scheduled jobs threads upstream sync automation",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "memory-server",
     title: "Hindsight server",
     to: "/settings/integrations",

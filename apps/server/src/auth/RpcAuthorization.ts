@@ -68,6 +68,8 @@ export const RPC_REQUIRED_SCOPES = {
   // Pausing a scheduled task changes what the host will do on its own.
   [WS_METHODS.hermesCronSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.hermesCronSetMuted]: AuthOrchestrationOperateScope,
+  [WS_METHODS.hermesRunSourcesList]: AuthOrchestrationReadScope,
+  [WS_METHODS.hermesRunSourceSet]: AuthOrchestrationOperateScope,
   [WS_METHODS.hindsightListBanks]: AuthOrchestrationReadScope,
   [WS_METHODS.hindsightBrowse]: AuthOrchestrationReadScope,
   [WS_METHODS.hindsightRecall]: AuthOrchestrationReadScope,

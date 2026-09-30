@@ -1103,6 +1103,16 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:hermes-cron-set-muted",
       tag: WS_METHODS.hermesCronSetMuted,
     }),
+    /** Hermes background sources and which of them mirror their runs into threads. */
+    hermesRunSources: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:hermes-run-sources",
+      tag: WS_METHODS.hermesRunSourcesList,
+      staleTimeMs: 10_000,
+    }),
+    hermesRunSourceSet: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-run-source-set",
+      tag: WS_METHODS.hermesRunSourceSet,
+    }),
     /**
      * Hindsight memory. Queries rather than a subscription: Hindsight has no
      * change feed, and the panel only wants an answer when the user asks a
