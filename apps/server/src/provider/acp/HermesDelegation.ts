@@ -124,8 +124,10 @@ function startChildren(tool: AcpToolCallState): Child[] {
     /^delegate batch \((\d+) tasks\)$/.exec(text(tool.data.title) ?? tool.title ?? "")?.[1];
   if (batchCount) {
     // Stock lists only the first eight goals but always states the count. Keep
-    // every child, filling omitted metadata from final results.
-    return Array.from({ length: Number(batchCount) }, (_, index) => {
+    // every child, filling omitted metadata from final results. The count is
+    // provider text: bound the up-front allocation (as the patch bounds child
+    // snapshots); final results still add any child past the bound.
+    return Array.from({ length: Math.min(Number(batchCount), 128) }, (_, index) => {
       const line = new RegExp(`^${index + 1}\\. (.*)$`, "m").exec(content)?.[1];
       const roleMatch = line ? /^(.*) \(([^()]+)\)$/.exec(line) : null;
       return {

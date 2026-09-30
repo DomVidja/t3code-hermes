@@ -389,6 +389,14 @@ describe("Hermes delegate_task ACP boundary", () => {
     ).toBe("completed");
   });
 
+  it("bounds a stock batch count before allocating children", () => {
+    const content = [
+      { type: "content", content: { type: "text", text: "Delegating 4294967296 tasks\n\n1. A" } },
+    ];
+    const events = new HermesDelegations().update(tool({ ...batch.start, content }), turnId)!;
+    expect(events.filter((event) => event.type === "task.started")).toHaveLength(128);
+  });
+
   it("settles missing/truncated stock child results without inventing success", () => {
     const state = new HermesDelegations();
     const start = tool(batch.start);
