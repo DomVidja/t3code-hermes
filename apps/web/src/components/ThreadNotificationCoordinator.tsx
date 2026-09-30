@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { isHermesTasksAnnouncedTurn, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import {
   CircleAlertIcon,
@@ -135,7 +135,7 @@ function EnvironmentNotifications({
           ? completedAt
           : (prior?.completion ?? null);
       next.set(thread.id, { attention, completion });
-      if (!prior || thread.archivedAt !== null) continue;
+      if (!prior || thread.archivedAt !== null || isHermesTasksAnnouncedTurn(thread)) continue;
       const kind =
         attention && attention !== prior.attention
           ? "input"
