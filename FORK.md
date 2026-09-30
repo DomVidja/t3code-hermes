@@ -26,6 +26,7 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | Hermes Patches tab (applies the carried patches)    | `apps/server/src/hermes/{HermesPatchService,hermesPatches}.ts`, `packages/contracts/src/hermesPatches.ts`, `apps/web/src/components/hermes/HermesPatchesTab.tsx` |
 | `triage` files on the fork, not upstream            | `.github/triage/PLAYBOOK.md`, `apps/server/src/cli/triagePrompt.ts`                                                                                              |
 | Telemetry reports to the fork's PostHog project     | `apps/server/src/telemetry/AnalyticsService.ts`                                                                                                                  |
+| Opt-in skill and memory rows in the work log        | `packages/client-runtime/src/work-log/agentActivity.ts`                                                                                                          |
 
 The auto-bootstrap and model-picker rows are not Hermes-specific but matter on Hermes-only hosts.
 The ACP session-update and slash-command-dedupe rows are not Hermes-specific at all — they are
@@ -247,9 +248,11 @@ other workflows.
 
 The same job drives fork releases: every sync dispatches `release.yml` with `follow_upstream`, and
 the release's first job — running under the nightly concurrency lock, so queued runs cannot double
-publish — continues only when `main` contains the commit of upstream's latest nightly and no fork
-nightly has shipped it yet. `release.yml` has no schedule of its own, so fork nightlies track
-upstream's (a fork nightly may bundle several upstream nightlies if a conflict held the sync back).
+publish — continues only when the upstream commit captured by the sync is merged into `main`
+and absent from the latest published fork nightly. Any new upstream commits trigger a release,
+without waiting for an upstream nightly or a minimum time gap. Unchanged syncs skip; failed releases
+can retry on the next sync. This also covers merges through conflict-resolution PRs. `release.yml`
+has no schedule of its own.
 
 Two kinds of issue come out of it:
 
@@ -305,8 +308,8 @@ upstream-only infrastructure. This fork therefore diverges in `.github/workflows
   reusable workflow declares `AUR_SSH_PRIVATE_KEY` as required.) `ci.yml`, `pr-size.yml`,
   `thread-transfer-report.yml`, `mobile-fingerprint-check.yml`, and
   `mobile-showcase-screenshots.yml` run normally.
-- **Nightly release.** `release.yml` is dispatched by the upstream sync whenever upstream has cut a
-  nightly the fork has not shipped (see "Tracking upstream") and produces the desktop artifacts — macOS dmg/zip, Linux AppImage, Windows nsis — plus the
+- **Nightly release.** `release.yml` is dispatched by the upstream sync whenever it has merged
+  upstream commits the fork has not shipped (see "Tracking upstream") and produces the desktop artifacts — macOS dmg/zip, Linux AppImage, Windows nsis — plus the
   updater manifests, attached to a GitHub prerelease. Everything that needs upstream credentials
   degrades instead of failing: the T3 Connect config resolves to empty values (so builds ship with
   T3 Connect disabled), and the Vercel deploy, the version-bump commit, and the Discord
