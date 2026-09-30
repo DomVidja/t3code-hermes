@@ -5,6 +5,7 @@ import {
   foldSubagentActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
+  sumSubagentTokens,
 } from "./subagentRuntime.ts";
 
 let sequence = 0;
@@ -247,6 +248,48 @@ describe("foldSubagentActivities", () => {
 
     expect(agent?.status).toBe("running");
     expect(agent?.usage?.totalTokens).toBe(800);
+  });
+
+  it("retains duration-only usage without inventing a token count", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "duration-only", taskType: "subagent" }),
+      activity("task.progress", { taskId: "duration-only", typedUsage: { durationMs: 2500 } }),
+      activity("task.completed", {
+        taskId: "duration-only",
+        status: "completed",
+        typedUsage: { toolUses: 2 },
+      }),
+    ]);
+    expect(agents[0]!.usage).toEqual({ durationMs: 2500, toolUses: 2 });
+    expect(deriveAgentPanelModel({ agents }).totalTokens).toBeNull();
+    expect(formatSubagentTokenCount(agents[0]!.usage?.totalTokens)).toBe("—");
+    expect(formatSubagentTokenCount(0)).toBe("0");
+  });
+
+  it("partial usage preserves a previously reported token total", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "partial-usage", taskType: "subagent" }),
+      activity("task.progress", { taskId: "partial-usage", typedUsage: { totalTokens: 123 } }),
+      activity("task.completed", {
+        taskId: "partial-usage",
+        status: "completed",
+        typedUsage: { durationMs: 2500 },
+      }),
+    ]);
+    expect(agents[0]!.usage).toEqual({ totalTokens: 123, durationMs: 2500 });
+    expect(deriveAgentPanelModel({ agents }).totalTokens).toBe(123);
+  });
+
+  it("reports an unknown total rather than an undercount for mixed rosters", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "counted", taskType: "subagent" }),
+      activity("task.progress", { taskId: "counted", typedUsage: { totalTokens: 1_200 } }),
+      activity("task.started", { taskId: "duration-only", taskType: "subagent" }),
+      activity("task.progress", { taskId: "duration-only", typedUsage: { durationMs: 2500 } }),
+    ]);
+    expect(deriveAgentPanelModel({ agents }).totalTokens).toBeNull();
+    expect(sumSubagentTokens(agents.filter((agent) => agent.id === "counted"))).toBe(1_200);
+    expect(sumSubagentTokens([])).toBeNull();
   });
 
   it("partial terminal usage preserves known breakdown fields", () => {

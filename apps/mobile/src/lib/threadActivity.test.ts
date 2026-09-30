@@ -3400,8 +3400,9 @@ describe("quiet timeline: nested agents", () => {
       // Turn-less batches never share a spawn group, so each keeps its own row.
       expect(rows).toHaveLength(2);
       expect(rows[0]).toMatchObject({
-        lifecycleStatus: status === "failed" ? "failed" : "stopped",
-        summary: `Ran 1 subagent · ${status === "failed" ? "1 failed" : "1 stopped"}`,
+        lifecycleStatus:
+          status === "failed" ? "failed" : status === "idle" ? "completed" : "stopped",
+        summary: `Ran 1 subagent · ${status === "failed" ? "1 failed" : status === "idle" ? "1 idle" : "1 stopped"}`,
         workEntry: {
           taskId: "trajectory:4",
           toolTitle: "Antigravity subagent batch",
@@ -3495,6 +3496,60 @@ describe("quiet timeline: nested agents", () => {
     expect(rows[0]?.getFullDetail()).toBe("Reviewer 0 · completed\nReviewer 1 · completed");
   });
 
+  it("shows stock Hermes dispatch as idle with its unavailable-completion note", () => {
+    const detail = "Dispatched in background; stock Hermes ACP does not report child completion.";
+    const thread = makeThread({
+      id: ThreadId.make("hermes-background"),
+      projectId: ProjectId.make("project-1"),
+      title: "Hermes delegation",
+      activities: [
+        makeActivity({
+          id: EventId.make("hermes-child-start"),
+          kind: "task.started",
+          summary: "subagent task started",
+          createdAt: "2026-09-29T12:00:00.000Z",
+          turnId: TurnId.make("hermes-turn"),
+          payload: {
+            taskId: "delegate-1:task:0",
+            taskType: "subagent",
+            agentKind: "agent",
+            toolUseId: "delegate-1",
+            title: "Review the parser",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("hermes-child-dispatched"),
+          kind: "task.progress",
+          summary: "Review the parser",
+          createdAt: "2026-09-29T12:00:01.000Z",
+          turnId: TurnId.make("hermes-turn"),
+          payload: {
+            taskId: "delegate-1:task:0",
+            taskType: "subagent",
+            agentKind: "agent",
+            toolUseId: "delegate-1",
+            title: "Review the parser",
+            status: "idle",
+            summary: detail,
+            detail,
+          },
+        }),
+      ],
+    });
+    const entries = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(entries).toHaveLength(1);
+    const entry = entries[0]!;
+    expect(entry.summary).toBe("Ran 1 subagent · 1 idle");
+    expect(agentSpawnSummary(entry.workEntry.agentSpawn!, entry.lifecycleStatus)).toMatchObject({
+      title: "Review the parser",
+      status: "idle",
+      tone: "idle",
+      members: [{ title: "Review the parser", status: "idle", tone: "idle", detail }],
+    });
+  });
+
   it("summarizes a spawn card from the newest member report and the batch outcome", () => {
     type Member = NonNullable<WorkLogEntry["agentSpawn"]>["agents"][number];
     const member = (title: string, status: Member["status"], detail: string, seconds: number) =>
@@ -3544,7 +3599,7 @@ describe("quiet timeline: nested agents", () => {
     ).toMatchObject({ title: "Subagents", status: "Working", tone: "working", members: [] });
   });
 
-  it("treats a Codex child's idle turn end as a finished batch member", () => {
+  it("treats a Codex child's idle turn end as inactive, not completed", () => {
     const turnId = TurnId.make("turn-codex");
     const child = (
       id: string,
@@ -3581,7 +3636,7 @@ describe("quiet timeline: nested agents", () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      summary: "Ran 1 subagent · completed",
+      summary: "Ran 1 subagent · 1 idle",
       lifecycleStatus: "completed",
     });
   });

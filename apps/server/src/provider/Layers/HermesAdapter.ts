@@ -72,6 +72,7 @@ import {
   resolveHermesAcpBaseModelId,
   resolveHermesSessionModeId,
 } from "../acp/HermesAcpSupport.ts";
+import { HermesDelegations } from "../acp/HermesDelegation.ts";
 import { type HermesAdapterShape } from "../Services/HermesAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -136,6 +137,7 @@ interface HermesSessionContext {
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
+  readonly delegations: HermesDelegations;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
@@ -345,6 +347,28 @@ export function makeHermesAdapter(
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
 
+    const finishDelegations = Effect.fnUntraced(function* (
+      ctx: HermesSessionContext,
+      turnId: TurnId | undefined,
+      status: "cancelled" | "failed" | "interrupted",
+      error?: string,
+      preserveBackground = false,
+    ) {
+      for (const event of ctx.delegations.finish(
+        status,
+        error,
+        turnId ? { turnId, preserveBackground } : undefined,
+      )) {
+        yield* offerRuntimeEvent({
+          ...event,
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          ...(event.turnId ? { turnId: event.turnId } : {}),
+        });
+      }
+    });
+
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
         const existing: Option.Option<Semaphore.Semaphore> = Option.fromNullishOr(
@@ -461,6 +485,17 @@ export function makeHermesAdapter(
           }
           liveCtx.promptsInFlight = remainingPrompts;
         }
+        yield* finishDelegations(
+          liveCtx,
+          settleTurnId,
+          options?.errorMessage
+            ? "failed"
+            : options?.completedStopReason === "cancelled"
+              ? "cancelled"
+              : "interrupted",
+          options?.errorMessage,
+          true,
+        );
         const updatedAt = yield* nowIso;
         const canEmitTurnCompletion =
           liveCtx.session.status === "running" || liveCtx.session.status === "connecting";
@@ -710,6 +745,7 @@ export function makeHermesAdapter(
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
+        yield* finishDelegations(ctx, undefined, "cancelled");
         sessions.delete(ctx.threadId);
         yield* offerRuntimeEvent({
           type: "session.exited",
@@ -967,6 +1003,7 @@ export function makeHermesAdapter(
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
+            delegations: new HermesDelegations(),
             promptsInFlight: 0,
             firstPromptDispatched: undefined,
             currentModelId: boundModelId,
@@ -1047,7 +1084,38 @@ export function makeHermesAdapter(
                   return;
                 }
 
+                // Detached children outlive prompts, but cannot report after ACP
+                // disconnects. Handle this even with no active parent turn.
+                if (event._tag === "ConnectionTerminated") {
+                  yield* finishDelegations(
+                    ctx,
+                    undefined,
+                    "interrupted",
+                    "Hermes ACP disconnected before the child result arrived.",
+                  );
+                  return;
+                }
+
                 const notificationTurnId = resolveNotificationTurnId(ctx);
+                if (event._tag === "ToolCallUpdated") {
+                  const tasks = ctx.delegations.update(
+                    event.toolCall,
+                    notificationTurnId && !ctx.interruptedTurnIds.has(notificationTurnId)
+                      ? notificationTurnId
+                      : undefined,
+                  );
+                  if (tasks) {
+                    for (const task of tasks) {
+                      yield* offerRuntimeEvent({
+                        ...task,
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                      });
+                    }
+                    return;
+                  }
+                }
                 if (
                   notificationTurnId === undefined ||
                   ctx.interruptedTurnIds.has(notificationTurnId)
@@ -1091,7 +1159,7 @@ export function makeHermesAdapter(
                       "session/update",
                     );
                     return;
-                  case "ToolCallUpdated":
+                  case "ToolCallUpdated": {
                     yield* offerRuntimeEvent(
                       makeAcpToolCallEvent({
                         stamp,
@@ -1103,6 +1171,7 @@ export function makeHermesAdapter(
                       }),
                     );
                     return;
+                  }
                   case "ThoughtDelta":
                     yield* offerRuntimeEvent(
                       makeAcpContentDeltaEvent({
@@ -1515,6 +1584,13 @@ export function makeHermesAdapter(
                     resumeCursor: ctx.session.resumeCursor,
                   };
                 }
+                yield* finishDelegations(
+                  ctx,
+                  prepared.turnId,
+                  result.stopReason === "cancelled" ? "cancelled" : "interrupted",
+                  undefined,
+                  true,
+                );
                 const completedAt = yield* nowIso;
                 const { activeTurnId: _completedTurnId, ...readySession } = ctx.session;
                 ctx.activeTurnId = undefined;

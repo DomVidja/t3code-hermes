@@ -122,7 +122,7 @@ export interface WorkLogEntry {
     readonly agentTaskIds: ReadonlyArray<string>;
     readonly agents: ReadonlyArray<{
       readonly title: string;
-      readonly status: WorkLogToolLifecycleStatus | undefined;
+      readonly status: WorkLogToolLifecycleStatus | "idle" | undefined;
       readonly detail: string | undefined;
       /** When this member last reported, so the card can show the newest activity. */
       readonly updatedAt: string;
@@ -141,6 +141,8 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
   isWorkflowCoordinator?: boolean;
   /** Shell/monitor/plan tasks: ordinary work-log rows, never spawn batches. */
   isBackgroundTask?: boolean;
+  /** Idle is inactive, not evidence that the child completed. */
+  agentIdle?: boolean;
 }
 
 type RawThreadFeedEntry =
@@ -233,11 +235,11 @@ export interface AgentSpawnSummary {
   readonly title: string;
   /** Latest member activity while working, else the batch outcome. */
   readonly status: string;
-  readonly tone: "working" | "completed" | "failed" | "stopped";
+  readonly tone: "working" | "completed" | "failed" | "stopped" | "idle";
   readonly members: ReadonlyArray<{
     readonly title: string;
     readonly status: string;
-    readonly tone: "working" | "completed" | "failed" | "stopped";
+    readonly tone: "working" | "completed" | "failed" | "stopped" | "idle";
     readonly detail: string | undefined;
     readonly updatedAt: string;
   }>;
@@ -553,6 +555,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     entry.toolCallId = toolCallId;
   }
   if (isTaskActivity && payload) {
+    if (payload.status === "idle") entry.agentIdle = true;
     if (payload.agentKind !== "agent") {
       entry.isBackgroundTask = true;
     }
@@ -711,7 +714,7 @@ function agentSpawnMember(
 ) {
   return {
     title: entry.toolTitle ?? previous?.title ?? entry.label,
-    status: entry.toolLifecycleStatus ?? previous?.status,
+    status: entry.agentIdle ? ("idle" as const) : (entry.toolLifecycleStatus ?? previous?.status),
     detail: entry.detail ?? previous?.detail,
     updatedAt: entry.createdAt,
   };
@@ -1120,10 +1123,18 @@ export function agentSpawnLabel(spawn: NonNullable<WorkLogEntry["agentSpawn"]>):
   ).length;
   const failed = members.filter((agent) => agent.status === "failed").length;
   const stopped = members.filter((agent) => agent.status === "stopped").length;
+  const idle = members.filter((agent) => agent.status === "idle").length;
   if (working > 0) {
     return `Kicked off ${subjects} · ${working} working`;
   }
-  const status = failed > 0 ? `${failed} failed` : stopped > 0 ? `${stopped} stopped` : "completed";
+  const status =
+    failed > 0
+      ? `${failed} failed`
+      : stopped > 0
+        ? `${stopped} stopped`
+        : idle > 0
+          ? `${idle} idle`
+          : "completed";
   return `Ran ${subjects} · ${status}`;
 }
 
@@ -1132,11 +1143,15 @@ function agentSpawnMembers(spawn: NonNullable<WorkLogEntry["agentSpawn"]>) {
   return spawn.agents.filter((_, index) => spawn.agentTaskIds[index] !== spawn.workflowId);
 }
 
-function agentSpawnTone(status: WorkLogToolLifecycleStatus | undefined): AgentSpawnSummary["tone"] {
+function agentSpawnTone(
+  status: WorkLogToolLifecycleStatus | "idle" | undefined,
+): AgentSpawnSummary["tone"] {
   switch (status) {
     case undefined:
     case "inProgress":
       return "working";
+    case "idle":
+      return "idle";
     case "completed":
       return "completed";
     case "failed":
@@ -1167,7 +1182,8 @@ export function agentSpawnSummary(
       updatedAt: agent.updatedAt,
     };
   });
-  const tone = agentSpawnTone(batchStatus);
+  const idle = members.filter((member) => member.tone === "idle").length;
+  const tone = batchStatus === "completed" && idle > 0 ? "idle" : agentSpawnTone(batchStatus);
   // A workflow's coordinator is not a member; before any member reports the
   // batch has none.
   const title =
@@ -1198,7 +1214,9 @@ export function agentSpawnSummary(
       ? `${members.length > 1 && failed > 0 ? `${failed} ` : ""}failed`
       : tone === "stopped" || stopped > 0
         ? `${members.length > 1 && stopped > 0 ? `${stopped} ` : ""}stopped`
-        : "completed";
+        : idle > 0
+          ? `${members.length > 1 ? `${idle} ` : ""}idle`
+          : "completed";
   return { title, status: outcome, tone, members };
 }
 

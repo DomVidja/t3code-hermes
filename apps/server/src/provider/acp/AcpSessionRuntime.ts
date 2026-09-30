@@ -107,6 +107,8 @@ export interface AcpSessionRuntimeOptions {
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
+  /** Emit provider-owned updates without coalescing or retaining parent tool state. */
+  readonly isPassthroughToolCallUpdate?: (toolCall: AcpToolCallState) => boolean;
   /** Receives bounded stderr chunks. Redact secrets before logging. A failure closes the runtime. */
   readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
@@ -557,6 +559,7 @@ export const make = (
         assistantSegmentRef,
         assistantItemRuntimeId,
         params: notification,
+        isPassthroughToolCallUpdate: options.isPassthroughToolCallUpdate,
       });
 
     yield* acp.handleSessionUpdate((notification) =>
@@ -1238,6 +1241,7 @@ const handleSessionUpdate = ({
   assistantSegmentRef,
   assistantItemRuntimeId,
   params,
+  isPassthroughToolCallUpdate,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
@@ -1249,6 +1253,7 @@ const handleSessionUpdate = ({
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly assistantItemRuntimeId: string;
   readonly params: EffectAcpSchema.SessionNotification;
+  readonly isPassthroughToolCallUpdate: AcpSessionRuntimeOptions["isPassthroughToolCallUpdate"];
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
     if (params.update.sessionUpdate === "config_option_update") {
@@ -1274,6 +1279,18 @@ const handleSessionUpdate = ({
           const tracked = current.get(event.toolCall.toolCallId);
           const previous = tracked?.state;
           const nextToolCall = mergeToolCallState(previous, event.toolCall);
+          // Provider-owned child updates are self-contained, not parent tool
+          // progress. Never recreate a dispatched parent's tracking entry.
+          if (isPassthroughToolCallUpdate?.(nextToolCall)) {
+            return [
+              {
+                merged: nextToolCall,
+                decision: { emit: true, skippedSinceEmit: 0 },
+                active: tracked !== undefined,
+              },
+              current,
+            ] as const;
+          }
           const decision = decideToolCallUpdateEmission({
             previous,
             next: nextToolCall,
