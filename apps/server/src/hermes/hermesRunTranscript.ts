@@ -151,7 +151,7 @@ function toolResultFailed(result: unknown): boolean {
  * One tool call as a thread activity. `result` is undefined while the call is
  * still running, which renders as an in-progress row.
  */
-export function hermesToolActivity(input: {
+function hermesToolActivity(input: {
   readonly ids: HermesRunIds;
   readonly toolCallId: string;
   readonly call: HermesToolCall;
@@ -209,7 +209,7 @@ export function hermesToolActivity(input: {
 }
 
 /** The tool calls an assistant row asked for, in OpenAI's `tool_calls` shape. */
-export function parseHermesToolCalls(
+function parseHermesToolCalls(
   toolCalls: string | null,
 ): ReadonlyArray<{ readonly id: string } & HermesToolCall> {
   const parsed = toolCalls === null ? undefined : parseJson(toolCalls);
