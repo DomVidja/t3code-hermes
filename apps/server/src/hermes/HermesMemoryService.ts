@@ -104,7 +104,7 @@ function watchDirectories(home: string, directory: string, notify: () => void): 
 
 /** One watcher set per environment, only while at least one client is subscribed.
  * No timers, no subprocess on reads, and no frames for unchanged snapshots. */
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   const settings = yield* ServerSettings.ServerSettingsService;
   const changes = yield* Effect.acquireRelease(

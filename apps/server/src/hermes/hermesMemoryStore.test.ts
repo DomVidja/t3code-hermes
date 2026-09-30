@@ -341,6 +341,25 @@ describe("locked atomic memory writes", () => {
     });
   });
 
+  it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "refuses FIFOs, symlinks, and oversized stores without blocking or buffering them",
+    async () => {
+      await seed();
+      const memory = resolveHermesMemoryPaths(environment).memory;
+      const target = NodePath.join(home, "elsewhere.md");
+      await NodeFSP.writeFile(target, "Linked note");
+      await NodeFSP.rm(memory);
+      expect(NodeChildProcess.spawnSync("mkfifo", [memory]).status).toBe(0);
+      expect((await readHermesMemoryFiles(environment)).files[0]?.error).not.toBeNull();
+      await NodeFSP.rm(memory);
+      await NodeFSP.symlink(target, memory);
+      expect((await readHermesMemoryFiles(environment)).files[0]?.error).not.toBeNull();
+      await NodeFSP.rm(memory);
+      await NodeFSP.writeFile(memory, Buffer.alloc(1_048_577, 0x61));
+      expect((await readHermesMemoryFiles(environment)).files[0]?.error).not.toBeNull();
+    },
+  );
+
   it("refuses corrupt UTF-8, non-roundtripping files, and malformed config without writing", async () => {
     for (const raw of [Buffer.from([0xff, 0xfe, 0x01]), Buffer.from("one\n§\n\n§\ntwo")]) {
       await seed();

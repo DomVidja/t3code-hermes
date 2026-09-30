@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -17,7 +18,7 @@ import { parseDocument } from "yaml";
 
 import { resolveHermesReasoningPaths } from "./hermesReasoning.ts";
 
-export const ENTRY_DELIMITER = "\n§\n";
+const ENTRY_DELIMITER = "\n§\n";
 const MAX_FILE_BYTES = 1_048_576;
 const MISSING_REVISION = "missing";
 
@@ -52,16 +53,33 @@ function isMissing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
+/** Reads through one descriptor into a bounded buffer, so a concurrent swap to a
+ * FIFO, symlink, or oversized file can neither block nor buffer past the limit. */
 async function readBytes(file: string): Promise<Buffer | null> {
+  const { O_RDONLY, O_NOFOLLOW = 0, O_NONBLOCK = 0 } = NodeFS.constants;
+  let handle: NodeFSP.FileHandle;
   try {
-    const stat = await NodeFSP.lstat(file);
-    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error("Not a regular bounded file");
-    const bytes = await NodeFSP.readFile(file);
-    if (bytes.length > MAX_FILE_BYTES) throw new Error("File is too large");
-    return bytes;
+    handle = await NodeFSP.open(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   } catch (error) {
     if (isMissing(error)) return null;
     throw error;
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error("Not a regular bounded file");
+    // One spare byte detects growth after fstat. Hermes replaces atomically, so
+    // a descriptor's file only grows under a foreign in-place writer.
+    const buffer = Buffer.alloc(stat.size + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length === buffer.length) throw new Error("File changed while reading");
+    return buffer.subarray(0, length);
+  } finally {
+    await handle.close();
   }
 }
 
@@ -238,11 +256,16 @@ p = pathlib.Path(request['path'])
 p.parent.mkdir(parents=True, exist_ok=True)
 def revision(p):
     try:
-        if not stat.S_ISREG(p.lstat().st_mode):
-            raise ValueError('Not a regular file')
-        return hashlib.sha256(p.read_bytes()).hexdigest()
+        fd = os.open(str(p), os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0))
     except FileNotFoundError:
         return 'missing'
+    with os.fdopen(fd, 'rb') as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise ValueError('Not a regular file')
+        data = f.read(${MAX_FILE_BYTES} + 1)
+    if len(data) > ${MAX_FILE_BYTES}:
+        raise ValueError('File is too large')
+    return hashlib.sha256(data).hexdigest()
 with open(str(p) + '.lock', 'a+', encoding='utf-8') as lock:
     try:
         if os.name == 'nt':
