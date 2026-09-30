@@ -214,11 +214,11 @@ function isMissing(error: unknown) {
 }
 
 /**
- * Reads at most `limit` bytes of a regular, singly linked file. With `containedIn`, the opened
- * descriptor must be the file its real path names inside that directory, so a parent directory
- * swapped for a link between validation and open cannot redirect the read.
+ * Reads at most `limit` bytes of a regular, singly linked file inside `root`. The opened descriptor
+ * must be the file its real path names inside `root`, so a parent directory swapped for a link
+ * between traversal or validation and open cannot redirect the read.
  */
-async function readBounded(file: string, limit: number, containedIn?: string) {
+async function readBounded(file: string, limit: number, root: string) {
   // O_NOFOLLOW is unavailable on some hosts; reject links before opening there too.
   if (!(await NodeFSP.lstat(file)).isFile()) throw new Error("Not a regular file");
   const handle = await NodeFSP.open(
@@ -229,19 +229,10 @@ async function readBounded(file: string, limit: number, containedIn?: string) {
     const stat = await handle.stat();
     // A hard link is indistinguishable from the original, so it could expose a file elsewhere.
     if (!stat.isFile() || stat.nlink !== 1) throw new Error("Not a regular file");
-    if (containedIn !== undefined) {
-      const [real, base] = await Promise.all([
-        NodeFSP.realpath(file),
-        NodeFSP.realpath(containedIn),
-      ]);
-      const named = await NodeFSP.stat(real);
-      if (
-        !real.startsWith(base + NodePath.sep) ||
-        named.dev !== stat.dev ||
-        named.ino !== stat.ino
-      ) {
-        throw new Error("Skill file is outside the skills directory");
-      }
+    const [real, base] = await Promise.all([NodeFSP.realpath(file), NodeFSP.realpath(root)]);
+    const named = await NodeFSP.stat(real);
+    if (!real.startsWith(base + NodePath.sep) || named.dev !== stat.dev || named.ino !== stat.ino) {
+      throw new Error("Skill file is outside the skills directory");
     }
     const buffer = Buffer.alloc(Math.min(stat.size, limit) + 1);
     let bytesRead = 0;
@@ -309,7 +300,7 @@ export async function readHermesSkills(
   let incomplete = false;
   const sidecar = async (name: string, fallback: string) => {
     try {
-      const value = await readBounded(NodePath.join(root, name), SKILL_LIMITS.sidecarBytes);
+      const value = await readBounded(NodePath.join(root, name), SKILL_LIMITS.sidecarBytes, root);
       if (value.truncated) {
         incomplete = true;
         return fallback;
@@ -328,7 +319,7 @@ export async function readHermesSkills(
         if (file === "SKILL.md") continue;
         parsed.push(
           parseSkillFrontmatter(
-            (await readBounded(NodePath.join(root, file), SKILL_LIMITS.headerBytes)).text,
+            (await readBounded(NodePath.join(root, file), SKILL_LIMITS.headerBytes, root)).text,
             NodePath.posix.dirname(file),
           ),
         );
