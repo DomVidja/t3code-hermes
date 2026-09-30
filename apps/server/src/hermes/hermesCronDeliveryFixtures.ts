@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off cryptoRandomUUID:off
+// Test/demo fixture outside Effect: it writes real SQLite files synchronously, stamps
+// wall-clock intervals the next live poll will observe, and needs unique row ids.
 /** Synthetic Hermes 0.21.0 state for tests and local notification demonstrations. */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+// Synchronous read-only node:sqlite access to Hermes-owned stores, as in usageHermes.ts.
 import * as NodeSqlite from "node:sqlite";
 
 import {
@@ -104,8 +105,15 @@ function readDelivery(
   try {
     const row = database
       .prepare(`
-      SELECT substr(content, 1, ?) AS content, status, substr(job_json, 1, 65536) AS job_json,
-             for_failure, substr(error, 1, 400) AS error
+      SELECT substr(content, 1, ?) AS content, status, for_failure, substr(error, 1, 400) AS error,
+             -- Project only the target fields: a long prompt must not truncate them away.
+             CASE WHEN json_valid(job_json) THEN
+               CASE WHEN json_type(job_json) = 'object' THEN substr(json_object(
+                 'deliver', json_extract(job_json, '$.deliver'),
+                 'failure_deliver', json_extract(job_json, '$.failure_deliver'),
+                 'origin', json_object('platform', json_extract(job_json, '$.origin.platform'))
+               ), 1, 65536) END
+             END AS job_json
       FROM deliveries WHERE execution_id = ?
     `)
       .get(HERMES_CRON_OUTPUT_LENGTH + 1, runId);
@@ -291,13 +299,13 @@ export function createHermesCronDeliveryReader() {
         const end = Date.parse(run.finishedAt ?? "");
         // Without an execution→session key, overlapping attempts cannot be correlated
         // safely even if only one of them persisted a session (e.g. an early failure).
-        const overlaps = (runsByJob.get(run.jobId) ?? []).some(
-          (other) =>
-            other.id !== run.id &&
-            other.jobId === run.jobId &&
-            Date.parse(other.startedAt ?? other.claimedAt ?? "") < end &&
-            (other.finishedAt === null || Date.parse(other.finishedAt) > start),
-        );
+        // An unparseable sibling interval counts as overlapping, so this fails closed too.
+        const overlaps = (runsByJob.get(run.jobId) ?? []).some((other) => {
+          if (other.id === run.id || other.jobId !== run.jobId) return false;
+          const otherStart = Date.parse(other.startedAt ?? other.claimedAt ?? "");
+          const otherEnd = other.finishedAt === null ? Infinity : Date.parse(other.finishedAt);
+          return !(otherStart >= end || otherEnd <= start);
+        });
         const output =
           queue?.output.content != null
             ? queue.output

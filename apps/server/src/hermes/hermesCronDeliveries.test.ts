@@ -140,6 +140,10 @@ describe("Hermes 0.21.0 delivery/session output", () => {
       `UPDATE deliveries SET for_failure=1, job_json='{"deliver":"telegram","failure_deliver":"discord"}'`,
     );
     expect(read().runs[0]?.delivery.targets).toEqual(["discord"]);
+    // A long job prompt must not truncate the recorded recipient away.
+    const longJob = JSON.stringify({ prompt: "x".repeat(70_000), deliver: ["slack"] });
+    execute("cron/deliveries.db", `UPDATE deliveries SET for_failure=0, job_json='${longJob}'`);
+    expect(read().runs[0]?.delivery.targets).toEqual(["slack"]);
     execute("cron/deliveries.db", "UPDATE deliveries SET job_json='{' ");
     expect(read().runs[0]?.delivery.contentAvailable).toBe(true);
   });
@@ -217,6 +221,18 @@ describe("Hermes 0.21.0 delivery/session output", () => {
     const result = read();
     expect(result.runs).toHaveLength(2);
     expect(result.runs.every((run) => !run.delivery.contentAvailable)).toBe(true);
+  });
+
+  it("fails closed when a sibling attempt has an unparseable timestamp", () => {
+    appendHermesDeliveryFixture(home, { id: "real-report" });
+    execute(
+      "cron/executions.db",
+      `INSERT INTO executions
+      SELECT 'malformed', job_id, source, process_id, pid, process_started_at,
+        status, 'not-a-time', 'not-a-time', 'not-a-time', error FROM executions`,
+    );
+    const report = read().runs.find((run) => run.id === "real-report");
+    expect(report?.delivery.contentAvailable).toBe(false);
   });
 
   it("does not leak a cached output into another Hermes home", () => {
