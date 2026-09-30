@@ -278,6 +278,11 @@ const config: ExpoConfig = {
   android: {
     icon: variant.assets.appIcon,
     package: variant.androidPackage,
+    // Sideloaded APKs (mobile-apk.yml) only update in place when this grows.
+    // EAS builds leave it unset and number builds remotely.
+    ...(repoEnv.T3CODE_ANDROID_VERSION_CODE
+      ? { versionCode: Number(repoEnv.T3CODE_ANDROID_VERSION_CODE) }
+      : {}),
     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),
