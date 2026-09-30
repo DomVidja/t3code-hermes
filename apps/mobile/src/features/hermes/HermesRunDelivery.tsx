@@ -73,11 +73,11 @@ export function HermesRunDelivery(props: {
             onPress={() => setExpanded((current) => !current)}
             className="min-h-11 flex-row items-center gap-2"
           >
-            <IconChevronRight
-              color={String(iconColor)}
-              size={16}
-              style={{ transform: [{ rotate: expanded ? "90deg" : "0deg" }] }}
-            />
+            {/* Rotate a wrapper: react-native-svg applies a root `style.transform` to the drawing
+                around its origin, which moves the chevron out of its box on iOS. */}
+            <View className={expanded ? "rotate-90" : undefined}>
+              <IconChevronRight color={String(iconColor)} size={16} />
+            </View>
             <Text className="text-sm text-foreground">
               {expanded ? "Hide output" : "Show output"}
             </Text>
