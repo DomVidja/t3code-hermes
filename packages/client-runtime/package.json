@@ -143,6 +143,10 @@
       "types": "./src/state/hermesCronSeen.ts",
       "default": "./src/state/hermesCronSeen.ts"
     },
+    "./state/hermes-patches": {
+      "types": "./src/state/hermesPatches.ts",
+      "default": "./src/state/hermesPatches.ts"
+    },
     "./state/hindsight": {
       "types": "./src/state/hindsight.ts",
       "default": "./src/state/hindsight.ts"
