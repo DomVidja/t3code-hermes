@@ -1105,6 +1105,28 @@ export function createServerEnvironmentAtoms<R, E>(
       transform: (stream) =>
         stream.pipe(Stream.mapAccum(() => emptyHermesCronView, foldHermesCronView)),
     }),
+    // Only compact metadata is streamed; skill Markdown is read on demand.
+    hermesSkills: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:hermes-skills",
+      tag: WS_METHODS.subscribeHermesSkills,
+      idleTtlMs: 0,
+      transform: (stream) => stream.pipe(Stream.map((event) => event.snapshot)),
+    }),
+    hermesSkillsList: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:hermes-skills-list",
+      tag: WS_METHODS.hermesSkillsList,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
+    hermesSkillsGet: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:server:hermes-skills-get",
+      // Revision is a client-only cache key. A new store or snapshot must not
+      // reuse a pending or completed read of the previous Markdown at this path.
+      execute: (input: { readonly path: string; readonly revision: string }) =>
+        request(WS_METHODS.hermesSkillsGet, { path: input.path }),
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     hermesCronGetRunOutput: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:hermes-cron-get-run-output",
       tag: WS_METHODS.hermesCronGetRunOutput,

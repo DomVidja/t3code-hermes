@@ -156,6 +156,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
+import * as HermesSkillsService from "./hermes/HermesSkillsService.ts";
 import * as HermesMemoryService from "./hermes/HermesMemoryService.ts";
 import * as HermesRunService from "./hermes/HermesRunService.ts";
 import * as HermesPatchService from "./hermes/HermesPatchService.ts";
@@ -677,6 +678,7 @@ const makeWsRpcLayer = (
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
       const hermesCron = yield* HermesCronService.HermesCronService;
+      const hermesSkills = yield* HermesSkillsService.HermesSkillsService;
       const hermesMemory = yield* HermesMemoryService.HermesMemoryService;
       const hermesRuns = yield* HermesRunService.HermesRunService;
       const hermesPatches = yield* HermesPatchService.HermesPatchService;
@@ -2697,6 +2699,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.hermesSkillsList]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesSkillsList, hermesSkills.list(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesSkillsGet]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesSkillsGet, hermesSkills.get(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.hermesMemoryRead]: () =>
           observeRpcEffect(WS_METHODS.hermesMemoryRead, hermesMemory.read, {
             "rpc.aggregate": "server",
@@ -3872,6 +3882,12 @@ const makeWsRpcLayer = (
                 Stream.concat(Stream.make(latest), changes),
               ),
             ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.subscribeHermesSkills]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeHermesSkills,
+            Stream.unwrap(hermesSkills.subscribe),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.subscribeHermesMemory]: () =>

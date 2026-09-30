@@ -1,9 +1,10 @@
 /**
  * Hermes panel — a full-page view opened from the sidebar, mirroring Usage.
  *
- * Three tabs: Tasks (Hermes's scheduled jobs), Memory (what the agent
- * remembers, via Hindsight), and Patches (the fork's patches to Hermes
- * itself). The tab list is data, so adding one is an entry plus a component.
+ * Four tabs: Tasks (Hermes's scheduled jobs), Memory (what the agent
+ * remembers, via Hindsight), Patches (the fork's patches to Hermes itself),
+ * and Skills (Hermes's learned procedures). The tab list is data, so adding
+ * one is an entry plus a component.
  *
  * Every tab renders unconditionally and speak for themselves when their backing
  * service is absent. A tab that appears only once a network read lands would
@@ -24,14 +25,16 @@ import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadc
 import { HermesMemoryTab } from "./HermesMemoryTab";
 import { HermesPatchesTab } from "./HermesPatchesTab";
 import { HermesTasksTab } from "./HermesTasksTab";
+import { HermesSkillsTab } from "./HermesSkillsTab";
 import { EMPTY_HERMES_SEARCH, type HermesSearch } from "./hermesNavigation";
 
-type HermesTab = "tasks" | "memory" | "patches";
+type HermesTab = "tasks" | "memory" | "patches" | "skills";
 
 const TABS: ReadonlyArray<{ readonly value: HermesTab; readonly label: string }> = [
   { value: "tasks", label: "Tasks" },
   { value: "memory", label: "Memory" },
   { value: "patches", label: "Patches" },
+  { value: "skills", label: "Skills" },
 ];
 
 export function HermesPanel({ target = EMPTY_HERMES_SEARCH }: { readonly target?: HermesSearch }) {
@@ -94,8 +97,10 @@ export function HermesPanel({ target = EMPTY_HERMES_SEARCH }: { readonly target?
               <HermesTasksTab onNewTask={handleNewTask} target={target} />
             ) : tab === "memory" ? (
               <HermesMemoryTab />
-            ) : (
+            ) : tab === "patches" ? (
               <HermesPatchesTab />
+            ) : (
+              <HermesSkillsTab key={environmentId} />
             )}
           </div>
         </ScrollArea>

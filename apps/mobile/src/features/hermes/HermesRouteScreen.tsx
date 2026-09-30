@@ -65,16 +65,18 @@ import { serverEnvironment } from "../../state/server";
 import { useHermesCron } from "../../state/hermesCron";
 import { useHermesPatches } from "../../state/hermesPatches";
 import { useHindsightMemory } from "../../state/hindsight";
+import { HermesSkillsTab } from "./HermesSkillsTab";
 import { HermesNativeMemorySection } from "./HermesNativeMemorySection";
 import { HermesRunDelivery } from "./HermesRunDelivery";
 
 const HERMES_DRIVER = "hermes";
-type HermesTab = "tasks" | "memory" | "patches";
+type HermesTab = "tasks" | "memory" | "patches" | "skills";
 
 const TAB_LABELS: Record<HermesTab, string> = {
   tasks: "Tasks",
   memory: "Memory",
   patches: "Patches",
+  skills: "Skills",
 };
 
 interface HermesEnvironmentOption {
@@ -124,7 +126,7 @@ export function HermesRouteScreen() {
       {environmentId === null ? (
         <CenteredState
           title="Hermes is not available"
-          description="Connect an environment with a Hermes provider instance to use Tasks, Memory, and Patches."
+          description="Connect an environment with a Hermes provider instance to use Tasks, Memory, Patches, and Skills."
         />
       ) : (
         <View className="flex-1">
@@ -140,8 +142,10 @@ export function HermesRouteScreen() {
               <HermesTasksScreen environmentId={environmentId} />
             ) : tab === "memory" ? (
               <HermesMemoryScreen environmentId={environmentId} />
-            ) : (
+            ) : tab === "patches" ? (
               <HermesPatchesScreen environmentId={environmentId} />
+            ) : (
+              <HermesSkillsTab environmentId={environmentId} />
             )}
           </View>
         </View>
@@ -173,7 +177,7 @@ function HermesHeader(props: {
       ) : null}
 
       <View className="flex-row rounded-full bg-subtle p-1">
-        {(["tasks", "memory", "patches"] as const).map((item) => {
+        {(["tasks", "memory", "patches", "skills"] as const).map((item) => {
           const selected = props.tab === item;
           return (
             <Pressable

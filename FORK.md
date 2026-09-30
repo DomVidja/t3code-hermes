@@ -20,6 +20,7 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | Model picker falls back to a populated provider     | `apps/web/src/components/chat/ModelPickerContent.tsx`                                                                                                            |
 | ACP `available_commands_update` / `usage_update`    | `apps/server/src/provider/acp/{AcpRuntimeModel,AcpSessionRuntime}.ts`                                                                                            |
 | Shared slash-command dedupe (was Claude-private)    | `apps/server/src/provider/slashCommands.ts`                                                                                                                      |
+| Hermes Skills panel (learning history)              | `apps/server/src/hermes/HermesSkillsService.ts`, `packages/contracts/src/hermesSkills.ts`, [guide](./docs/user/hermes-skills.md)                                 |
 | Hermes Tasks and delivery notifications             | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                             |
 | Hermes Memory panel (Hindsight)                     | `apps/server/src/integrations/hindsight/`, `packages/contracts/src/hindsight.ts`, `apps/web/src/{state/hindsight.ts,components/hermes/HermesMemoryTab.tsx}`      |
 | Hermes built-in memory (browse and edit)            | `apps/server/src/hermes/HermesMemoryService.ts`, `packages/contracts/src/hermesMemory.ts`, `packages/client-runtime/src/state/hermesMemory.ts`                   |
@@ -217,7 +218,8 @@ Project Settings → default model.
   in the Hermes panel: the sidebar's clock button lists jobs with their schedule, last run, and
   recent history, and lets you pause/resume a job or mute its notifications. Authoring stays in
   chat — create, edit, and delete are deliberately not built, because asking Hermes for a recurring
-  task in natural language is the better interface and the CLI covers the rest. Profiles are still
+  task in natural language is the better interface and the CLI covers the rest. The Skills tab
+  exposes the skill library and recorded Hermes edits read-only; authoring stays in chat. Profiles are still
   not exposed; use the `hermes` CLI for those. Chat, streaming, tool calls, approvals, resume,
   model switching, slash commands, and the context-window meter all work.
 - **Hindsight remains a separate, optional memory store.** The panel's Hindsight section talks

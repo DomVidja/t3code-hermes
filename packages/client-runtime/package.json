@@ -139,6 +139,10 @@
       "types": "./src/state/hermesCron.ts",
       "default": "./src/state/hermesCron.ts"
     },
+    "./state/hermes-skills": {
+      "types": "./src/state/hermesSkills.ts",
+      "default": "./src/state/hermesSkills.ts"
+    },
     "./state/hermes-cron-seen": {
       "types": "./src/state/hermesCronSeen.ts",
       "default": "./src/state/hermesCronSeen.ts"

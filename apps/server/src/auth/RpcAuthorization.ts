@@ -67,6 +67,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.hermesMemoryRead]: AuthOrchestrationReadScope,
   [WS_METHODS.hermesMemoryMutate]: AuthOrchestrationOperateScope,
   [WS_METHODS.hermesCronList]: AuthOrchestrationReadScope,
+  [WS_METHODS.hermesSkillsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.hermesSkillsGet]: AuthOrchestrationReadScope,
   [WS_METHODS.hermesCronGetRunOutput]: AuthOrchestrationReadScope,
   // Pausing a scheduled task changes what the host will do on its own.
   [WS_METHODS.hermesCronSetEnabled]: AuthOrchestrationOperateScope,
@@ -150,6 +152,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeResourceTelemetry]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeHermesMemory]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeHermesCron]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeHermesSkills]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsPull]: AuthOrchestrationOperateScope,
   [WS_METHODS.gitRunStackedAction]: AuthOrchestrationOperateScope,
