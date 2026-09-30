@@ -88,6 +88,28 @@ describe("hermes patches", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("reads the Hermes checkout even when git bindings point elsewhere", () =>
+    Effect.gen(function* () {
+      const { root, patch } = yield* makeCheckout;
+      const decoy = yield* makeCheckout;
+      git(decoy.root, "checkout", "--quiet", "--detach");
+      const saved = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
+      process.env.GIT_DIR = NodePath.join(decoy.root, ".git");
+      process.env.GIT_WORK_TREE = decoy.root;
+      const restore = Effect.sync(() => {
+        for (const [key, value] of Object.entries(saved)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      });
+
+      const detached = yield* isHermesCheckoutDetached(root).pipe(Effect.ensuring(restore));
+      assert.isFalse(detached);
+      const [status] = yield* readHermesPatches(root, [patch]);
+      assert.strictEqual(status?.state, "notApplied");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("notices a detached HEAD, which hermes update cannot move", () =>
     Effect.gen(function* () {
       const { root } = yield* makeCheckout;

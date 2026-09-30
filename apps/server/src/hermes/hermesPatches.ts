@@ -55,8 +55,26 @@ export const resolveHermesGitCheckout = Effect.fn("resolveHermesGitCheckout")(fu
   return isGitCheckout ? checkoutRoot : null;
 });
 
+/**
+ * Runs git in the checkout. Inherited repository bindings (a server started
+ * from a git hook, say) would otherwise point git at a different repository.
+ */
 const runGit = (checkoutRoot: string, args: ReadonlyArray<string>) =>
-  spawnAndCollect("git", ChildProcess.make("git", args, { cwd: checkoutRoot }));
+  spawnAndCollect(
+    "git",
+    ChildProcess.make("git", args, {
+      cwd: checkoutRoot,
+      env: {
+        ...process.env,
+        GIT_DIR: undefined,
+        GIT_WORK_TREE: undefined,
+        GIT_COMMON_DIR: undefined,
+        GIT_INDEX_FILE: undefined,
+        GIT_OBJECT_DIRECTORY: undefined,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+      },
+    }),
+  );
 
 /** Writes patches to a scoped temp directory for `git apply` to read. */
 const writePatchFiles = Effect.fn("writeHermesPatchFiles")(function* (
