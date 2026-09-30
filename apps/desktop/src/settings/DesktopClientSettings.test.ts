@@ -58,6 +58,8 @@ const clientSettings: ClientSettings = {
   showSkillsInSlashMenu: false,
   providerModelPreferences: {},
   sidebarStatusRings: true,
+  showSkillActivityRows: true,
+  showMemoryActivityRows: true,
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",

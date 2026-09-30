@@ -1,8 +1,8 @@
 name: Sync Upstream
 
 # Merges pingdotgg/t3code into this fork's main every three hours, matching
-# upstream's nightly cadence, then cuts a fork nightly once main contains an
-# upstream nightly the fork has not shipped yet.
+# upstream's nightly cadence, then cuts a fork nightly for any merged upstream
+# commits the fork has not shipped yet.
 #
 # Merge, not rebase: the fork's history is public and rebasing would rewrite
 # commits that are already pushed. A merge also keeps the Hermes commits intact
@@ -156,16 +156,18 @@ jobs:
         # workflows, so CI is dispatched by hand, as is the release below.
         run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
 
-      # Fork nightlies follow upstream's. release.yml decides, under its
-      # nightly concurrency lock, whether main now contains an upstream nightly
-      # no fork nightly has shipped; otherwise the run skips after one short
+      # release.yml decides, under its nightly concurrency lock, whether the
+      # captured upstream commit is merged but absent from the latest fork
+      # nightly; otherwise the run skips after one short
       # job. Runs on `up-to-date` too, so a sync re-dispatched after a
       # conflict-resolution PR merges still releases.
       - name: Dispatch fork nightly
         if: steps.merge.outputs.status == 'merged' || steps.merge.outputs.status == 'up-to-date'
+        env:
+          UPSTREAM_SHA: ${{ steps.merge.outputs.upstream_sha }}
         run: >-
           gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main
-          -f channel=nightly -f follow_upstream=true
+          -f channel=nightly -f follow_upstream=true -f upstream_sha="$UPSTREAM_SHA"
 
       # Advisory, and deliberately after the push: the merge is already correct
       # by the time this runs, so a heuristic must never be what keeps it from

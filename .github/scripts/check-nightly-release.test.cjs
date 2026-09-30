@@ -221,16 +221,17 @@ const { shouldFollowUpstreamNightly } = require("./check-nightly-release.cjs");
 
 const notFound = () => Object.assign(new Error("Not Found"), { status: 404 });
 
-// `merged` and `shipped` say whether this repo's main and its latest nightly
-// contain upstream's nightly commit; "missing" means GitHub cannot resolve it.
+// `merged` and `shipped` describe containment of the sync snapshot.
+// "missing" means GitHub cannot resolve it in the fork.
 function followFixture({
-  upstreamReleases = [nightly(1, { tag_name: "v1.0.1-nightly.20260905.200" })],
+  upstreamSha = "a".repeat(40),
   forkReleases = [nightly(8, { tag_name: "v1.0.1-nightly.20260905.10" })],
   merged = "ahead",
   shipped = "behind",
 } = {}) {
   const calls = [];
   const options = {
+    upstreamSha,
     context: { repo: { owner: "fork", repo: "app" }, sha: "main-sha" },
     core: { info() {} },
     github: {
@@ -239,7 +240,8 @@ function followFixture({
           listReleases() {},
           async getCommit({ owner, ref }) {
             assert.equal(owner, "pingdotgg");
-            return { data: { sha: `sha-of-${ref}` } };
+            assert.equal(ref, upstreamSha);
+            return { data: { sha: upstreamSha } };
           },
           async compareCommitsWithBasehead(params) {
             calls.push(params);
@@ -255,38 +257,35 @@ function followFixture({
       },
     },
   };
-  options.github.rest.repos.listReleases = async ({ owner }) => {
-    assert.equal(owner, "pingdotgg");
-    return { data: upstreamReleases };
+  options.github.rest.repos.listReleases = async () => {
+    throw new Error("The upstream release calendar must not affect sync releases.");
   };
   return { options, calls };
 }
 
-test("follows an upstream nightly that main contains and no fork nightly shipped", async () => {
+test("releases merged upstream commits absent from the last fork nightly", async () => {
   const { options, calls } = followFixture();
   assert.equal(await shouldFollowUpstreamNightly(options), true);
   assert.deepEqual(
     calls.map((call) => call.basehead),
-    [
-      "sha-of-v1.0.1-nightly.20260905.200...main-sha",
-      "sha-of-v1.0.1-nightly.20260905.200...v1.0.1-nightly.20260905.10",
-    ],
+    [`${"a".repeat(40)}...main-sha`, `${"a".repeat(40)}...v1.0.1-nightly.20260905.10`],
   );
 });
 
-test("follows the newest upstream nightly by publication time, ignoring previews", async () => {
-  const { options, calls } = followFixture({
-    upstreamReleases: [
-      nightly(9, { tag_name: "v1.0.1-nightly.20260905.1" }),
-      nightly(0, { tag_name: "v1.0.1-preview.20260905.9" }),
-      nightly(2, { tag_name: "v1.0.1-nightly.20260905.7" }),
-    ],
-  });
+test("releases unshipped upstream commits even without a new upstream nightly", async () => {
+  const { options } = followFixture();
   assert.equal(await shouldFollowUpstreamNightly(options), true);
-  assert.match(calls[0].basehead, /^sha-of-v1\.0\.1-nightly\.20260905\.7\.\.\./);
 });
 
-test("skips while the upstream nightly is not merged into main", async () => {
+test("ignores fork previews and drafts when checking already shipped commits", async () => {
+  const { options } = followFixture({
+    forkReleases: [nightly(0, { tag_name: "v1.0.1-preview.1" }), nightly(0, { draft: true })],
+    shipped: "ahead",
+  });
+  assert.equal(await shouldFollowUpstreamNightly(options), true);
+});
+
+test("skips while the captured upstream commit is not merged into main", async () => {
   for (const merged of ["missing", "behind", "diverged"]) {
     const { options, calls } = followFixture({ merged });
     assert.equal(await shouldFollowUpstreamNightly(options), false);
@@ -294,11 +293,16 @@ test("skips while the upstream nightly is not merged into main", async () => {
   }
 });
 
-test("skips when a fork nightly already shipped the upstream nightly", async () => {
+test("skips when a fork nightly already shipped the upstream commit", async () => {
   for (const shipped of ["ahead", "identical"]) {
     const { options } = followFixture({ shipped });
     assert.equal(await shouldFollowUpstreamNightly(options), false);
   }
+});
+
+test("releases when the previous nightly cannot resolve the upstream commit", async () => {
+  const { options } = followFixture({ shipped: "missing" });
+  assert.equal(await shouldFollowUpstreamNightly(options), true);
 });
 
 test("follows without any prior fork nightly", async () => {
@@ -307,12 +311,29 @@ test("follows without any prior fork nightly", async () => {
   assert.equal(calls.length, 1);
 });
 
-test("skips when upstream has no published nightly", async () => {
-  const { options, calls } = followFixture({
-    upstreamReleases: [nightly(0, { tag_name: "v1.0.0" })],
+test("rejects missing or malformed upstream snapshots before API calls", async () => {
+  for (const upstreamSha of ["", "main", "a".repeat(39), "A".repeat(40)]) {
+    const { options, calls } = followFixture({ upstreamSha });
+    await assert.rejects(shouldFollowUpstreamNightly(options), /requires a full lowercase/);
+    assert.equal(calls.length, 0);
+  }
+});
+
+test("rejects commits that do not exist upstream", async () => {
+  const { options } = followFixture();
+  options.github.rest.repos.getCommit = async () => {
+    throw notFound();
+  };
+  await assert.rejects(shouldFollowUpstreamNightly(options), /Not Found/);
+});
+
+test("a queued duplicate skips after the preceding run publishes", async () => {
+  const { options } = followFixture();
+  assert.equal(await shouldFollowUpstreamNightly(options), true);
+  options.github.rest.repos.compareCommitsWithBasehead = async () => ({
+    data: { status: "ahead" },
   });
   assert.equal(await shouldFollowUpstreamNightly(options), false);
-  assert.equal(calls.length, 0);
 });
 
 test("fails instead of releasing when GitHub errors for another reason", async () => {
