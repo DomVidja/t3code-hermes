@@ -28,7 +28,9 @@ Each row has two controls, and both are reversible:
 
 While connected, web and desktop announce new completions with a message preview and an **Open**
 action that takes you to that run. They follow the same notification, sound, and focus settings as
-chat, including desktop notifications when enabled and permitted. Muted tasks stay quiet. Connecting
+chat, including desktop notifications when enabled and permitted. Muted tasks stay quiet. A task
+whose runs also appear as threads still notifies once per run, from Tasks, so muting it silences
+those threads' run notifications too; your replies in those threads notify as usual. Connecting
 later does not replay old notifications; their results remain in history. Mobile shows the messages
 in run history, but does not send scheduled-task push notifications.
 
