@@ -35,6 +35,7 @@ import {
   CLI_ARCHIVE_PLATFORM_KEYS,
   cliArchiveFileName,
   type CliArchivePlatformKey,
+  NPM_PLATFORM_PACKAGE_NAMES,
 } from "@t3tools/shared/cliRelease";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
@@ -85,7 +86,7 @@ export class NpmPackagesArchiveLayoutError extends Schema.TaggedError<NpmPackage
 }
 
 export function npmPlatformPackageName(platformKey: CliArchivePlatformKey): string {
-  return `t3-hermes-${platformKey}`;
+  return NPM_PLATFORM_PACKAGE_NAMES[platformKey];
 }
 
 /**
@@ -198,12 +199,14 @@ const { spawnSync } = require("node:child_process");
 const { constants } = require("node:os");
 const { dirname, join } = require("node:path");
 
-const SUPPORTED = [${CLI_ARCHIVE_PLATFORM_KEYS.map((key) => `"${key}"`).join(", ")}];
+const PACKAGES = ${JSON.stringify(NPM_PLATFORM_PACKAGE_NAMES)};
+const SUPPORTED = Object.keys(PACKAGES);
 const key = process.platform + "-" + process.arch;
 
 let packageDir;
 try {
-  packageDir = dirname(require.resolve("t3-hermes-" + key + "/package.json"));
+  if (!SUPPORTED.includes(key)) throw new Error("unsupported platform");
+  packageDir = dirname(require.resolve(PACKAGES[key] + "/package.json"));
 } catch {
   process.stderr.write(
     [

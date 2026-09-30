@@ -794,10 +794,10 @@ jobs:
           path: release-cli
 
       # Trusted publishing cannot create a package, so a platform package that
-      # has never been published by hand cannot be published from here. npm's
-      # spam filter currently rejects the t3-hermes-win32-* names, so those are
-      # dropped from this release's npm packages (the launcher then reports
-      # the platform as unsupported) and an issue tracks them until they exist.
+      # has never been published by hand cannot be published from here. Any
+      # such package is dropped from this release's npm packages (the launcher
+      # then reports the platform as unsupported) and an issue tracks it until
+      # it exists. Names come from NPM_PLATFORM_PACKAGE_NAMES.
       - name: Skip platform packages not on npm yet
         id: npm_platforms
         env:
@@ -810,16 +810,17 @@ jobs:
             key="${key#t3-"$RELEASE_VERSION"-}"
             key="${key%.zip}"
             key="${key%.tar.gz}"
-            status="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/t3-hermes-$key")"
+            name="$(node --input-type=module -e 'const { npmPlatformPackageName } = await import("./scripts/build-npm-platform-packages.ts"); console.log(npmPlatformPackageName(process.argv[1]));' "$key")"
+            status="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$name")"
             case "$status" in
               200) ;;
               404)
-                echo "::warning::t3-hermes-$key does not exist on npm; publishing without it."
+                echo "::warning::$name ($key) does not exist on npm; publishing without it."
                 rm "$archive"
-                missing+=("t3-hermes-$key")
+                missing+=("$name")
                 ;;
               *)
-                echo "::error::npm registry returned HTTP $status for t3-hermes-$key." >&2
+                echo "::error::npm registry returned HTTP $status for $name." >&2
                 exit 1
                 ;;
             esac
@@ -835,7 +836,7 @@ jobs:
       - name: Check npm publish access (dry run)
         run: |
           if ! node apps/server/scripts/cli.ts publish --packages-dir npm-packages --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --provenance --dry-run --verbose; then
-            echo "::error::npm publish --dry-run failed. Make sure t3-hermes and every t3-hermes-<platform> package exists on npm and has a trusted publisher registered for NateWeav/t3code-hermes .github/workflows/release.yml (see docs/operations/release.md)." >&2
+            echo "::error::npm publish --dry-run failed. Make sure t3-hermes and every platform package in NPM_PLATFORM_PACKAGE_NAMES (scripts/build-npm-platform-packages.ts) exists on npm and has a trusted publisher registered for NateWeav/t3code-hermes .github/workflows/release.yml (see docs/operations/release.md)." >&2
             exit 1
           fi
 

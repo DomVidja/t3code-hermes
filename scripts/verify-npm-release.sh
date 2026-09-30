@@ -27,7 +27,7 @@ fi
 # The platform package is an optional dependency, so npm silently skips it
 # while it is not visible yet and the launcher then reports the platform as
 # unsupported. Wait for this runner's package before installing.
-platform_package="t3-hermes-$(node -p 'process.platform + "-" + process.arch')"
+platform_package="$(node --input-type=module -e 'const { npmPlatformPackageName } = await import("./scripts/build-npm-platform-packages.ts"); console.log(npmPlatformPackageName(process.platform + "-" + process.arch));')"
 platform_version=""
 for attempt in $(seq 1 "$wait_attempts"); do
   platform_version="$(npm view "${platform_package}@${release_version}" version 2>/dev/null || true)"
