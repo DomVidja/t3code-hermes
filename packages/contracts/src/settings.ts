@@ -469,6 +469,10 @@ export const ClientSettingsSchema = Schema.Struct({
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarStatusRings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Name skill loads and edits in the work log instead of "Read file". Fork opt-in. */
+  showSkillActivityRows: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Name memory reads and writes in the work log. Fork opt-in. */
+  showMemoryActivityRows: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -955,28 +959,26 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
-/** Where a co-located Hindsight instance listens when nobody says otherwise. */
-const DEFAULT_HINDSIGHT_BASE_URL = "http://127.0.0.1:8888";
-
 /**
  * Connection to a [Hindsight](https://github.com/vectorize-io/hindsight) agent
  * memory service, which backs the Memory tab of the Hermes panel.
  *
- * Hindsight is expected to run on the same host as this server. Only the
- * server ever talks to it, so binding Hindsight to loopback keeps working for
- * clients on a phone or behind a tunnel.
+ * Only the server ever talks to Hindsight, so a loopback or tailnet address
+ * keeps working for clients on a phone or behind a tunnel.
  *
- * The integration is inert until `enabled` is set: an unset block means the
- * environment never opens a socket and the Memory tab never appears.
+ * Every field here is an override. Whatever is left unset is read from the
+ * Hermes install's own Hindsight config, so an environment running Hermes with
+ * Hindsight memory needs no setup at all. The API key follows the URL: a key
+ * saved here is only sent to a URL saved here, and Hermes' key only to Hermes'
+ * URL.
  *
- * `apiKey` is stripped before settings are sent to any client — see
- * `redactServerSettingsForClient`.
+ * `apiKey` lives in the secret store and reaches clients only as a redaction
+ * marker — see `redactServerSettingsForClient`.
  */
 export const HindsightSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  baseUrl: TrimmedString.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_HINDSIGHT_BASE_URL)),
-  ),
+  /** Off makes the integration inert: no socket is opened and the Memory tab says so. */
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  baseUrl: Schema.optionalKey(TrimmedString),
   /** Sent as `Authorization: Bearer <apiKey>`. Omit it for an open instance. */
   apiKey: Schema.optionalKey(TrimmedString),
   /** Preselected in the bank picker. Falls back to the first bank Hindsight lists. */
@@ -1757,6 +1759,8 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarStatusRings: Schema.optionalKey(Schema.Boolean),
+  showSkillActivityRows: Schema.optionalKey(Schema.Boolean),
+  showMemoryActivityRows: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

@@ -5,6 +5,7 @@ import {
   MessageId,
   ThreadLinkedPullRequest,
   UserInputRequestedPayload,
+  isHermesRunSourceBusy,
   isImportedAgentSessionMessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -853,6 +854,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.hermes-run.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.hermes-run-set",
+        payload: {
+          threadId: command.threadId,
+          hermesRun: command.hermesRun,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.auto-settle.set": {
       const thread = yield* requireThreadNotArchived({
         readModel,
@@ -1399,6 +1422,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (
+        targetThread.hermesRun &&
+        isHermesRunSourceBusy(targetThread.hermesRun, readModel.threads)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Hermes is still running ${targetThread.hermesRun.sourceLabel}. Reply once it finishes.`,
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({

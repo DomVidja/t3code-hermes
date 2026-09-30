@@ -140,7 +140,7 @@ function providerEnvironmentSecretName(input: {
 }
 
 /**
- * On disk a hub key or Bitbucket token is replaced by this marker and the
+ * On disk a hub key, Bitbucket token or Hindsight key is replaced by this marker and the
  * real value lives in the secret store, mirroring provider environment
  * secrets. A client that sends the marker back means "keep what you have".
  */
@@ -155,6 +155,7 @@ const BITBUCKET_SECRET_NAMES = {
   apiToken: "bitbucket-api-token",
 } as const;
 const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;
+const HINDSIGHT_API_KEY_SECRET_NAME = "hindsight-api-key";
 
 const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
 
@@ -184,9 +185,12 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  // The Hindsight key is dropped outright rather than blanked: no client has
-  // any use for it, and only the server ever talks to Hindsight.
-  const { apiKey: _hindsightApiKey, ...hindsight } = settings.integrations.hindsight;
+  // Only the server ever talks to Hindsight; Settings only needs to know a key is saved.
+  const { apiKey: hindsightApiKey, ...hindsightWithoutKey } = settings.integrations.hindsight;
+  const hindsight =
+    hindsightApiKey === undefined || hindsightApiKey.length === 0
+      ? hindsightWithoutKey
+      : { ...hindsightWithoutKey, apiKey: SECRET_REDACTED };
   // The hub key is a bearer secret; clients only need to know one is set.
   const usageLimitSources = Object.fromEntries(
     Object.entries(settings.usageLimitSources).map(([id, source]) => [
@@ -774,11 +778,29 @@ const make = Effect.gen(function* () {
           );
         bitbucket[field] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
       }
+      let integrations = settings.integrations;
+      if (integrations.hindsight.apiKey === SECRET_REDACTED) {
+        const secret = yield* secretStore
+          .get(HINDSIGHT_API_KEY_SECRET_NAME)
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        const { apiKey: _marker, ...hindsight } = integrations.hindsight;
+        integrations = {
+          ...integrations,
+          hindsight: Option.isSome(secret)
+            ? { ...hindsight, apiKey: textDecoder.decode(secret.value) }
+            : hindsight,
+        };
+      }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
         usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
         bitbucket,
+        integrations,
       };
     });
 
@@ -939,12 +961,43 @@ const make = Effect.gen(function* () {
         bitbucket[field] = SECRET_REDACTED;
       }
 
+      // Same rules as a Bitbucket token: the marker keeps what is saved, an
+      // empty key removes it, and anything else moves into the secret store.
+      const { apiKey: nextHindsightKey = "", ...hindsight } = next.integrations.hindsight;
+      const currentHindsightKey = current.integrations.hindsight.apiKey ?? "";
+      const hindsightKey =
+        nextHindsightKey === SECRET_REDACTED ? currentHindsightKey : nextHindsightKey;
+      let hindsightApiKey: string | undefined;
+      if (hindsightKey === SECRET_REDACTED) {
+        hindsightApiKey = SECRET_REDACTED;
+      } else if (hindsightKey.length === 0) {
+        if (currentHindsightKey.length > 0) {
+          changes.push({
+            kind: "remove",
+            secretName: HINDSIGHT_API_KEY_SECRET_NAME,
+            operation: "remove-secret",
+          });
+        }
+      } else {
+        changes.push({
+          kind: "write",
+          secretName: HINDSIGHT_API_KEY_SECRET_NAME,
+          value: textEncoder.encode(hindsightKey),
+        });
+        hindsightApiKey = SECRET_REDACTED;
+      }
+
       return {
         settings: {
           ...next,
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
           bitbucket,
+          integrations: {
+            ...next.integrations,
+            hindsight:
+              hindsightApiKey === undefined ? hindsight : { ...hindsight, apiKey: hindsightApiKey },
+          },
         },
         changes,
       };

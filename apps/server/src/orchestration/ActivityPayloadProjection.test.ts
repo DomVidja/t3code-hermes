@@ -45,6 +45,32 @@ describe("projectActivityPayload", () => {
     },
   );
 
+  it("keeps the provider's own title when the canonical title replaced it", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        title: "Read file",
+        data: {
+          toolCallId: "tc-1",
+          kind: "read",
+          title: "skill view (release-checklist)",
+          content: [{ type: "content", content: { type: "text", text: "x".repeat(5000) } }],
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.title).toBe("skill view (release-checklist)");
+    // A duplicate of the canonical title is not sent twice.
+    const duplicate = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        title: "hindsight_retain",
+        data: { toolCallId: "tc-2", kind: "other", title: "hindsight_retain" },
+      }),
+    );
+    expect((duplicate.payload as { data: Record<string, unknown> }).data.title).toBeUndefined();
+  });
+
   it("preserves tool attribution (agentId/parentToolUseId) through data slimming", () => {
     const projected = projectActivityPayload(
       activity({

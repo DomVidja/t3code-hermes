@@ -8,9 +8,9 @@
  * The tab renders whether or not Hindsight is configured. Hiding it would make
  * the panel's tab strip depend on a network read and shift after mount, and it
  * would leave someone who just configured Hindsight with no way to see that it
- * worked. So an unconfigured environment gets one sentence saying where to
- * turn it on, which is the shorter path to a working setup than a tab that is
- * not there.
+ * worked. So an unconfigured environment gets one sentence and a button to its
+ * Memory settings, which is the shorter path to a working setup than a tab
+ * that is not there.
  */
 import {
   describeHindsightEmptyList,
@@ -22,7 +22,8 @@ import {
   HINDSIGHT_STATS_PENDING_LABEL,
 } from "@t3tools/client-runtime/state/hindsight";
 import type { HindsightBankId, HindsightBankStats, HindsightMemory } from "@t3tools/contracts";
-import { PlugZapIcon, RefreshCwIcon, SparklesIcon, XIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { PlugZapIcon, RefreshCwIcon, SettingsIcon, SparklesIcon, XIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { useHindsightMemory } from "../../state/hindsight";
@@ -195,7 +196,10 @@ export function HermesMemoryTab() {
     retain,
     reflect,
     dismissReflection,
+    enabled,
+    environmentId,
   } = useHindsightMemory();
+  const navigate = useNavigate();
 
   const [draft, setDraft] = useState("");
 
@@ -212,21 +216,39 @@ export function HermesMemoryTab() {
     clearQuery();
   }, [clearQuery]);
 
-  const unavailable = describeHindsightUnavailable(status);
+  const unavailable = describeHindsightUnavailable(status, { enabled });
 
   if (unavailable !== null) {
+    const openSettings = status?.availability === "notConfigured";
     return (
       <Empty>
         <EmptyHeader>
           <EmptyTitle>{unavailable.title}</EmptyTitle>
           <EmptyDescription>{unavailable.description}</EmptyDescription>
         </EmptyHeader>
-        {unavailable.retryable ? (
-          <Button onClick={retry} variant="ghost">
-            <PlugZapIcon />
-            Try again
-          </Button>
-        ) : null}
+        <div className="flex gap-2">
+          {openSettings ? (
+            <Button
+              onClick={() =>
+                void navigate({
+                  to: "/settings/integrations",
+                  search: environmentId === null ? {} : { machine: environmentId },
+                  hash: "memory",
+                })
+              }
+              variant="outline"
+            >
+              <SettingsIcon />
+              Memory settings
+            </Button>
+          ) : null}
+          {unavailable.retryable ? (
+            <Button onClick={retry} variant="ghost">
+              <PlugZapIcon />
+              Try again
+            </Button>
+          ) : null}
+        </div>
       </Empty>
     );
   }

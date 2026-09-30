@@ -260,6 +260,16 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.hermes-run-set":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          hermesRun: event.payload.hermesRun,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
     // ── Thread metadata ─────────────────────────────────────────────
     case "thread.meta-updated":
       return {

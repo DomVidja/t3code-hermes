@@ -102,6 +102,15 @@ export function useThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadSh
   );
 }
 
+const FALSE_ATOM = Atom.make(false).pipe(Atom.withLabel("web-false"));
+
+/** Whether replies to a Hermes-run thread wait on a live run of its source. */
+export function useHermesRunReplyBlocked(ref: ScopedThreadRef | null): boolean {
+  return useAtomValue(
+    ref === null ? FALSE_ATOM : environmentThreadShells.hermesRunReplyBlockedAtom(ref),
+  );
+}
+
 export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread | null {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_DETAIL_ATOM : environmentThreadDetails.detailAtom(ref),

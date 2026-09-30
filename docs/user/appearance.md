@@ -28,6 +28,18 @@ The main sidebar, right panel, and terminal drawer open and close immediately by
 in your operating system. Moving between threads always snaps to the selected thread's panel state
 without replaying its transitions.
 
+## Behind the scenes
+
+Turn these on in **Settings → Appearance → Behind the scenes** to see more of how an agent works.
+Both are off by default and saved separately on each device or browser.
+
+- **Skill activity** names the skills an agent loads, creates, and edits in the work log, such as
+  "Loaded skill release-checklist", where they would otherwise show as file reads.
+- **Memory activity** names what an agent saves to or recalls from memory, including Hindsight
+  recalls and searches of past sessions.
+
+Both work with Hermes. Other providers keep their usual rows.
+
 ## Custom themes
 
 On web and desktop, choose **Create theme** to adjust a palette, or import a T3 Code or VS Code

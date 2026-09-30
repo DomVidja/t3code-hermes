@@ -11,6 +11,8 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
+import { agentActivityDisplayName, type AgentActivity } from "./agentActivity.ts";
+
 /**
  * Activities the worktree setup card already represents. The settled record
  * is rendered by the card on web and mobile, never as a
@@ -43,6 +45,8 @@ export interface WorkLogPresentationEntry {
   readonly sourceActivityKind?: string;
   readonly taskId?: string;
   readonly toolSource?: ToolActivitySource;
+  /** Skill or memory identity, present only when the user turned those rows on. */
+  readonly agentActivity?: AgentActivity;
 }
 
 export type ToolGroupAction =
@@ -57,7 +61,9 @@ export type ToolGroupAction =
   | "code-search"
   | "search"
   | "other"
-  | "update";
+  | "update"
+  | "skill"
+  | "memory";
 
 export type ToolGroupSummaryKind =
   | "pull-request"
@@ -194,10 +200,20 @@ export function liveActivityToolStatus(status: string | undefined, presentTense:
 
 /** Resolves tool identity before choosing labels or icons in either client. */
 export function resolveWorkEntryToolPresentation(
-  entry: Pick<WorkLogPresentationEntry, "label" | "toolTitle" | "toolData" | "toolLifecycleStatus">,
+  entry: Pick<
+    WorkLogPresentationEntry,
+    "label" | "toolTitle" | "toolData" | "toolLifecycleStatus" | "agentActivity"
+  >,
   fallbackStatus?: "inProgress" | "completed",
 ) {
   const status = entry.toolLifecycleStatus ?? fallbackStatus;
+  if (entry.agentActivity) {
+    return {
+      displayName: agentActivityDisplayName(entry.agentActivity, status),
+      icon: entry.agentActivity.kind,
+      action: entry.agentActivity.kind,
+    };
+  }
   const data = entry.toolData;
   if (data !== null && typeof data === "object") {
     if (
@@ -592,6 +608,10 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
       return `Used ${count} ${count === 1 ? "tool" : "tools"}`;
     case "update":
       return `Received ${count} ${count === 1 ? "update" : "updates"}`;
+    case "skill":
+      return `Used ${count} ${count === 1 ? "skill" : "skills"}`;
+    case "memory":
+      return `Used memory ${count} ${count === 1 ? "time" : "times"}`;
   }
 }
 

@@ -101,30 +101,18 @@ async function compareStatus({ github, context, base, head }) {
 
 const contains = (status) => status === "ahead" || status === "identical";
 
-// Fork-only. Fork nightlies follow upstream's: release when the candidate
-// commit contains upstream's latest nightly and no fork nightly has shipped it.
-// Runs after the workflow acquires the nightly concurrency lock, so a run that
-// queued behind one that already shipped this upstream nightly skips.
-async function shouldFollowUpstreamNightly({ github, context, core }) {
-  const { data: upstreamReleases } = await github.rest.repos.listReleases({
-    ...UPSTREAM_REPO,
-    per_page: 100,
-  });
-  const upstreamNightly = upstreamReleases
-    .filter((release) => !release.draft && release.published_at && isNightlyTag(release.tag_name))
-    .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at))[0];
-  if (!upstreamNightly) {
-    core.info("No published upstream nightly found. Skipping.");
-    return false;
+// Check the sync's upstream snapshot under the nightly concurrency lock.
+// Comparing with the published nightly also catches merges via resolution PRs
+// and retries failed releases, without releasing twice for the same upstream head.
+async function shouldFollowUpstreamNightly({ github, context, core, upstreamSha }) {
+  if (!/^[0-9a-f]{40}$/.test(upstreamSha ?? "")) {
+    throw new Error("follow_upstream requires a full lowercase upstream_sha commit hash.");
   }
-  const { data: upstreamCommit } = await github.rest.repos.getCommit({
-    ...UPSTREAM_REPO,
-    ref: upstreamNightly.tag_name,
-  });
-  const upstreamSha = upstreamCommit.sha;
+  // Verify that the supplied snapshot is an actual upstream commit.
+  await github.rest.repos.getCommit({ ...UPSTREAM_REPO, ref: upstreamSha });
 
   if (!contains(await compareStatus({ github, context, base: upstreamSha, head: context.sha }))) {
-    core.info(`Upstream ${upstreamNightly.tag_name} (${upstreamSha}) is not merged yet. Skipping.`);
+    core.info(`Upstream commit ${upstreamSha} is not merged yet. Skipping.`);
     return false;
   }
 
@@ -136,12 +124,12 @@ async function shouldFollowUpstreamNightly({ github, context, core }) {
     )
   ) {
     core.info(
-      `Upstream ${upstreamNightly.tag_name} already shipped in ${lastNightly.tag_name}. Skipping.`,
+      `Upstream commit ${upstreamSha} already shipped in ${lastNightly.tag_name}. Skipping.`,
     );
     return false;
   }
 
-  core.info(`Following upstream ${upstreamNightly.tag_name} (${upstreamSha}).`);
+  core.info(`Following upstream commit ${upstreamSha}.`);
   return true;
 }
 
