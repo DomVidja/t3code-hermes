@@ -29,9 +29,6 @@ The level applies from your next message, not to a reply already in progress.
 
 ## Making it take effect
 
-Hermes's agent-protocol interface — the one T3 Code talks to — does not read the configured
-reasoning level on its own; it is the only Hermes surface that skips it. Until that is fixed
-upstream, the level you pick is recorded correctly but ignored while Hermes runs. Applying the small
-patch shipped in the fork's `infra/hermes` directory to your Hermes installation makes Hermes honour
-it. Without the patch the control still appears and still saves your choice, but Hermes keeps using
-its own default.
+Hermes v0.21.4 or newer is needed. Older versions still show the control and save your choice, but
+ignore it while talking to T3 Code and keep using their own default. Update Hermes from its provider
+card in Settings, or with `hermes update`.

@@ -790,6 +790,27 @@ export const ThreadPullRequestLink = Schema.Struct({
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 
+/**
+ * A Hermes background run (a webhook route delivery or a cron job firing)
+ * mirrored into this thread. Hermes runs these on its own; T3 Code tails
+ * Hermes's session store and replays each run as a thread. `live` holds while
+ * Hermes is still working, and replies to any thread of the same source wait
+ * for every live run of that source to finish.
+ */
+export const ThreadHermesRun = Schema.Struct({
+  /** Hermes profile the run belongs to: "default", or a name under `profiles/`. */
+  profile: TrimmedNonEmptyString,
+  /** "webhook:<route>" or "cron:<jobId>". */
+  sourceKey: TrimmedNonEmptyString,
+  sourceLabel: TrimmedNonEmptyString,
+  /** Hermes session the run started as. */
+  sessionId: TrimmedNonEmptyString,
+  /** Newest session in the run's compression chain. */
+  latestSessionId: TrimmedNonEmptyString,
+  live: Schema.Boolean,
+});
+export type ThreadHermesRun = typeof ThreadHermesRun.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -842,6 +863,9 @@ export const OrchestrationThread = Schema.Struct({
   // Survives manual settle, un-settle, and activity: only the user clears it.
   // Optional so payloads from older servers still decode.
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // Set on threads mirrored from a Hermes background run. Optional so payloads
+  // from servers without Hermes runs still decode.
+  hermesRun: Schema.optional(Schema.NullOr(ThreadHermesRun)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
@@ -913,6 +937,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  hermesRun: Schema.optional(Schema.NullOr(ThreadHermesRun)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   session: Schema.NullOr(OrchestrationSession),
@@ -1658,7 +1683,16 @@ const ThreadPullRequestLinkSyncCommand = Schema.Struct({
   stack: Schema.NullOr(ThreadPullRequestStack),
 });
 
+const ThreadHermesRunSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.hermes-run.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  hermesRun: ThreadHermesRun,
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
+  ThreadHermesRunSetCommand,
   ThreadAutoSettleCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
@@ -1703,6 +1737,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.unpinned",
   "thread.pin-reordered",
   "thread.auto-settle-set",
+  "thread.hermes-run-set",
   "thread.meta-updated",
   "thread.pull-request-linked",
   "thread.pull-request-unlinked",
@@ -1845,6 +1880,12 @@ export const ThreadAutoSettleSetPayload = Schema.Struct({
   threadId: ThreadId,
   // Null re-enables automatic settlement.
   autoSettleDisabledAt: Schema.NullOr(IsoDateTime),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadHermesRunSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  hermesRun: ThreadHermesRun,
   updatedAt: IsoDateTime,
 });
 
@@ -2116,6 +2157,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.auto-settle-set"),
     payload: ThreadAutoSettleSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.hermes-run-set"),
+    payload: ThreadHermesRunSetPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

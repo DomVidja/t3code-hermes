@@ -27,6 +27,8 @@ export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./hermesCron.ts";
 export * from "./hermesMemory.ts";
+export * from "./hermesRuns.ts";
+export * from "./hermesPatches.ts";
 export * from "./hindsight.ts";
 export * from "./projectClone.ts";
 export * from "./pullRequest.ts";

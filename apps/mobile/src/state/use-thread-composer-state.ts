@@ -2,6 +2,7 @@ import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   CommandId,
@@ -42,6 +43,7 @@ import {
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed } from "../lib/threadActivity";
+import { mobilePreferencesAtom } from "./preferences";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
 import { appAtomRegistry } from "../state/atom-registry";
@@ -197,18 +199,26 @@ export function useThreadComposerState() {
   // detail is usually present but empty during a worktree checkout, so this
   // cannot be an either/or with the loaded messages.
   const pendingCreationMessage = selectedThreadCreation?.message ?? null;
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const showSkillRows =
+    AsyncResult.isSuccess(preferences) && preferences.value.showSkillActivityRows === true;
+  const showMemoryRows =
+    AsyncResult.isSuccess(preferences) && preferences.value.showMemoryActivityRows === true;
   const selectedThreadFeed = useMemo(() => {
     const loadedMessages = selectedThreadMessages ?? [];
     const feed =
       (selectedThreadMessages && selectedThreadActivities) || pendingCreationMessage !== null
-        ? buildThreadFeed({
-            messages:
-              pendingCreationMessage !== null &&
-              !loadedMessages.some((message) => message.id === pendingCreationMessage.messageId)
-                ? [...loadedMessages, pendingThreadCreationMessage(pendingCreationMessage)]
-                : loadedMessages,
-            activities: selectedThreadActivities ?? [],
-          })
+        ? buildThreadFeed(
+            {
+              messages:
+                pendingCreationMessage !== null &&
+                !loadedMessages.some((message) => message.id === pendingCreationMessage.messageId)
+                  ? [...loadedMessages, pendingThreadCreationMessage(pendingCreationMessage)]
+                  : loadedMessages,
+              activities: selectedThreadActivities ?? [],
+            },
+            { agentActivityRows: { skills: showSkillRows, memory: showMemoryRows } },
+          )
         : [];
     const pendingAcknowledgments = acknowledgedMessages.filter(
       (message) =>
@@ -226,6 +236,8 @@ export function useThreadComposerState() {
     selectedThreadKey,
     selectedThreadQueuedMessages,
     acknowledgedMessages,
+    showSkillRows,
+    showMemoryRows,
   ]);
   useEffect(() => {
     const echoedIds = new Set(selectedThreadMessages?.map((message) => message.id));

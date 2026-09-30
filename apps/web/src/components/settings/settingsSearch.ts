@@ -237,6 +237,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["animation motion outline sidebar indicator"],
   },
   {
+    id: "skill-activity-rows",
+    title: "Skill activity",
+    to: "/settings/appearance",
+    searchTerms: ["behind the scenes work log skills loaded hermes tool rows"],
+  },
+  {
+    id: "memory-activity-rows",
+    title: "Memory activity",
+    to: "/settings/appearance",
+    searchTerms: ["behind the scenes work log memory hindsight recall retain sessions hermes"],
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",
@@ -587,6 +599,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Hindsight memory",
     to: "/settings/integrations",
     searchTerms: ["hindsight hermes agent memory recall remember bank"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "hermes-runs",
+    title: "Hermes runs",
+    to: "/settings/integrations",
+    searchTerms: [
+      "hermes background runs tasks webhook cron scheduled jobs threads upstream sync automation",
+    ],
     environmentOnly: true,
     scope: "environment-defaults",
   },

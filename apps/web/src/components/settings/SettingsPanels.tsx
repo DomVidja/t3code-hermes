@@ -572,6 +572,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarStatusRings !== DEFAULT_UNIFIED_SETTINGS.sidebarStatusRings
         ? ["Thread status rings"]
         : []),
+      ...(settings.showSkillActivityRows !== DEFAULT_UNIFIED_SETTINGS.showSkillActivityRows
+        ? ["Skill activity"]
+        : []),
+      ...(settings.showMemoryActivityRows !== DEFAULT_UNIFIED_SETTINGS.showMemoryActivityRows
+        ? ["Memory activity"]
+        : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed
@@ -681,6 +687,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarStatusRings,
+      settings.showSkillActivityRows,
+      settings.showMemoryActivityRows,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -780,6 +788,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       sidebarStatusRings: DEFAULT_UNIFIED_SETTINGS.sidebarStatusRings,
+      showSkillActivityRows: DEFAULT_UNIFIED_SETTINGS.showSkillActivityRows,
+      showMemoryActivityRows: DEFAULT_UNIFIED_SETTINGS.showMemoryActivityRows,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -1498,6 +1508,59 @@ export function AppearanceSettingsPanel() {
                 updateSettings({ sidebarStatusRings: Boolean(checked) })
               }
               aria-label="Thread status rings"
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection id="behind-the-scenes" title="Behind the scenes">
+        <SettingsRow
+          {...searchableSetting("skill-activity-rows")}
+          description="Name the skills an agent loads, creates, and edits in the work log, instead of showing them as file reads."
+          resetAction={
+            settings.showSkillActivityRows !== DEFAULT_UNIFIED_SETTINGS.showSkillActivityRows ? (
+              <SettingResetButton
+                label="skill activity"
+                onClick={() =>
+                  updateSettings({
+                    showSkillActivityRows: DEFAULT_UNIFIED_SETTINGS.showSkillActivityRows,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showSkillActivityRows}
+              onCheckedChange={(checked) =>
+                updateSettings({ showSkillActivityRows: Boolean(checked) })
+              }
+              aria-label="Skill activity"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("memory-activity-rows")}
+          description="Name what an agent saves to or recalls from memory, including past-session searches, in the work log."
+          resetAction={
+            settings.showMemoryActivityRows !== DEFAULT_UNIFIED_SETTINGS.showMemoryActivityRows ? (
+              <SettingResetButton
+                label="memory activity"
+                onClick={() =>
+                  updateSettings({
+                    showMemoryActivityRows: DEFAULT_UNIFIED_SETTINGS.showMemoryActivityRows,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showMemoryActivityRows}
+              onCheckedChange={(checked) =>
+                updateSettings({ showMemoryActivityRows: Boolean(checked) })
+              }
+              aria-label="Memory activity"
             />
           }
         />

@@ -7,7 +7,7 @@ on:
       - "!v*-nightly.*"
       - "!v*-preview.*"
   # No schedule on the fork: sync-upstream.yml dispatches a nightly whenever
-  # main has caught up to an upstream nightly the fork has not shipped yet.
+  # main contains upstream commits the fork has not shipped yet.
   workflow_dispatch:
     inputs:
       channel:
@@ -24,10 +24,14 @@ on:
         required: false
         type: string
       follow_upstream:
-        description: "Fork-only, set by sync-upstream.yml: publish the nightly only if main has an upstream nightly the fork has not shipped."
+        description: "Fork-only, set by sync-upstream.yml: publish if upstream_sha is merged but not yet shipped."
         required: false
         default: false
         type: boolean
+      upstream_sha:
+        description: "Upstream commit captured by sync-upstream.yml; required when follow_upstream is true."
+        required: false
+        type: string
 
 # Serialize nightlies (scheduled and manual) so overlapping runs cannot build
 # the same commit twice or publish out of order. Stable tag releases get their
@@ -69,6 +73,7 @@ jobs:
         env:
           DISPATCH_CHANNEL: ${{ inputs.channel }}
           FOLLOW_UPSTREAM: ${{ inputs.follow_upstream }}
+          UPSTREAM_SHA: ${{ inputs.upstream_sha }}
         with:
           script: |
             const {
@@ -96,7 +101,7 @@ jobs:
               core.setOutput('has_changes', await shouldReleaseNightly({ github, context, core }));
               core.setOutput('ref', context.sha);
             } else if (context.eventName === 'workflow_dispatch' && process.env.FOLLOW_UPSTREAM === 'true') {
-              core.setOutput('has_changes', await shouldFollowUpstreamNightly({ github, context, core }));
+              core.setOutput('has_changes', await shouldFollowUpstreamNightly({ github, context, core, upstreamSha: process.env.UPSTREAM_SHA }));
               core.setOutput('ref', context.sha);
             } else if (context.eventName === 'workflow_dispatch' && dispatchChannel === 'stable') {
               const { tag, sha, version } = await resolveLatestNightlyCommit({ github, context, core });

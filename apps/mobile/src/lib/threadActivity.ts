@@ -34,6 +34,12 @@ import {
   type WorkLogToolLifecycleStatus,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
+import {
+  annotateAgentActivity,
+  extractProviderToolTitle,
+  type AgentActivity,
+  type AgentActivityRowOptions,
+} from "@t3tools/client-runtime/work-log/agent-activity";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 
 import * as Arr from "effect/Array";
@@ -94,6 +100,10 @@ export interface WorkLogEntry {
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
+  /** The provider's own title when the canonical one replaced it (e.g. "skill view (name)"). */
+  providerToolTitle?: string;
+  /** Skill or memory identity, attached when the user opted into those rows. */
+  agentActivity?: AgentActivity;
   toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   toolIcon?: import("@t3tools/contracts").ToolActivityIcon;
   toolSource?: import("@t3tools/contracts").ToolActivitySource;
@@ -171,7 +181,14 @@ export type ThreadFeedEntry =
       readonly summaryKind: ToolGroupSummaryKind;
       readonly toolSurface?: WorkLogEntry["toolSurface"];
       readonly toolIcon?: WorkLogEntry["toolIcon"];
-      readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request" | "brain";
+      readonly summaryToolIcon?:
+        | "browser"
+        | "device"
+        | "t3-code"
+        | "pull-request"
+        | "brain"
+        | "skill"
+        | "memory";
       readonly hasFailure: boolean;
       readonly live: boolean;
       readonly shimmer: boolean;
@@ -234,9 +251,13 @@ export type ThreadFeedLatestTurn = Pick<
 type ThreadFeedActivityGroup = Extract<ThreadFeedEntry, { readonly type: "activity-group" }>;
 
 // These keys are immutable inputs. Weak caches release old histories with their source data.
-const activityEntriesCache = new WeakMap<
-  ReadonlyArray<OrchestrationThreadActivity>,
-  ReadonlyArray<Extract<RawThreadFeedEntry, { readonly type: "activity" }>>
+// One cache per skill/memory row combination, so flipping a setting re-derives rows once.
+const activityEntriesCaches = new Map<
+  string,
+  WeakMap<
+    ReadonlyArray<OrchestrationThreadActivity>,
+    ReadonlyArray<Extract<RawThreadFeedEntry, { readonly type: "activity" }>>
+  >
 >();
 const messageEntriesCache = new WeakMap<
   OrchestrationThread["messages"][number],
@@ -589,6 +610,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (title) {
     entry.toolTitle = title;
   }
+  const providerToolTitle = extractProviderToolTitle(payload);
+  if (providerToolTitle && providerToolTitle !== title) {
+    entry.providerToolTitle = providerToolTitle;
+  }
   if (toolPresentation.toolSurface) {
     entry.toolSurface = toolPresentation.toolSurface;
   }
@@ -873,6 +898,7 @@ function mergeDerivedWorkLogEntries(
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
+  const providerToolTitle = next.providerToolTitle ?? previous.providerToolTitle;
   const toolSurface = next.toolSurface ?? previous.toolSurface;
   const toolIcon = next.toolIcon ?? previous.toolIcon;
   const toolSource = next.toolSource ?? previous.toolSource;
@@ -893,6 +919,7 @@ function mergeDerivedWorkLogEntries(
     ...(rawCommand ? { rawCommand } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
+    ...(providerToolTitle ? { providerToolTitle } : {}),
     ...(toolSurface ? { toolSurface } : {}),
     ...(toolIcon ? { toolIcon } : {}),
     ...(toolSource ? { toolSource } : {}),
@@ -2408,6 +2435,7 @@ export function buildThreadFeed(
   options?: {
     readonly loadedMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
     readonly localMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
+    readonly agentActivityRows?: AgentActivityRowOptions;
   },
 ): ThreadFeedEntry[] {
   const loadedMessages = options?.loadedMessages ?? thread.messages;
@@ -2416,7 +2444,10 @@ export function buildThreadFeed(
     : loadedMessages;
   const oldestLoadedMessageCreatedAt =
     options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
-  const activityEntries = getThreadFeedActivityEntries(thread.activities).filter(
+  const activityEntries = getThreadFeedActivityEntries(
+    thread.activities,
+    options?.agentActivityRows,
+  ).filter(
     (entry) =>
       oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt,
   );
@@ -2448,11 +2479,22 @@ export function buildThreadFeed(
   return groupAdjacentActivities(entries);
 }
 
-function getThreadFeedActivityEntries(activities: ReadonlyArray<OrchestrationThreadActivity>) {
-  const cached = activityEntriesCache.get(activities);
+function getThreadFeedActivityEntries(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  agentActivityRows: AgentActivityRowOptions | undefined,
+) {
+  const cacheKey = `${agentActivityRows?.skills === true}:${agentActivityRows?.memory === true}`;
+  let cache = activityEntriesCaches.get(cacheKey);
+  if (!cache) {
+    cache = new WeakMap();
+    activityEntriesCaches.set(cacheKey, cache);
+  }
+  const cached = cache.get(activities);
   if (cached) return cached;
-  const entries = deriveWorkLogEntries(activities).map(toThreadFeedActivityEntry);
-  activityEntriesCache.set(activities, entries);
+  const entries = annotateAgentActivity(deriveWorkLogEntries(activities), agentActivityRows).map(
+    toThreadFeedActivityEntry,
+  );
+  cache.set(activities, entries);
   return entries;
 }
 
