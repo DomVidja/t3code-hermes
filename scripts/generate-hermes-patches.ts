@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - a synchronous codegen step with no Effect runtime to host.
 // Embeds infra/hermes/*.patch into the server so every build (npm, single
 // executable, desktop) can apply them without shipping loose files.
 // Run after changing a patch: node scripts/generate-hermes-patches.ts
