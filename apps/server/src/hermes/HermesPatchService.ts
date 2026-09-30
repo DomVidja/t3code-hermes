@@ -53,14 +53,7 @@ const unavailableSnapshot = (availability: HermesPatchesAvailability): HermesPat
   patches: [],
 });
 
-const commandFailed = (cause: unknown) =>
-  new HermesPatchError({
-    reason: "commandFailed",
-    detail: "Could not run git in the Hermes checkout.",
-    cause,
-  });
-
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -115,7 +108,14 @@ const make = Effect.gen(function* () {
         detachedHead,
         patches,
       })),
-      Effect.mapError(commandFailed),
+      Effect.mapError(
+        (cause) =>
+          new HermesPatchError({
+            reason: "commandFailed",
+            detail: "Could not read the Hermes checkout with git.",
+            cause,
+          }),
+      ),
     );
 
   const list = Effect.gen(function* () {
@@ -153,11 +153,19 @@ const make = Effect.gen(function* () {
       }
       const result = yield* provide(
         changeHermesPatch(checkout.checkoutRoot, patch, direction),
-      ).pipe(Effect.mapError(commandFailed));
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new HermesPatchError({
+              reason: "commandFailed",
+              detail: "Could not run git in the Hermes checkout.",
+              cause,
+            }),
+        ),
+      );
       if (!result.ok) {
-        // git's output names checkout paths; it goes to the server log, not the client.
         yield* Effect.logWarning("git refused a Hermes patch change").pipe(
-          Effect.annotateLogs({ patchId: patch.id, direction, output: result.output }),
+          Effect.annotateLogs({ patchId: patch.id, direction }),
         );
         return yield* new HermesPatchError({
           reason: "commandFailed",

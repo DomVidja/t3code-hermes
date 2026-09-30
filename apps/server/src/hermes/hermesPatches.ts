@@ -129,9 +129,9 @@ export const isHermesCheckoutDetached = (checkoutRoot: string) =>
   );
 
 /**
- * Applies (`forward`) or removes (`reverse`) one patch, returning git's
- * output when it refuses. `git apply` is all-or-nothing, so a refusal leaves
- * the checkout untouched.
+ * Applies (`forward`) or removes (`reverse`) one patch, returning whether git
+ * accepted it. `git apply` is all-or-nothing, so a refusal leaves the checkout
+ * untouched.
  */
 export const changeHermesPatch = Effect.fn("changeHermesPatch")(function* (
   checkoutRoot: string,
@@ -144,5 +144,5 @@ export const changeHermesPatch = Effect.fn("changeHermesPatch")(function* (
     checkoutRoot,
     direction === "forward" ? ["apply", file] : ["apply", "-R", file],
   );
-  return { ok: result.code === 0, output: result.stderr.trim() } as const;
+  return { ok: result.code === 0 } as const;
 }, Effect.scoped);
