@@ -30,6 +30,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   HermesRunError,
   ProjectId,
+  pullRequestHostOf,
   ProviderDriverKind,
   ThreadId,
   TurnId,
@@ -39,6 +40,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationProjectShell,
   type ProviderInstanceId,
+  type SourceControlProviderKind,
   type ThreadHermesRun,
 } from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
@@ -356,6 +358,19 @@ const make = Effect.gen(function* () {
           detail: "Hermes is not enabled in this environment.",
         });
       }
+      // Switching off always works; switching on needs a source Hermes has.
+      if (input.projectId !== null) {
+        const listed = yield* listSources;
+        const known = listed.sources.some(
+          (source) => source.profile === input.profile && source.sourceKey === input.sourceKey,
+        );
+        if (!known) {
+          return yield* new HermesRunError({
+            reason: "unknownSource",
+            detail: "Hermes has no such route or scheduled job.",
+          });
+        }
+      }
       if (input.projectId !== null) {
         const project = yield* snapshots
           .getProjectShellById(input.projectId)
@@ -454,25 +469,23 @@ const make = Effect.gen(function* () {
     });
 
   const writeBinding = (run: TrackedRun, primer: string | null, workspaceRoot: string) =>
-    directory
-      .upsert(
-        {
-          threadId: run.ids.threadId,
-          provider: HERMES,
-          providerInstanceId: run.instanceId,
-          status: "stopped",
-          runtimeMode: DEFAULT_RUNTIME_MODE,
-          resumeCursor: {
-            schemaVersion: 1,
-            hermesHome: run.profile.home,
-            ...(primer ? { primer } : {}),
-          },
-          runtimePayload: { cwd: workspaceRoot },
+    directory.upsert(
+      {
+        threadId: run.ids.threadId,
+        provider: HERMES,
+        providerInstanceId: run.instanceId,
+        status: "stopped",
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        resumeCursor: {
+          schemaVersion: 1,
+          hermesHome: run.profile.home,
+          ...(primer ? { primer } : {}),
         },
-        // The first write must not replace a session a reply already started.
-        primer === null ? { onConflict: "ignore" } : undefined,
-      )
-      .pipe(Effect.ignore);
+        runtimePayload: { cwd: workspaceRoot },
+      },
+      // The first write must not replace a session a reply already started.
+      primer === null ? { onConflict: "ignore" } : undefined,
+    );
 
   const createThread = (
     run: TrackedRun,
@@ -516,15 +529,21 @@ const make = Effect.gen(function* () {
       (url) =>
         Effect.gen(function* () {
           if (run.pullRequestUrls.has(url)) return;
-          run.pullRequestUrls.add(url);
           const parsed = parseChangeRequestUrl(url);
-          const repository = sourceControlRepositorySelector(project.repositoryIdentity);
-          // Only the project's own repository: a run mentions upstream PRs too.
+          const identity = project.repositoryIdentity;
+          const repository = sourceControlRepositorySelector(identity);
+          const host = identity?.provider
+            ? pullRequestHostOf(identity, identity.provider as SourceControlProviderKind)
+            : null;
+          // Only the project's own repository, on its own host: a run mentions
+          // upstream PRs too.
           if (
             parsed === null ||
             repository === null ||
-            parsed.repository.toLowerCase() !== repository.toLowerCase()
+            parsed.repository.toLowerCase() !== repository.toLowerCase() ||
+            (host !== null && host !== parsed.host && host !== parsed.authority)
           ) {
+            run.pullRequestUrls.add(url);
             return;
           }
           yield* dispatch({
@@ -536,7 +555,12 @@ const make = Effect.gen(function* () {
             number: parsed.number,
             url,
             source: "agent",
-          }).pipe(Effect.ignore);
+          }).pipe(
+            // Already linked is the decider saying the thread knew; anything
+            // else fails the pass so the batch, link included, is retried.
+            Effect.catchTag("OrchestrationCommandInvariantError", () => Effect.void),
+          );
+          run.pullRequestUrls.add(url);
         }),
       { discard: true },
     );
@@ -580,12 +604,17 @@ const make = Effect.gen(function* () {
         yield* createThread(run, root, project);
       }
 
-      const batch = hermesRunCommandsFor(run.ids, rows, run.toolCalls);
+      // Tool calls still waiting on a result carry across passes; work on a
+      // copy so a failed pass can replay this batch from the same state.
+      const toolCalls = new Map(run.toolCalls);
+      const batch = hermesRunCommandsFor(run.ids, rows, toolCalls);
       for (const command of batch.commands) yield* dispatch(command);
+      yield* linkPullRequests(run, batch.pullRequestUrls, project);
+      run.toolCalls.clear();
+      for (const [id, call] of toolCalls) run.toolCalls.set(id, call);
       run.cursor = cursor;
       run.lastMessageAt = lastMessageAt;
       if (batch.lastAssistantText !== null) run.finalReport = batch.lastAssistantText;
-      yield* linkPullRequests(run, batch.pullRequestUrls, project);
 
       if (!over) {
         if (chain.length > 1)
@@ -609,13 +638,8 @@ const make = Effect.gen(function* () {
           : tip.endReason === "cron_incomplete_no_output"
             ? "The run ended without a final answer."
             : null;
-      if (failure === null) {
-        yield* dispatch(sessionCommand(run, "ready", "ready", endedAt));
-        yield* dispatch(sessionCommand(run, "stopped", "stopped", endedAt));
-      } else {
-        yield* dispatch(sessionCommand(run, "error", "error", endedAt, failure));
-      }
-      yield* setHermesRun(run, false, "ended", endedAt);
+      // The primed binding lands while replies are still locked, so it can
+      // never replace a session a reply has started.
       yield* writeBinding(
         run,
         buildHermesRunPrimer({
@@ -628,6 +652,13 @@ const make = Effect.gen(function* () {
         }),
         project.workspaceRoot,
       );
+      if (failure === null) {
+        yield* dispatch(sessionCommand(run, "ready", "ready", endedAt));
+        yield* dispatch(sessionCommand(run, "stopped", "stopped", endedAt));
+      } else {
+        yield* dispatch(sessionCommand(run, "error", "error", endedAt, failure));
+      }
+      yield* setHermesRun(run, false, "ended", endedAt);
       return true;
     });
 
@@ -734,10 +765,11 @@ const make = Effect.gen(function* () {
           // The profile is gone, so the run can never be read again: close it
           // rather than leave its source's replies locked.
           const at = DateTime.formatIso(yield* DateTime.now);
+          // A failure here fails the pass, so the whole resume is retried.
           yield* dispatch(
             sessionCommand(run, "error", "error", at, "Its Hermes profile no longer exists."),
-          ).pipe(Effect.ignore);
-          yield* setHermesRun(run, false, "ended", at).pipe(Effect.ignore);
+          );
+          yield* setHermesRun(run, false, "ended", at);
           continue;
         }
         runs.set(prefix, run);

@@ -65,7 +65,13 @@ export const HermesRunSourceSetInput = Schema.Struct({
 export type HermesRunSourceSetInput = typeof HermesRunSourceSetInput.Type;
 
 export class HermesRunError extends Schema.TaggedError<HermesRunError>()("HermesRunError", {
-  reason: Schema.Literals(["providerDisabled", "unknownProject", "unreadable", "writeFailed"]),
+  reason: Schema.Literals([
+    "providerDisabled",
+    "unknownProject",
+    "unknownSource",
+    "unreadable",
+    "writeFailed",
+  ]),
   /** Stable, bounded description. The underlying failure travels in `cause`. */
   detail: TrimmedNonEmptyString,
   cause: Schema.optional(Schema.Defect()),

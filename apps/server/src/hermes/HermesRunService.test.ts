@@ -369,6 +369,22 @@ describe("HermesRunService", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("refuses to switch on a route Hermes does not have", () => {
+    const hermes = makeHermesHome();
+    const { layer } = makeLayer(hermes.root);
+    return Effect.gen(function* () {
+      const service = yield* HermesRunService.HermesRunService;
+      const error = yield* Effect.flip(
+        service.setSource({
+          profile: "upstream-sync",
+          sourceKey: "webhook:no-such-route",
+          projectId: PROJECT_ID,
+        }),
+      );
+      expect(error.reason).toBe("unknownSource");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("refuses to switch a source on while Hermes is off", () => {
     const hermes = makeHermesHome();
     const { layer } = makeLayer(hermes.root, { hermesEnabled: false });
