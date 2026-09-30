@@ -287,6 +287,9 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
       }}
       data={cron.jobs}
       estimatedItemSize={124}
+      // Rows read expansion and pending state through renderItem, but LegendList only
+      // re-renders mounted rows when data or extraData changes.
+      extraData={renderItem}
       keyExtractor={(job) => job.id}
       ListEmptyComponent={empty}
       ListHeaderComponent={
@@ -337,11 +340,11 @@ function TaskRow(props: {
         onPress={props.onToggleExpanded}
         className="min-h-16 flex-row items-center gap-3 px-4 py-3"
       >
-        <IconChevronRight
-          color={String(mutedColor)}
-          size={18}
-          style={{ transform: [{ rotate: props.expanded ? "90deg" : "0deg" }] }}
-        />
+        {/* Rotate a wrapper: react-native-svg applies a root `style.transform` to the drawing
+            around its origin, which moves the chevron out of its box on iOS. */}
+        <View className={props.expanded ? "rotate-90" : undefined}>
+          <IconChevronRight color={String(mutedColor)} size={18} />
+        </View>
         <View className="min-w-0 flex-1 gap-0.5">
           <Text className="text-base font-t3-semibold text-foreground" numberOfLines={1}>
             {props.job.name}
