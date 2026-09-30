@@ -174,7 +174,7 @@ jobs:
           fi
           echo "Signed with release certificate $actual"
 
-          apk_name="T3Code-$VERSION.apk"
+          apk_name="T3Code-${VERSION//\//-}.apk"
           apk_path="$RUNNER_TEMP/$apk_name"
           cp "$apk" "$apk_path"
           echo "apk_name=$apk_name" >> "$GITHUB_OUTPUT"
