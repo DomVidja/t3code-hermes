@@ -26,7 +26,7 @@ Test with meaningful project and thread data. Read the shared
 [SQLite fixture reference](../test-t3-app/references/sqlite-fixtures.md) only
 when inspecting or seeding SQLite. Stop the test server before fixture writes.
 
-## Launch T3 Code Dev
+## Launch the development client
 
 From the checkout being tested on the selected device host, run:
 
@@ -34,12 +34,13 @@ From the checkout being tested on the selected device host, run:
 node scripts/mobile-native-client.ts ensure <ios|android> <device-id>
 ```
 
-This reuses a matching native client or builds and installs one. Authorized
+This reuses a matching native client or builds and installs one, and prints the
+development app ID (`appId`) from `apps/mobile/app.config.ts`. Authorized
 mobile verification includes that build step unless the user prohibits it.
 
 Start `vp run dev:client` from `apps/mobile`, or reuse a healthy Metro belonging
 to this checkout. Open its printed development-client URL with AgentDevice
-`open com.t3tools.t3code.dev <url>` and all returned target arguments.
+`open <appId> <url>` and all returned target arguments.
 The device must be able to reach both Metro and the isolated backend.
 
 ## Pair and verify
@@ -54,7 +55,7 @@ arguments stored in `agent_device_command` and the Bash array
   "$agent_device_command" "${agent_device_target_args[@]}"
 ```
 
-It issues a fresh credential and opens T3 Code Dev's existing pairing route
+It issues a fresh credential and opens the development client's existing pairing route
 through AgentDevice. For a backend on the device host, use
 `http://127.0.0.1:<server-port>` on iOS or `http://10.0.2.2:<server-port>`
 on Android. For a remote backend, use its reachable origin.
