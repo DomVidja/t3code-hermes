@@ -71,18 +71,18 @@ id within a ledger, so ids stay stable across many search/extract rounds.
 
 ## Quick Reference
 
-| Action | Command |
-|---|---|
-| Fresh ledger for a new task | `sources.py reset` |
-| Register a source, get its id | `sources.py add <url> [--title T]` |
-| Register several at once | `sources.py add <url1> <url2> ...` |
-| Register from JSON tool output | `sources.py ingest results.json` |
-| Attach verbatim evidence to a source | `sources.py quote <id> --text "exact wording" --from page.txt` |
-| Show ledger | `sources.py list [--json]` |
-| Render the Sources block | `sources.py render [--style markdown\|plain\|footnotes\|bibtex\|evidence] [--only 1,3]` |
-| Render only what a draft cites | `sources.py render --cited-in draft.md` |
-| Rewrite a draft's Sources block in place | `sources.py render --replace-in draft.md` |
-| Check a draft's citations | `sources.py verify draft.md [--strict] [--min-coverage 0.6] [--evidence]` |
+| Action                                   | Command                                                                                 |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- |
+| Fresh ledger for a new task              | `sources.py reset`                                                                      |
+| Register a source, get its id            | `sources.py add <url> [--title T]`                                                      |
+| Register several at once                 | `sources.py add <url1> <url2> ...`                                                      |
+| Register from JSON tool output           | `sources.py ingest results.json`                                                        |
+| Attach verbatim evidence to a source     | `sources.py quote <id> --text "exact wording" --from page.txt`                          |
+| Show ledger                              | `sources.py list [--json]`                                                              |
+| Render the Sources block                 | `sources.py render [--style markdown\|plain\|footnotes\|bibtex\|evidence] [--only 1,3]` |
+| Render only what a draft cites           | `sources.py render --cited-in draft.md`                                                 |
+| Rewrite a draft's Sources block in place | `sources.py render --replace-in draft.md`                                               |
+| Check a draft's citations                | `sources.py verify draft.md [--strict] [--min-coverage 0.6] [--evidence]`               |
 
 ## Procedure
 
@@ -92,7 +92,7 @@ in a draft — reusing the ledger keeps the numbering stable.
 
 ② **Register every source at retrieval time.** After each `web_search` /
 `web_extract` / `browser_navigate` / fetch, pass the URLs to `sources.py add`
-(or pipe the raw JSON through `sources.py ingest`). Do this *before* writing
+(or pipe the raw JSON through `sources.py ingest`). Do this _before_ writing
 prose. Registering later, from memory, is the failure mode this skill exists to
 prevent.
 
@@ -132,21 +132,21 @@ writing to a file.
 `web_search`. Fan out across source types, collect in parallel, then synthesise
 with every claim attributed to the platform it came from:
 
-| Source type | Route | What it adds |
-|---|---|---|
-| Open web | `web_search` → `web_extract` | official docs, articles, announcements |
-| Community discussion | `reddit-reading` (`search`, `thread`) | real user experience, complaints, workarounds |
-| Blogs / releases / changelogs | `rss-feeds` (`read`, `discover`) | dated primary posts, version history |
-| Video | `youtube-content` | walkthroughs, demos, talks |
-| Code | `terminal` with `gh search repos` / `gh search issues` | implementations, open bugs |
-| X/Twitter | `xurl` (needs API access) | announcements, developer chatter |
+| Source type                   | Route                                                  | What it adds                                  |
+| ----------------------------- | ------------------------------------------------------ | --------------------------------------------- |
+| Open web                      | `web_search` → `web_extract`                           | official docs, articles, announcements        |
+| Community discussion          | `reddit-reading` (`search`, `thread`)                  | real user experience, complaints, workarounds |
+| Blogs / releases / changelogs | `rss-feeds` (`read`, `discover`)                       | dated primary posts, version history          |
+| Video                         | `youtube-content`                                      | walkthroughs, demos, talks                    |
+| Code                          | `terminal` with `gh search repos` / `gh search issues` | implementations, open bugs                    |
+| X/Twitter                     | `xurl` (needs API access)                              | announcements, developer chatter              |
 
 The `reddit-reading` and `rss-feeds` skills are optional. If absent, install with
 `hermes skills install official/social-media/reddit-reading` or
 `hermes skills install official/research/rss-feeds` before using them.
 
 Register every URL from every route in the ledger as it arrives (step ②). Keep
-opinion and measurement apart: a Reddit thread is evidence that users *report*
+opinion and measurement apart: a Reddit thread is evidence that users _report_
 something, not that it is true; pair it with a primary source or label it as
 sentiment. Report per-platform coverage gaps ("Reddit search returned nothing
 newer than March") rather than silently narrowing to what worked.

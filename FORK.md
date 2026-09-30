@@ -19,7 +19,7 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | Model picker falls back to a populated provider     | `apps/web/src/components/chat/ModelPickerContent.tsx`                                                                                                       |
 | ACP `available_commands_update` / `usage_update`    | `apps/server/src/provider/acp/{AcpRuntimeModel,AcpSessionRuntime}.ts`                                                                                       |
 | Shared slash-command dedupe (was Claude-private)    | `apps/server/src/provider/slashCommands.ts`                                                                                                                 |
-| Hermes Skills panel (learning history)            | `apps/server/src/hermes/HermesSkillsService.ts`, `packages/contracts/src/hermesSkills.ts`, [guide](./docs/user/hermes-skills.md) |
+| Hermes Skills panel (learning history)              | `apps/server/src/hermes/HermesSkillsService.ts`, `packages/contracts/src/hermesSkills.ts`, [guide](./docs/user/hermes-skills.md)                            |
 | Hermes Tasks panel (cron jobs)                      | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                        |
 | Hermes Memory panel (Hindsight)                     | `apps/server/src/integrations/hindsight/`, `packages/contracts/src/hindsight.ts`, `apps/web/src/{state/hindsight.ts,components/hermes/HermesMemoryTab.tsx}` |
 | Reasoning-effort selector (Hermes `config.yaml`)    | `apps/server/src/hermes/hermesReasoning*.ts`, `infra/hermes/`                                                                                               |

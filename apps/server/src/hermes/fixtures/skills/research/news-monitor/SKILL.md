@@ -15,6 +15,7 @@ trigger: When user asks to monitor a topic for news, alerts, or updates on a rec
    - Print output (cron captures stdout for delivery)
 
 2. **Register the cron job** after checking `hermes cron create --help`:
+
    ```
    hermes cron create 'every 2h' '<self-contained research and dedupe prompt>' --name '<topic> monitor' --deliver '<platform>:<verified-chat-id>' --continuity
    ```
