@@ -45,8 +45,9 @@ export function describeHermesPatchesUnavailable(
   }
 }
 
+// Plain text on both clients, so no markdown quoting.
 export const HERMES_DETACHED_HEAD_WARNING =
-  "This Hermes checkout is on a detached HEAD, so `hermes update` cannot move it. Check out main in the checkout, then update.";
+  "This Hermes checkout is on a detached HEAD, so updating Hermes cannot move it. Check out main in the checkout, then update.";
 
 /** The server's reason when it gave one, else a generic line. */
 export function describeHermesPatchFailure(failure: unknown, fallback: string): string {
