@@ -1,0 +1,218 @@
+{
+  "hermesCommit": "ac0cfa7db94cefa90cf3e35191f38b53888b9e17",
+  "acpVersion": "0.9.0",
+  "cases": [
+    {
+      "name": "single",
+      "args": {
+        "goal": "Review the parser",
+        "role": "leaf",
+        "model": "test/reviewer"
+      },
+      "result": {
+        "results": [
+          {
+            "task_index": 0,
+            "goal": "Review the parser",
+            "model": "test/reviewer",
+            "_child_role": "leaf",
+            "duration_seconds": 2.5,
+            "status": "completed",
+            "summary": "Parser reviewed."
+          }
+        ],
+        "total_duration_seconds": 2.5
+      },
+      "start": {
+        "content": [
+          {
+            "content": {
+              "text": "Delegating task:\nReview the parser",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "kind": "execute",
+        "locations": [],
+        "title": "delegate_task: Review the parser",
+        "toolCallId": "tc-fixture-single",
+        "sessionUpdate": "tool_call"
+      },
+      "complete": {
+        "content": [
+          {
+            "content": {
+              "text": "Delegation results: 1 task in 2.5s\n\n✅ Task 1: completed (test/reviewer, role=leaf, 2.5s)\nParser reviewed.",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "kind": "execute",
+        "status": "completed",
+        "toolCallId": "tc-fixture-single",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "name": "batch",
+      "args": {
+        "tasks": [
+          {
+            "goal": "Inspect routing",
+            "role": "orchestrator",
+            "model": "test/researcher"
+          },
+          {
+            "goal": "Run tests",
+            "role": "leaf",
+            "model": "test/tester"
+          }
+        ]
+      },
+      "result": {
+        "results": [
+          {
+            "task_index": 0,
+            "goal": "Inspect routing",
+            "model": "test/researcher",
+            "_child_role": "orchestrator",
+            "duration_seconds": 1.5,
+            "status": "completed",
+            "summary": "Routing inspected."
+          },
+          {
+            "task_index": 1,
+            "goal": "Run tests",
+            "model": "test/tester",
+            "_child_role": "leaf",
+            "duration_seconds": 2.0,
+            "status": "error",
+            "error": "Test process failed.",
+            "summary": ""
+          }
+        ],
+        "total_duration_seconds": 2.0
+      },
+      "start": {
+        "content": [
+          {
+            "content": {
+              "text": "Delegating 2 tasks\n\n1. Inspect routing (orchestrator)\n2. Run tests (leaf)",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "kind": "execute",
+        "locations": [],
+        "title": "delegate_task: 2 tasks: Inspect routing | Run tests",
+        "toolCallId": "tc-fixture-batch",
+        "sessionUpdate": "tool_call"
+      },
+      "complete": {
+        "content": [
+          {
+            "content": {
+              "text": "Delegation results: 2 tasks in 2.0s\n\n✅ Task 1: completed (test/researcher, role=orchestrator, 1.5s)\nRouting inspected.\n\n✗ Task 2: error (test/tester, role=leaf, 2.0s)\nError: Test process failed.",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "kind": "execute",
+        "status": "completed",
+        "toolCallId": "tc-fixture-batch",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "name": "failure",
+      "args": {
+        "goal": "Review the parser"
+      },
+      "result": {
+        "error": "Delegation unavailable."
+      },
+      "start": {
+        "content": [
+          {
+            "content": {
+              "text": "Delegating task:\nReview the parser",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "kind": "execute",
+        "locations": [],
+        "title": "delegate_task: Review the parser",
+        "toolCallId": "tc-fixture-failure",
+        "sessionUpdate": "tool_call"
+      },
+      "complete": {
+        "content": [
+          {
+            "content": {
+              "text": "Delegation failed: Delegation unavailable.",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "kind": "execute",
+        "status": "failed",
+        "toolCallId": "tc-fixture-failure",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "name": "dispatched",
+      "args": {
+        "goal": "Review parser",
+        "model": "test/reviewer",
+        "role": "leaf"
+      },
+      "result": {
+        "status": "dispatched",
+        "mode": "background",
+        "count": 1,
+        "delegation_id": "deleg_test1234",
+        "goals": ["Review parser"],
+        "subagent_ids": ["sa-0-test1234"]
+      },
+      "start": {
+        "content": [
+          {
+            "content": {
+              "text": "Delegating task:\nReview parser",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "kind": "execute",
+        "locations": [],
+        "title": "delegate_task: Review parser",
+        "toolCallId": "tc-fixture-dispatched",
+        "sessionUpdate": "tool_call"
+      },
+      "complete": {
+        "content": [
+          {
+            "content": {
+              "text": "{\"status\": \"dispatched\", \"mode\": \"background\", \"count\": 1, \"delegation_id\": \"deleg_test1234\", \"goals\": [\"Review parser\"], \"subagent_ids\": [\"sa-0-test1234\"]}",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "kind": "execute",
+        "status": "completed",
+        "toolCallId": "tc-fixture-dispatched",
+        "sessionUpdate": "tool_call_update"
+      }
+    }
+  ]
+}

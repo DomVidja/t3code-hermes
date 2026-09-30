@@ -12,6 +12,7 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | Change                                              | Where                                                                                                                                                            |
 | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hermes` provider driver (ACP over stdio)           | `apps/server/src/provider/{Drivers,Layers,Services,acp}/Hermes*.ts`                                                                                              |
+| Hermes delegated child agents                       | `apps/server/src/provider/acp/HermesDelegation.ts`, optional live-progress patch in `infra/hermes/`                                                              |
 | Hermes text generation (titles, commit messages, …) | `apps/server/src/textGeneration/HermesTextGeneration.ts`                                                                                                         |
 | `HermesSettings` + driver registration              | `packages/contracts/src/{settings,model}.ts`, `provider/builtInDrivers.ts`                                                                                       |
 | Hermes branding in the clients                      | `apps/web/src/components/**`, `apps/mobile/src/components/ProviderIcon.tsx`                                                                                      |
@@ -20,8 +21,9 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | ACP `available_commands_update` / `usage_update`    | `apps/server/src/provider/acp/{AcpRuntimeModel,AcpSessionRuntime}.ts`                                                                                            |
 | Shared slash-command dedupe (was Claude-private)    | `apps/server/src/provider/slashCommands.ts`                                                                                                                      |
 | Hermes Skills panel (learning history)              | `apps/server/src/hermes/HermesSkillsService.ts`, `packages/contracts/src/hermesSkills.ts`, [guide](./docs/user/hermes-skills.md)                                 |
-| Hermes Tasks panel (cron jobs)                      | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                             |
+| Hermes Tasks and delivery notifications             | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                             |
 | Hermes Memory panel (Hindsight)                     | `apps/server/src/integrations/hindsight/`, `packages/contracts/src/hindsight.ts`, `apps/web/src/{state/hindsight.ts,components/hermes/HermesMemoryTab.tsx}`      |
+| Hermes built-in memory (browse and edit)            | `apps/server/src/hermes/HermesMemoryService.ts`, `packages/contracts/src/hermesMemory.ts`, `packages/client-runtime/src/state/hermesMemory.ts`                   |
 | Reasoning-effort selector (Hermes `config.yaml`)    | `apps/server/src/hermes/hermesReasoning*.ts`                                                                                                                     |
 | Central Hermes execution on shell-only SSH targets  | `infra/hermes/0002-acp-central-ssh-execution.patch`                                                                                                              |
 | Hermes Patches tab (applies the carried patches)    | `apps/server/src/hermes/{HermesPatchService,hermesPatches}.ts`, `packages/contracts/src/hermesPatches.ts`, `apps/web/src/components/hermes/HermesPatchesTab.tsx` |
@@ -101,11 +103,11 @@ node apps/server/src/bin.ts pair --ttl 2h
 check `<T3HERMES_HOME>/caches/hermes.json` — a working setup reports `"status": "ready"`, the Hermes
 version, and a populated `models` array.
 
-## Enable the Memory tab (optional)
+## Enable Hindsight memory (optional)
 
-The Hermes panel's Memory tab reads an open-source [Hindsight](https://github.com/vectorize-io/hindsight)
-agent-memory service. Run Hindsight on the same host as the T3 server — it can stay bound to
-loopback, because every request is proxied through the server, which is what keeps the tab working
+The Hermes panel's Memory tab always shows Hermes's built-in notes. It can also read an open-source
+[Hindsight](https://github.com/vectorize-io/hindsight) agent-memory service. Run Hindsight on the same
+host as the T3 server — it can stay bound to loopback, because every request is proxied through the server, which is what keeps the tab working
 from the mobile app and over T3 Connect. Add to the same `settings.json`:
 
 ```json
@@ -189,6 +191,14 @@ Project Settings → default model.
 
 ## Known limitations
 
+- **Live delegation progress needs the carried Hermes patch.** Stock synchronous delegation results
+  appear as individual subagents. Current Hermes dispatches top-level delegations in the background,
+  but stock ACP never sends their terminal results; these show idle with a completion-unavailable
+  note instead of a false success or endless busy indicator. Apply
+  [`0003-acp-delegation-progress.patch`](./infra/hermes/README.md#0003-acp-delegation-progresspatch)
+  (the Hermes panel's Patches tab applies it) for live child progress and background completion.
+  Updates require the original ACP process to remain connected; results missed after it exits are
+  not recovered from Hermes transcripts.
 - **Session modes are best-effort.** The adapter sends `session/set_mode` through the generic ACP
   request escape hatch and only logs a warning if Hermes rejects it. Approval enforcement is done
   by the adapter's own permission gate, so behaviour is correct either way.
@@ -212,19 +222,22 @@ Project Settings → default model.
   exposes the skill library and recorded Hermes edits read-only; authoring stays in chat. Profiles are still
   not exposed; use the `hermes` CLI for those. Chat, streaming, tool calls, approvals, resume,
   model switching, slash commands, and the context-window meter all work.
-- **Memory browsing goes through Hindsight, not Hermes's own notes.** The panel's Memory tab talks
+- **Hindsight remains a separate, optional memory store.** The panel's Hindsight section talks
   to a [Hindsight](https://github.com/vectorize-io/hindsight) service (HTTP API 0.9.1) over the T3
   websocket, never client-to-Hindsight, so a loopback-bound Hindsight still works from mobile and
   through a tunnel. Recall, browsing by pathway, retaining one note, and triggering a reflection are
-  built; editing and deleting memories deliberately are not. Mental models have no meaning-based
-  search in Hindsight's API, so a query matches them by text and they sort after the ranked results.
-  Hermes's _own_ `~/.hermes` notes remain unexposed — a Hermes with no Hindsight has no Memory tab
-  content, and the tab says so. Fixture-pinned tests fail loudly if a Hindsight upgrade changes a
-  response shape.
+  built; editing and deleting Hindsight memories deliberately are not. Mental models have no
+  meaning-based search in Hindsight's API, so a query matches them by text and they sort after the ranked results.
+  Hermes's built-in `memories/MEMORY.md` and `memories/USER.md` are shown and editable independently,
+  with live updates, character limits, and lock-respecting writes; Hindsight is not required.
+  Fixture-pinned tests fail loudly if a Hindsight upgrade changes a response shape.
 - **Task data is read from Hermes's own state files.** `hermes cron` has no JSON output mode as of
   Hermes 0.20.2, so T3 Code reads `cron/jobs.json` and the `cron/executions.db` ledger directly and
-  shells out to `hermes cron pause`/`resume` for the one mutation. Fixture-pinned tests fail loudly
-  if a Hermes upgrade changes either shape.
+  shells out to `hermes cron pause`/`resume` for the one mutation. Delivery outcomes come from
+  `cron/deliveries.db`; messages fall back to the cron session in `state.db` (verified on 0.21.0).
+  Hermes immediately clears terminal queue payloads, so observed payloads are cached in memory,
+  with bounded previews on subscriptions and larger text fetched on demand. Script-only runs and
+  early failures may have no retained message. Fixture-pinned tests guard these storage shapes.
 - **Reasoning effort needs Hermes v0.21.4 or newer, and applies on the next turn.** ACP has no
   reasoning channel, so the composer's Reasoning selector writes a per-model entry under
   `agent.reasoning_overrides` in your own `~/.hermes/config.yaml` — the same file the `hermes` CLI

@@ -99,3 +99,13 @@ it("keeps the Hermes skill library and on-demand content read-only", () => {
     expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
   }
 });
+
+it("allows Hermes memory reads but requires operate permission for edits", () => {
+  expect(requiredScopeForRpcMethod(WS_METHODS.hermesMemoryRead)).toBe(AuthOrchestrationReadScope);
+  expect(requiredScopeForRpcMethod(WS_METHODS.subscribeHermesMemory)).toBe(
+    AuthOrchestrationReadScope,
+  );
+  expect(requiredScopeForRpcMethod(WS_METHODS.hermesMemoryMutate)).toBe(
+    AuthOrchestrationOperateScope,
+  );
+});

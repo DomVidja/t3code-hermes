@@ -32,6 +32,14 @@ const decodeSimulators = Schema.decodeUnknownEffect(
     }),
   ),
 );
+const decodeExpoConfig = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      ios: Schema.Struct({ bundleIdentifier: Schema.String }),
+      android: Schema.Struct({ package: Schema.String }),
+    }),
+  ),
+);
 export type NativeClientRecord = typeof NativeClientRecord.Type;
 export type NativeClientStatus = "compatible" | "missing" | "unknown" | "stale";
 export class NativeClientError extends Schema.TaggedError<NativeClientError>()(
@@ -139,7 +147,6 @@ export const hashBundle = Effect.fn("hashBundle")(function* (root: string) {
 });
 type FileSystemError = import("effect/PlatformError").PlatformError;
 
-const bundleId = "com.t3tools.t3code.dev";
 const roots = Effect.gen(function* () {
   const path = yield* Path.Path;
   const repo = yield* path.fromFileUrl(new URL("../", import.meta.url));
@@ -206,6 +213,14 @@ const command = Effect.fn("nativeClient.command")(function* (
   return stdout.trim();
 }, Effect.scoped);
 
+/** The development variant's app ID, read from app.config.ts so a rename needs no edit here. */
+const appId = Effect.fn("nativeClient.appId")(function* (platform: NativePlatform) {
+  const config = yield* decodeExpoConfig(
+    yield* command("vp", ["exec", "expo", "config", "--type", "public", "--json"]),
+  );
+  return platform === "ios" ? config.ios.bundleIdentifier : config.android.package;
+});
+
 const fingerprint = Effect.fn("nativeClient.fingerprint")(function* (platform: NativePlatform) {
   const output = yield* command(yield* HostProcessExecutablePath, [
     "--eval",
@@ -257,6 +272,7 @@ const validateDevice = Effect.fn("nativeClient.validateDevice")(function* (
 export const installedBinary = Effect.fn("installedBinary")(function* (
   platform: NativePlatform,
   device: string,
+  bundleId: string,
   run: typeof command = command,
 ) {
   if (platform === "ios") {
@@ -311,9 +327,10 @@ const main = Command.make(
       platform,
       `${yield* digest(device)}.json`,
     );
+    const bundleId = yield* appId(platform);
     const operations = {
       fingerprint: fingerprint(platform),
-      installedBinary: installedBinary(platform, device),
+      installedBinary: installedBinary(platform, device, bundleId),
       readRecord: fs.readFileString(recordPath).pipe(
         Effect.flatMap(decodeRecord),
         Effect.catchTag("SchemaError", () => Effect.succeed(null)),
@@ -344,17 +361,27 @@ const main = Command.make(
         );
         if (platform === "ios") {
           const output = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-client-" });
-          const { mobile } = yield* roots;
-          yield* command("pod", ["install"], true, path.join(mobile, "ios"));
+          const ios = path.join((yield* roots).mobile, "ios");
+          yield* command("pod", ["install"], true, ios);
+          // Prebuild names the workspace, scheme, and app product after the sanitized app name.
+          const workspaces = (yield* fs.readDirectory(ios)).filter((name) =>
+            name.endsWith(".xcworkspace"),
+          );
+          const [workspace] = workspaces;
+          if (!workspace || workspaces.length > 1)
+            return yield* new NativeClientError({
+              message: `Expected one Xcode workspace in ${ios}, found ${workspaces.length}.`,
+            });
+          const project = path.basename(workspace, ".xcworkspace");
           // Target this simulator only, without Expo's desktop activation or log streaming.
           yield* command(
             "xcrun",
             [
               "xcodebuild",
               "-workspace",
-              path.join(mobile, "ios/T3CodeDev.xcworkspace"),
+              path.join(ios, workspace),
               "-scheme",
-              "T3CodeDev",
+              project,
               "-configuration",
               "Debug",
               "-destination",
@@ -371,7 +398,7 @@ const main = Command.make(
               "simctl",
               "install",
               device,
-              path.join(output, "Build/Products/Debug-iphonesimulator/T3CodeDev.app"),
+              path.join(output, "Build/Products/Debug-iphonesimulator", `${project}.app`),
             ],
             true,
           );
@@ -398,7 +425,9 @@ const main = Command.make(
       }),
     };
     if (mode === "ensure") {
-      yield* Console.log(yield* encodeOutput(yield* ensureClient(operations)));
+      yield* Console.log(
+        yield* encodeOutput({ ...(yield* ensureClient(operations)), appId: bundleId }),
+      );
     } else {
       const current = yield* operations.fingerprint;
       const status = clientStatus(
@@ -410,6 +439,7 @@ const main = Command.make(
         yield* encodeOutput({
           status,
           fingerprint: current,
+          appId: bundleId,
           next:
             status === "compatible"
               ? "Start Metro with vp run dev:client"

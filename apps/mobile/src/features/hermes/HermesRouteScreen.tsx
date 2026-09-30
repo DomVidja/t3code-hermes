@@ -57,7 +57,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { ScreenScrollView } from "../../components/ScreenScrollView";
-import { ProviderIcon } from "../../components/ProviderIcon";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -67,6 +66,8 @@ import { useHermesCron } from "../../state/hermesCron";
 import { useHermesPatches } from "../../state/hermesPatches";
 import { useHindsightMemory } from "../../state/hindsight";
 import { HermesSkillsTab } from "./HermesSkillsTab";
+import { HermesNativeMemorySection } from "./HermesNativeMemorySection";
+import { HermesRunDelivery } from "./HermesRunDelivery";
 
 const HERMES_DRIVER = "hermes";
 type HermesTab = "tasks" | "memory" | "patches" | "skills";
@@ -162,18 +163,6 @@ function HermesHeader(props: {
 }) {
   return (
     <View className="gap-3 border-b border-border px-5 pb-3 pt-3">
-      <View className="flex-row items-center gap-3">
-        <View className="size-11 items-center justify-center rounded-full bg-subtle">
-          <ProviderIcon provider="hermes" size={24} />
-        </View>
-        <View className="min-w-0 flex-1">
-          <Text className="text-lg font-t3-semibold text-foreground">Hermes</Text>
-          <Text className="text-sm text-foreground-muted">
-            Scheduled work, Hindsight memory, patches, and skills
-          </Text>
-        </View>
-      </View>
-
       {props.environments.length > 1 ? (
         <View className="flex-row flex-wrap gap-2" accessibilityRole="radiogroup">
           {props.environments.map((environment) => (
@@ -244,6 +233,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
   const renderItem = useCallback(
     ({ item }: LegendListRenderItemProps<HermesCronJob>) => (
       <TaskRow
+        environmentId={environmentId}
         job={item}
         expanded={expandedJobIds.has(item.id)}
         pending={cron.pendingJobIds.has(item.id)}
@@ -260,6 +250,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
       cron.pendingJobIds,
       cron.setEnabled,
       cron.setMuted,
+      environmentId,
       expandedJobIds,
       runMutation,
       toggleExpanded,
@@ -291,6 +282,9 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
       }}
       data={cron.jobs}
       estimatedItemSize={124}
+      // Rows read expansion and pending state through renderItem, but LegendList only
+      // re-renders mounted rows when data or extraData changes.
+      extraData={renderItem}
       keyExtractor={(job) => job.id}
       ListEmptyComponent={empty}
       ListHeaderComponent={
@@ -323,6 +317,7 @@ function HermesTasksScreen({ environmentId }: { readonly environmentId: Environm
 }
 
 function TaskRow(props: {
+  readonly environmentId: EnvironmentId;
   readonly job: HermesCronJob;
   readonly expanded: boolean;
   readonly pending: boolean;
@@ -341,11 +336,11 @@ function TaskRow(props: {
         onPress={props.onToggleExpanded}
         className="min-h-16 flex-row items-center gap-3 px-4 py-3"
       >
-        <IconChevronRight
-          color={String(mutedColor)}
-          size={18}
-          style={{ transform: [{ rotate: props.expanded ? "90deg" : "0deg" }] }}
-        />
+        {/* Rotate a wrapper: react-native-svg applies a root `style.transform` to the drawing
+            around its origin, which moves the chevron out of its box on iOS. */}
+        <View className={props.expanded ? "rotate-90" : undefined}>
+          <IconChevronRight color={String(mutedColor)} size={18} />
+        </View>
         <View className="min-w-0 flex-1 gap-0.5">
           <Text className="text-base font-t3-semibold text-foreground" numberOfLines={1}>
             {props.job.name}
@@ -397,7 +392,9 @@ function TaskRow(props: {
           {props.job.runs.length === 0 ? (
             <Text className="text-sm text-foreground-muted">No recorded runs yet.</Text>
           ) : (
-            props.job.runs.map((run) => <RunRow key={run.id} run={run} />)
+            props.job.runs.map((run) => (
+              <RunRow key={run.id} environmentId={props.environmentId} run={run} />
+            ))
           )}
         </View>
       ) : null}
@@ -405,7 +402,13 @@ function TaskRow(props: {
   );
 }
 
-function RunRow({ run }: { readonly run: HermesCronRun }) {
+function RunRow({
+  environmentId,
+  run,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly run: HermesCronRun;
+}) {
   const when = formatHermesTimestamp(run.finishedAt ?? run.startedAt ?? run.claimedAt);
   const duration = formatHermesRunDuration(run.durationMs);
   return (
@@ -430,6 +433,7 @@ function RunRow({ run }: { readonly run: HermesCronRun }) {
           {run.error}
         </Text>
       )}
+      <HermesRunDelivery environmentId={environmentId} run={run} />
     </View>
   );
 }
@@ -545,6 +549,21 @@ function HermesPatchesScreen({ environmentId }: { readonly environmentId: Enviro
 }
 
 function HermesMemoryScreen({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  return (
+    <HindsightMemoryScreen
+      environmentId={environmentId}
+      nativeSection={<HermesNativeMemorySection environmentId={environmentId} />}
+    />
+  );
+}
+
+function HindsightMemoryScreen({
+  environmentId,
+  nativeSection,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly nativeSection: React.ReactNode;
+}) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const iconColor = useUniwindTheme()["--color-icon"];
@@ -581,39 +600,7 @@ function HermesMemoryScreen({ environmentId }: { readonly environmentId: Environ
     Alert.alert("Reflection ready", "The result is shown above the memory list.");
   }, [memory]);
 
-  if (unavailable !== null) {
-    return (
-      <CenteredState
-        title={unavailable.title}
-        description={unavailable.description}
-        actionLabel={unavailable.retryable ? "Try again" : undefined}
-        onAction={unavailable.retryable ? memory.retry : undefined}
-      >
-        {memory.status?.availability === "notConfigured" ? (
-          <ActionButton
-            label="Memory settings"
-            icon={<IconSettings size={18} color={String(iconColor)} />}
-            onPress={() =>
-              navigation.navigate("SettingsSheet", {
-                screen: "SettingsContent",
-                params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
-              })
-            }
-          />
-        ) : null}
-      </CenteredState>
-    );
-  }
-  if (memory.error !== null) {
-    return (
-      <CenteredState
-        title="Memory is unavailable"
-        description={memory.error}
-        actionLabel="Try again"
-        onAction={memory.retry}
-      />
-    );
-  }
+  const hindsightAvailable = unavailable === null && memory.error === null;
 
   const emptyState = describeHindsightEmptyList(memory.submittedQuery);
   return (
@@ -625,33 +612,75 @@ function HermesMemoryScreen({ environmentId }: { readonly environmentId: Environ
         paddingHorizontal: 16,
         paddingTop: 12,
       }}
-      data={memory.memories}
+      data={hindsightAvailable ? memory.memories : []}
       estimatedItemSize={130}
       keyExtractor={(item) => `${item.pathway}:${item.id}`}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       ListHeaderComponent={
-        <MemoryHeader
-          banks={memory.banks}
-          bank={memory.bank}
-          onSelectBank={memory.selectBank}
-          pathway={memory.pathway}
-          onSelectPathway={memory.selectPathway}
-          draft={draft}
-          submittedQuery={memory.submittedQuery}
-          onChangeDraft={setDraft}
-          onSubmit={submitRecall}
-          onClear={clearRecall}
-          reflection={memory.reflection}
-          onDismissReflection={memory.dismissReflection}
-          stats={memory.stats}
-          isStatsPending={memory.isStatsPending}
-        />
+        <>
+          {nativeSection}
+          <Text
+            accessibilityRole="header"
+            className="mb-3 text-base font-t3-semibold text-foreground"
+          >
+            Hindsight
+          </Text>
+          {hindsightAvailable ? (
+            <MemoryHeader
+              banks={memory.banks}
+              bank={memory.bank}
+              onSelectBank={memory.selectBank}
+              pathway={memory.pathway}
+              onSelectPathway={memory.selectPathway}
+              draft={draft}
+              submittedQuery={memory.submittedQuery}
+              onChangeDraft={setDraft}
+              onSubmit={submitRecall}
+              onClear={clearRecall}
+              reflection={memory.reflection}
+              onDismissReflection={memory.dismissReflection}
+              stats={memory.stats}
+              isStatsPending={memory.isStatsPending}
+            />
+          ) : null}
+        </>
       }
       ListEmptyComponent={
-        memory.isPending ? (
+        memory.status?.availability === "notConfigured" ? (
+          <View className="gap-2">
+            <Text className="text-sm leading-5 text-foreground-muted">
+              Hindsight is optional and adds searchable, long-term recall. Configure it in Memory
+              settings to use it alongside native Hermes memory.
+            </Text>
+            <ActionButton
+              label="Memory settings"
+              icon={<IconSettings size={18} color={String(iconColor)} />}
+              onPress={() =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
+                })
+              }
+            />
+          </View>
+        ) : unavailable !== null ? (
           <CenteredState
-            title="Loading memory"
+            title={unavailable.title}
+            description={unavailable.description}
+            actionLabel="Try again"
+            onAction={memory.retry}
+          />
+        ) : memory.error !== null ? (
+          <CenteredState
+            title="Hindsight is unavailable"
+            description={memory.error}
+            actionLabel="Try again"
+            onAction={memory.retry}
+          />
+        ) : memory.isPending ? (
+          <CenteredState
+            title="Loading Hindsight"
             description="Reading the selected Hindsight bank…"
           />
         ) : (
@@ -659,23 +688,25 @@ function HermesMemoryScreen({ environmentId }: { readonly environmentId: Environ
         )
       }
       ListFooterComponent={
-        <MemoryFooter
-          bankAvailable={memory.bank !== null}
-          hasMore={memory.hasMore}
-          memoryCount={memory.memories.length}
-          retainOpen={retainOpen}
-          retainText={retainText}
-          isRetaining={memory.isRetaining}
-          isReflecting={memory.isReflecting}
-          onChangeRetainText={setRetainText}
-          onOpenRetain={() => setRetainOpen(true)}
-          onCancelRetain={() => {
-            setRetainText("");
-            setRetainOpen(false);
-          }}
-          onRetain={() => void retain()}
-          onReflect={() => void reflect()}
-        />
+        hindsightAvailable ? (
+          <MemoryFooter
+            bankAvailable={memory.bank !== null}
+            hasMore={memory.hasMore}
+            memoryCount={memory.memories.length}
+            retainOpen={retainOpen}
+            retainText={retainText}
+            isRetaining={memory.isRetaining}
+            isReflecting={memory.isReflecting}
+            onChangeRetainText={setRetainText}
+            onOpenRetain={() => setRetainOpen(true)}
+            onCancelRetain={() => {
+              setRetainText("");
+              setRetainOpen(false);
+            }}
+            onRetain={() => void retain()}
+            onReflect={() => void reflect()}
+          />
+        ) : null
       }
       renderItem={({ item }: LegendListRenderItemProps<HindsightMemory>) => (
         <MemoryRow memory={item} />

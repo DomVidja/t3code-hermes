@@ -163,6 +163,7 @@ import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinar
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
 import * as HermesSkillsService from "./hermes/HermesSkillsService.ts";
+import * as HermesMemoryService from "./hermes/HermesMemoryService.ts";
 import * as HermesRunService from "./hermes/HermesRunService.ts";
 import * as HermesPatchService from "./hermes/HermesPatchService.ts";
 import * as HindsightService from "./integrations/hindsight/HindsightService.ts";
@@ -233,6 +234,9 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
 
 const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
 const HermesSkillsLayerLive = HermesSkillsService.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+);
+const HermesMemoryLayerLive = HermesMemoryService.layer.pipe(
   Layer.provide(ServerSettingsLayerLive),
 );
 const HermesCronLayerLive = HermesCronService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
@@ -594,6 +598,7 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(UsageLayerLive),
   Layer.provideMerge(HermesCronLayerLive),
   Layer.provideMerge(HermesSkillsLayerLive),
+  Layer.provideMerge(HermesMemoryLayerLive),
   Layer.provideMerge(HermesPatchLayerLive),
   Layer.provideMerge(HindsightLayerLive),
   Layer.provideMerge(TraceDiagnostics.layer),

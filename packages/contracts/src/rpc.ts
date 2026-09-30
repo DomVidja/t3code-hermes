@@ -265,8 +265,17 @@ import {
   HermesSkillsStreamEvent,
 } from "./hermesSkills.ts";
 import {
+  HermesMemoryError,
+  HermesMemoryReadInput,
+  HermesMemorySubscribeInput,
+  HermesMemoryMutateInput,
+  HermesMemorySnapshot,
+} from "./hermesMemory.ts";
+import {
   HermesCronError,
   HermesCronListInput,
+  HermesCronGetRunOutputInput,
+  HermesCronRunOutput,
   HermesCronSetEnabledInput,
   HermesCronSetMutedInput,
   HermesCronSnapshot,
@@ -441,7 +450,11 @@ export const WS_METHODS = {
   serverGetUsageSummary: "server.getUsageSummary",
   hermesSkillsList: "hermes.skillsList",
   hermesSkillsGet: "hermes.skillsGet",
+  hermesMemoryRead: "hermes.memoryRead",
+  hermesMemoryMutate: "hermes.memoryMutate",
+  subscribeHermesMemory: "subscribeHermesMemory",
   hermesCronList: "hermes.cronList",
+  hermesCronGetRunOutput: "hermes.cronGetRunOutput",
   hermesCronSetEnabled: "hermes.cronSetEnabled",
   hermesCronSetMuted: "hermes.cronSetMuted",
   hermesRunSourcesList: "hermes.runSourcesList",
@@ -758,6 +771,29 @@ const WsSubscribeHermesSkillsRpc = Rpc.make(WS_METHODS.subscribeHermesSkills, {
   success: HermesSkillsStreamEvent,
   error: Schema.Union([EnvironmentAuthorizationError, HermesSkillsError]),
   stream: true,
+});
+
+const WsHermesMemoryReadRpc = Rpc.make(WS_METHODS.hermesMemoryRead, {
+  payload: HermesMemoryReadInput,
+  success: HermesMemorySnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesMemoryError]),
+});
+const WsHermesMemoryMutateRpc = Rpc.make(WS_METHODS.hermesMemoryMutate, {
+  payload: HermesMemoryMutateInput,
+  success: HermesMemorySnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesMemoryError]),
+});
+const WsSubscribeHermesMemoryRpc = Rpc.make(WS_METHODS.subscribeHermesMemory, {
+  payload: HermesMemorySubscribeInput,
+  success: HermesMemorySnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesMemoryError]),
+  stream: true,
+});
+
+const WsHermesCronGetRunOutputRpc = Rpc.make(WS_METHODS.hermesCronGetRunOutput, {
+  payload: HermesCronGetRunOutputInput,
+  success: HermesCronRunOutput,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesCronError]),
 });
 
 const WsHermesCronListRpc = Rpc.make(WS_METHODS.hermesCronList, {
@@ -1635,7 +1671,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsHermesSkillsListRpc,
   WsHermesSkillsGetRpc,
   WsSubscribeHermesSkillsRpc,
+  WsHermesMemoryReadRpc,
+  WsHermesMemoryMutateRpc,
+  WsSubscribeHermesMemoryRpc,
   WsHermesCronListRpc,
+  WsHermesCronGetRunOutputRpc,
   WsHermesCronSetEnabledRpc,
   WsHermesCronSetMutedRpc,
   WsHermesRunSourcesListRpc,

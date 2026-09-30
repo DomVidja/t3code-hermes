@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { isHermesTasksAnnouncedTurn, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import {
   CircleAlertIcon,
@@ -8,7 +8,7 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { Fragment, useCallback, useEffect, useRef } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironments } from "../state/environments";
@@ -20,6 +20,7 @@ import {
   setNotificationBadge,
   unlockNotificationAudio,
 } from "../threadNotifications";
+import { HermesCronWatcher } from "./hermes/HermesCronWatcher";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { toastManager } from "./ui/toast";
 
@@ -76,14 +77,19 @@ export function ThreadNotificationCoordinator() {
     };
   }, [mode]);
 
-  if (mode === "off" && !inAppNotificationsEnabled) return null;
-
   return environments.map((environment) => (
-    <EnvironmentNotifications
-      key={environment.environmentId}
-      environmentId={environment.environmentId}
-      onNotification={onNotification}
-    />
+    <Fragment key={environment.environmentId}>
+      <HermesCronWatcher
+        environmentId={environment.environmentId}
+        onNotification={onNotification}
+      />
+      {mode !== "off" || inAppNotificationsEnabled ? (
+        <EnvironmentNotifications
+          environmentId={environment.environmentId}
+          onNotification={onNotification}
+        />
+      ) : null}
+    </Fragment>
   ));
 }
 
@@ -129,7 +135,7 @@ function EnvironmentNotifications({
           ? completedAt
           : (prior?.completion ?? null);
       next.set(thread.id, { attention, completion });
-      if (!prior || thread.archivedAt !== null) continue;
+      if (!prior || thread.archivedAt !== null || isHermesTasksAnnouncedTurn(thread)) continue;
       const kind =
         attention && attention !== prior.attention
           ? "input"

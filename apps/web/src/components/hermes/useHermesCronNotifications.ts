@@ -1,45 +1,101 @@
-/**
- * Turns finished Hermes runs into a toast and a sidebar dot.
- *
- * Mounted from the sidebar footer rather than the panel, because a dot that
- * only lights while you are already looking at the panel would be pointless.
- * That does mean a client with Hermes holds one cron subscription for as long
- * as it is connected — which is the same thing "at least one client is
- * subscribed" means to the environment, and costs one small frame per change.
- */
+/** Consumes live announcements only; snapshots/history never generate alerts. */
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { HermesCronView } from "@t3tools/client-runtime/state/hermes-cron";
 import { useEffect, useRef } from "react";
 
+import { getClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { useHermesCron } from "../../state/hermesCron";
-import { reportHermesCompletion } from "../../state/hermesCronSeen";
+import { markHermesTasksSeen, reportHermesCompletion } from "../../state/hermesCronSeen";
+import {
+  hasDesktopNotifications,
+  hasNotificationSound,
+  playNotificationSound,
+} from "../../threadNotifications";
 import { toastManager } from "../ui/toast";
+import type { HermesCronWatcherProps } from "./HermesCronWatcher";
 
-export function useHermesCronNotifications(): void {
-  const { view, environmentId } = useHermesCron();
-  // Each finished run arrives as a new object that snapshot folds carry along
-  // unchanged, so identity marks "already toasted". `completionSeq` would not:
-  // it restarts on every reconnect and differs per environment.
-  const lastToasted = useRef<HermesCronView["lastCompletion"]>(null);
+export function useHermesCronNotifications({
+  environmentId,
+  onNotification,
+}: HermesCronWatcherProps): void {
+  const { view } = useHermesCron(environmentId);
+  const navigate = useNavigate();
+  const location = useRouterState({ select: (state) => state.location });
+  const mode = useClientSettings((settings) => settings.notificationMode);
+  const inAppEnabled = useClientSettings((settings) => settings.inAppNotificationsEnabled);
+  // Snapshot folds retain the completion object. Keep observing even when alerts
+  // are disabled so enabling them cannot replay the last completed run.
+  const lastSeen = useRef<HermesCronView["lastCompletion"]>(null);
 
   useEffect(() => {
-    const { lastCompletion } = view;
-    if (environmentId === null || lastCompletion === null) return;
-    if (lastCompletion === lastToasted.current) return;
-    lastToasted.current = lastCompletion;
-
+    const completion = view.lastCompletion;
+    if (completion === null || completion === lastSeen.current) return;
+    lastSeen.current = completion;
     reportHermesCompletion(environmentId);
-    toastManager.add(
-      lastCompletion.status === "failed"
-        ? {
-            type: "error",
-            title: `Task failed: ${lastCompletion.jobName}`,
-            description: lastCompletion.error ?? "Hermes did not record a reason.",
-          }
-        : {
-            type: "success",
-            title: `Task finished: ${lastCompletion.jobName}`,
-            description: "Scheduled run completed.",
+
+    const focused = document.visibilityState === "visible" && document.hasFocus();
+    const currentTarget =
+      location.pathname === "/hermes" &&
+      location.search.environmentId === environmentId &&
+      location.search.jobId === completion.jobId &&
+      location.search.runId === completion.runId;
+    if (focused && currentTarget) markHermesTasksSeen(environmentId);
+    const title = `Task ${completion.status === "failed" ? "failed" : "finished"}: ${completion.jobName}`;
+    const description =
+      completion.delivery?.preview ??
+      completion.error ??
+      (completion.status === "failed"
+        ? "Hermes did not record a reason."
+        : "Scheduled run completed.");
+    const open = () => {
+      markHermesTasksSeen(environmentId);
+      void navigate({
+        to: "/hermes",
+        search: { environmentId, jobId: completion.jobId, runId: completion.runId },
+      });
+    };
+    if (hasNotificationSound(mode)) {
+      void playNotificationSound(completion.status === "failed" ? "input" : "completion", () =>
+        hasNotificationSound(getClientSettings().notificationMode),
+      );
+    }
+    if (inAppEnabled && focused && !currentTarget) {
+      const toastId = toastManager.add({
+        type: completion.status === "failed" ? "error" : "success",
+        title,
+        description,
+        data: { hideCopyButton: true },
+        actionProps: {
+          children: "Open",
+          onClick: () => {
+            toastManager.close(toastId);
+            open();
           },
-    );
-  }, [environmentId, view]);
+        },
+      });
+      return;
+    }
+    if (
+      !hasDesktopNotifications(mode) ||
+      focused ||
+      typeof Notification === "undefined" ||
+      Notification.permission !== "granted"
+    )
+      return;
+    try {
+      const notification = new Notification(title, {
+        body: description,
+        tag: JSON.stringify(["hermes", environmentId, completion.jobId, completion.runId]),
+        silent: true,
+      });
+      onNotification(environmentId, notification);
+      notification.addEventListener("click", () => {
+        notification.close();
+        window.focus();
+        open();
+      });
+    } catch {
+      // Some browsers expose Notification but reject desktop presentation.
+    }
+  }, [environmentId, inAppEnabled, location, mode, navigate, onNotification, view.lastCompletion]);
 }

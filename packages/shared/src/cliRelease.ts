@@ -28,6 +28,19 @@ export const CLI_ARCHIVE_PLATFORM_KEYS = [
 ] as const;
 export type CliArchivePlatformKey = (typeof CLI_ARCHIVE_PLATFORM_KEYS)[number];
 
+/**
+ * npm name of each platform package the `t3-hermes` launcher installs. npm's
+ * spam filter permanently rejects new `t3-hermes-win32-*` (and
+ * `t3-hermes-win-*`) names, so Windows ships under names it accepted.
+ */
+export const NPM_PLATFORM_PACKAGE_NAMES: Readonly<Record<CliArchivePlatformKey, string>> = {
+  "darwin-arm64": "t3-hermes-darwin-arm64",
+  "linux-arm64": "t3-hermes-linux-arm64",
+  "linux-x64": "t3-hermes-linux-x64",
+  "win32-arm64": "nateweav-hermes-winbin-arm64",
+  "win32-x64": "nateweav-hermes-winbin-x64",
+};
+
 export function cliArchivePlatformKey(
   platform: NodeJS.Platform,
   arch: string,

@@ -13,13 +13,12 @@
  * - **Subscribed poll (60s).** Runs only while at least one client is watching.
  *
  * Nothing streams continuously. An idle panel costs one read a minute and zero
- * websocket frames, and a closed panel costs nothing at all.
+ * websocket frames; polling stops when the last client subscription closes.
  *
  * Cron completion/failure notifications are therefore connected-client-only:
  * they ride the same subscription that the 60s poll keeps alive. The web
- * sidebar's watcher holds one subscription for as long as a Hermes-bearing
- * environment is connected, which is what makes a failed overnight job visible
- * when you open the app the next morning.
+ * notification coordinator holds one subscription per connected Hermes-bearing
+ * environment. Reconnecting shows history without replaying old announcements.
  *
  * The service is completely inert when the Hermes provider is disabled: no
  * timers, no file reads, no subprocess.
@@ -30,6 +29,8 @@ import {
   HERMES_CRON_CONTRACT_VERSION,
   HermesCronError,
   type HermesCronJob,
+  type HermesCronGetRunOutputInput,
+  type HermesCronRunOutput,
   type HermesCronSetEnabledInput,
   type HermesCronSetMutedInput,
   type HermesCronSnapshot,
@@ -61,6 +62,7 @@ import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEn
 import { spawnAndCollect } from "../provider/providerSnapshot.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
+import { createHermesCronDeliveryReader } from "./hermesCronDeliveries.ts";
 import {
   buildRunLedger,
   diffCompletedRuns,
@@ -98,6 +100,11 @@ export class HermesCronService extends Context.Service<
     readonly list: (input: {
       readonly refresh?: boolean;
     }) => Effect.Effect<HermesCronSnapshot, HermesCronError>;
+
+    /** Full output is never included in a subscription snapshot. */
+    readonly getRunOutput: (
+      input: HermesCronGetRunOutputInput,
+    ) => Effect.Effect<HermesCronRunOutput, HermesCronError>;
 
     /** Pause or resume a job through the `hermes` CLI. */
     readonly setEnabled: (
@@ -168,6 +175,7 @@ function toContractJob(
       finishedAt: run.finishedAt,
       durationMs: run.durationMs,
       error: run.error,
+      ...(run.delivery === undefined ? {} : { delivery: run.delivery }),
     })),
   };
 }
@@ -206,6 +214,8 @@ export const make = Effect.gen(function* () {
 
   const muteStatePath = path.join(config.stateDir, MUTE_STATE_FILENAME);
   const mutedRef = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const deliveryReader = createHermesCronDeliveryReader();
+  let observedHome: string | null = null;
   const snapshotRef = yield* Ref.make<HermesCronSnapshot | null>(null);
   /** `null` until the first successful poll — see `diffCompletedRuns`. */
   const ledgerRef = yield* Ref.make<HermesCronRunLedger | null>(null);
@@ -266,10 +276,16 @@ export const make = Effect.gen(function* () {
     const instance = yield* hermesInstance;
 
     if (instance === null) {
+      observedHome = null;
+      yield* Ref.set(ledgerRef, null);
       return { snapshot: emptySnapshot(readAt, "providerDisabled"), runs: [] } satisfies PollResult;
     }
 
     const paths = resolveHermesCronPaths(instance.env);
+    if (observedHome !== paths.home) {
+      observedHome = paths.home;
+      yield* Ref.set(ledgerRef, null);
+    }
     const exists = yield* fs.exists(paths.jobsFile).pipe(Effect.orElseSucceed(() => false));
     if (!exists) {
       return { snapshot: emptySnapshot(readAt, "noCronStore"), runs: [] } satisfies PollResult;
@@ -299,7 +315,11 @@ export const make = Effect.gen(function* () {
     }
 
     const jobIds = parsed.map((job) => job.id);
-    const runs = yield* Effect.sync(() => readHermesCronRuns(paths.executionsDb, jobIds));
+    const rawRuns = yield* Effect.sync(() => readHermesCronRuns(paths.executionsDb, jobIds));
+    const runs =
+      rawRuns === null
+        ? null
+        : (yield* Effect.sync(() => deliveryReader.read(paths, parsed, rawRuns))).runs;
     const grouped = groupRunsByJob(runs ?? []);
     const muted = yield* Ref.get(mutedRef);
 
@@ -364,6 +384,7 @@ export const make = Effect.gen(function* () {
             status: notification.status,
             finishedAt: notification.finishedAt,
             error: notification.error,
+            ...(notification.delivery === undefined ? {} : { delivery: notification.delivery }),
           },
         });
       }
@@ -381,6 +402,7 @@ export const make = Effect.gen(function* () {
   const retainPoller = SynchronizedRef.updateEffect(subscribersRef, (state) =>
     Effect.gen(function* () {
       if (state.fiber !== null) return { ...state, count: state.count + 1 };
+      yield* pollMutex.withPermits(1)(Ref.set(ledgerRef, null));
       const fiber = yield* poll.pipe(
         Effect.ignore,
         Effect.repeat(Schedule.spaced(SUBSCRIBED_POLL_INTERVAL)),
@@ -410,6 +432,33 @@ export const make = Effect.gen(function* () {
     }
     return instance;
   });
+
+  const getRunOutput = (input: HermesCronGetRunOutputInput) =>
+    pollMutex.withPermits(1)(
+      Effect.gen(function* () {
+        const instance = yield* requireEnabled;
+        const paths = resolveHermesCronPaths(instance.env);
+        // Resolve only a retained run belonging to this job. No client filesystem paths.
+        const runs = yield* Effect.sync(() =>
+          readHermesCronRuns(paths.executionsDb, [input.jobId]),
+        );
+        if (runs === null) {
+          return yield* new HermesCronError({
+            reason: "unreadable",
+            detail: "Run history could not be read.",
+          });
+        }
+        const run = runs.find((entry) => entry.id === input.runId);
+        if (run === undefined) {
+          return yield* new HermesCronError({
+            reason: "unknownJob",
+            detail: "That run is no longer in the recent task history.",
+          });
+        }
+        const result = yield* Effect.sync(() => deliveryReader.read(paths, [], [run], true, runs));
+        return result.outputs.get(run.id) ?? { content: null, truncated: false, source: null };
+      }),
+    );
 
   /**
    * Pause/resume goes through the CLI rather than editing `jobs.json`.
@@ -506,6 +555,7 @@ export const make = Effect.gen(function* () {
 
   return HermesCronService.of({
     list: (input) => (input.refresh === true ? poll : currentSnapshot),
+    getRunOutput,
     setEnabled,
     setMuted,
     subscribe,
@@ -519,6 +569,7 @@ export const layerTest = Layer.succeed(
   HermesCronService,
   HermesCronService.of({
     list: () => Effect.succeed(emptySnapshot("1970-01-01T00:00:00.000Z", "providerDisabled")),
+    getRunOutput: () => Effect.succeed({ content: null, truncated: false, source: null }),
     setEnabled: () =>
       Effect.fail(
         new HermesCronError({ reason: "providerDisabled", detail: "Hermes is not enabled." }),

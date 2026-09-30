@@ -65,6 +65,17 @@ export function useHermesEnvironmentId(): EnvironmentId | null {
   return useAtomValue(hermesEnvironmentIdAtom);
 }
 
+export function useHermesEnvironmentEnabled(environmentId: EnvironmentId): boolean {
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  return (
+    config !== null &&
+    config !== undefined &&
+    deriveProviderInstanceEntries(config.providers).some(
+      (entry) => entry.driverKind === HERMES_DRIVER_KIND && entry.enabled,
+    )
+  );
+}
+
 export interface HermesCronState {
   readonly view: HermesCronView;
   readonly environmentId: EnvironmentId | null;
@@ -74,8 +85,11 @@ export interface HermesCronState {
   readonly emptyState: ReturnType<typeof describeHermesCronEmptyState>;
 }
 
-export function useHermesCron() {
-  const environmentId = useHermesEnvironmentId();
+export function useHermesCron(targetEnvironmentId?: EnvironmentId | null) {
+  const automaticEnvironmentId = useHermesEnvironmentId();
+  // An explicit target must never silently fall back to another host.
+  const environmentId =
+    targetEnvironmentId === undefined ? automaticEnvironmentId : targetEnvironmentId;
   const query = useEnvironmentQuery(
     environmentId === null ? null : serverEnvironment.hermesCron({ environmentId, input: {} }),
   );

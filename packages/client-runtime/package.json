@@ -326,6 +326,10 @@
     "./device/duo-control": {
       "types": "./src/device/duoControl.ts",
       "default": "./src/device/duoControl.ts"
+    },
+    "./state/hermes-memory": {
+      "types": "./src/state/hermesMemory.ts",
+      "default": "./src/state/hermesMemory.ts"
     }
   },
   "scripts": {

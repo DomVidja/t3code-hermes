@@ -507,9 +507,10 @@ export type UserInputResolvedPayload = typeof UserInputResolvedPayload.Type;
  * usage vocabulary (#4779) so the eventual migration is a rename, not a remap.
  * Claude reports per-activation deltas; Codex reports cumulative totals — the
  * merge strategy is provider-specific and lives in client-runtime.
+ * Some providers report duration or tool counts without token accounting.
  */
 export const RuntimeTaskUsage = Schema.Struct({
-  totalTokens: NonNegativeInt,
+  totalTokens: Schema.optional(NonNegativeInt),
   inputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
   outputTokens: Schema.optional(NonNegativeInt),
