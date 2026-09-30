@@ -155,9 +155,16 @@ const make = Effect.gen(function* () {
         changeHermesPatch(checkout.checkoutRoot, patch, direction),
       ).pipe(Effect.mapError(commandFailed));
       if (!result.ok) {
+        // git's output names checkout paths; it goes to the server log, not the client.
+        yield* Effect.logWarning("git refused a Hermes patch change").pipe(
+          Effect.annotateLogs({ patchId: patch.id, direction, output: result.output }),
+        );
         return yield* new HermesPatchError({
           reason: "commandFailed",
-          detail: `git apply refused the patch${result.output ? `: ${result.output.slice(0, 500)}` : "."}`,
+          detail:
+            direction === "forward"
+              ? "git refused to apply the patch. The checkout was left unchanged."
+              : "git refused to remove the patch. The checkout was left unchanged.",
         });
       }
       return yield* readSnapshot(checkout.checkoutRoot);
