@@ -4,8 +4,9 @@ name: Mobile APK
 #
 # Android refuses unsigned APKs and only updates an installed app from an APK
 # signed with the same key, so every build signs with the one release keystore
-# in the ANDROID_KEYSTORE_* / ANDROID_KEY_* secrets. versionCode is minutes since
-# the epoch, so each build installs over the last one.
+# in the ANDROID_KEYSTORE_* / ANDROID_KEY_* secrets. versionCode is seconds since
+# 2026-01-01, so each build installs over the last one and the value stays under
+# Android's 2,100,000,000 ceiling until 2092.
 #
 # Builds arm64-v8a only, which covers current phones and keeps the APK and the
 # native build small.
@@ -107,7 +108,7 @@ jobs:
             version="0.0.0-$(git rev-parse --short HEAD)"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "T3CODE_ANDROID_VERSION_CODE=$(( $(date +%s) / 60 ))" >> "$GITHUB_ENV"
+          echo "T3CODE_ANDROID_VERSION_CODE=$(( $(date +%s) - 1767225600 ))" >> "$GITHUB_ENV"
           echo "Building T3Code-$version.apk"
 
       - name: Prebuild Android project
