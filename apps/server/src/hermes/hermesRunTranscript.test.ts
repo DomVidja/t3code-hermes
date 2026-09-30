@@ -105,6 +105,27 @@ describe("hermesRunCommandsFor", () => {
     expect(activities(batch.commands)[0]).toMatchObject({ payload: { status: "failed" } });
   });
 
+  it("keeps a terminal error's text when there is no output", () => {
+    const pending = new Map<string, HermesToolCall>([
+      ["call-e", { name: "terminal", args: { command: "gh pr create" } }],
+    ]);
+    const batch = hermesRunCommandsFor(
+      ids,
+      [
+        row({
+          id: 8,
+          role: "tool",
+          toolCallId: "call-e",
+          content: JSON.stringify({ error: "gh: command not found" }),
+        }),
+      ],
+      pending,
+    );
+    expect(JSON.stringify(activities(batch.commands)[0]?.payload)).toContain(
+      "gh: command not found",
+    );
+  });
+
   it("ignores pull request URLs a run only read about", () => {
     const pending = new Map<string, HermesToolCall>([
       ["call-3", { name: "web_extract", args: { urls: ["https://github.com/o/r/pull/1"] } }],

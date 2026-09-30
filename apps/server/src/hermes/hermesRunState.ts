@@ -130,7 +130,10 @@ export function parseHermesCronJobSources(raw: unknown): readonly HermesCronJobS
   const rawById = new Map<string, Record<string, unknown>>();
   if (Array.isArray(entries)) {
     for (const entry of entries) {
-      if (isRecord(entry)) rawById.set(text(entry["id"]).trim(), entry);
+      if (!isRecord(entry)) continue;
+      // Same id coercion as parseHermesCronJobs, which accepts numeric ids.
+      const id = entry["id"];
+      rawById.set((typeof id === "number" ? String(id) : text(id)).trim(), entry);
     }
   }
   return jobs.map((job) => {
@@ -280,15 +283,22 @@ function escapeLike(value: string): string {
 
 function sourcePredicate(sourceKey: string): { readonly sql: string; readonly params: string[] } {
   if (sourceKey.startsWith("cron:")) {
+    // The whole id, not a prefix: job "foo" must not match job "foo_bar"'s runs.
+    const prefix = `cron_${sourceKey.slice("cron:".length)}_`;
     return {
-      sql: `s.source = 'cron' AND s.id LIKE ? ESCAPE '\\'`,
-      params: [`cron\\_${escapeLike(sourceKey.slice("cron:".length))}\\_%`],
+      sql: `s.source = 'cron' AND substr(s.id, 1, length(?)) = ?
+        AND substr(s.id, length(?) + 1) GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]'`,
+      params: [prefix, prefix, prefix],
     };
   }
+  // The same three places `sourceKeyOfSession` looks. `json_valid` first:
+  // `json_extract` throws on a torn row and would fail the whole read.
   const route = sourceKey.slice("webhook:".length);
   return {
-    sql: `s.source = 'webhook' AND (json_extract(s.origin_json, '$.chat_name') = ? OR s.user_id = ?)`,
-    params: [`webhook/${route}`, `webhook:${route}`],
+    sql: `s.source = 'webhook' AND (s.user_id = ? OR (json_valid(s.origin_json) AND (
+      json_extract(s.origin_json, '$.chat_name') = ?
+      OR json_extract(s.origin_json, '$.chat_id') LIKE ? ESCAPE '\\')))`,
+    params: [`webhook:${route}`, `webhook/${route}`, `webhook:${escapeLike(route)}:%`],
   };
 }
 
@@ -347,8 +357,12 @@ export function readHermesRunChain(
     );
     const root = byId.get(rootSessionId) as Record<string, unknown> | undefined;
     const chain: HermesSessionRow[] = [];
+    const seen = new Set<string>();
     let current = root ? sessionRowFrom(root) : null;
-    while (current !== null && chain.length < 64) {
+    // No length cap: a truncated chain would read a compression-ended tip as
+    // live forever. `seen` guards against a hand-edited parent cycle.
+    while (current !== null && !seen.has(current.id)) {
+      seen.add(current.id);
       chain.push(current);
       if (current.endReason !== "compression") break;
       const child = childOf.get(current.id) as Record<string, unknown> | undefined;
@@ -358,6 +372,13 @@ export function readHermesRunChain(
   });
 }
 
+/**
+ * How long a session that ended for compression may wait for its continuation
+ * to be recorded. Hermes writes the child straight after, so a longer gap means
+ * the run died mid-handoff.
+ */
+export const HERMES_COMPRESSION_HANDOFF_SECONDS = 10 * 60;
+
 /** Whether a run is over: its newest session ended for good, or went quiet. */
 export function isHermesRunOver(
   chain: readonly HermesSessionRow[],
@@ -366,7 +387,12 @@ export function isHermesRunOver(
 ): boolean {
   const tip = chain.at(-1);
   if (tip === undefined) return true;
-  if (tip.endedAt !== null) return tip.endReason !== "compression";
+  if (tip.endedAt !== null) {
+    return (
+      tip.endReason !== "compression" ||
+      nowSeconds - tip.endedAt > HERMES_COMPRESSION_HANDOFF_SECONDS
+    );
+  }
   const lastSeen = Math.max(tip.startedAt, tip.lastActivityAt ?? 0, lastMessageAt ?? 0);
   return nowSeconds - lastSeen > HERMES_RUN_STALE_AFTER_SECONDS;
 }
@@ -382,14 +408,22 @@ export interface HermesMessageRow {
   readonly timestamp: number;
 }
 
-/** Messages of a run's sessions after `afterId`, oldest first, at most `limit`. */
+export interface HermesMessagePage {
+  readonly rows: readonly HermesMessageRow[];
+  /** Id of the last row read, skipped ones included; the next page starts after it. */
+  readonly lastId: number;
+  /** Whether the page was full, so more rows may follow. */
+  readonly full: boolean;
+}
+
+/** Messages of a run's sessions after `afterId`, oldest first, at most `limit` rows read. */
 export function readHermesRunMessages(
   dbPath: string,
   sessionIds: readonly string[],
   afterId: number,
   limit = 500,
-): readonly HermesMessageRow[] | null {
-  if (sessionIds.length === 0) return [];
+): HermesMessagePage | null {
+  if (sessionIds.length === 0) return { rows: [], lastId: afterId, full: false };
   return withStateDb(dbPath, (db) => {
     // `SELECT *` rather than a column list: optional columns such as
     // `_compressed_summary` come and go between Hermes versions.
@@ -400,7 +434,7 @@ export function readHermesRunMessages(
          ORDER BY id LIMIT ?`,
       )
       .all(...sessionIds, afterId, limit) as unknown as ReadonlyArray<Record<string, unknown>>;
-    return rows.flatMap((row): HermesMessageRow[] => {
+    const messages = rows.flatMap((row): HermesMessageRow[] => {
       const id = seconds(row["id"]);
       const timestamp = seconds(row["timestamp"]);
       if (id === null || timestamp === null) return [];
@@ -419,5 +453,10 @@ export function readHermesRunMessages(
         },
       ];
     });
+    return {
+      rows: messages,
+      lastId: seconds(rows.at(-1)?.["id"]) ?? afterId,
+      full: rows.length === limit,
+    };
   });
 }

@@ -483,6 +483,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     onEditorFocusChange?.(false);
   }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
   const handleSend = useCallback(async () => {
+    // A hardware keyboard submits through the editor, past the disabled button.
+    if (hermesRunBlocked) return;
     if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
     // Typed out in full rather than picked from the menu. Attachments mean the
     // user is sending a prompt, so those go through as usual.
@@ -526,6 +528,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.selectedThread.id,
     props.selectedThread.title,
     voiceInput.blocksSubmission,
+    hermesRunBlocked,
   ]);
 
   // ── Model menu ───────────────────────────────────────────

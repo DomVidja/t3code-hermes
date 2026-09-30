@@ -162,8 +162,12 @@ function hermesToolActivity(input: {
   const structured = result === undefined ? undefined : parseJson(result);
   const status =
     result === undefined ? "in_progress" : toolResultFailed(structured) ? "failed" : "completed";
+  // Only the usual `{output, exit_code}` shape becomes terminal output; a bare
+  // `{error}` falls through to content so its text stays visible.
   const terminalOutput =
-    call.name === "terminal" && isRecord(structured)
+    call.name === "terminal" &&
+    isRecord(structured) &&
+    (typeof structured["output"] === "string" || typeof structured["exit_code"] === "number")
       ? {
           ...(typeof structured["output"] === "string"
             ? { stdout: clip(structured["output"], MAX_TOOL_RESULT_CHARS) }
@@ -361,7 +365,10 @@ export function isSilentReport(text: string | null): boolean {
   return text !== null && text.trim().startsWith(SILENT_MARKER);
 }
 
-const PULL_REQUEST_URL = /https?:\/\/[^\s"'<>()[\]`]+\/pulls?\/\d+/g;
+// GitHub/Forgejo pulls, GitLab merge requests, Bitbucket and Azure pull requests;
+// `parseChangeRequestUrl` decides which of them are real.
+const PULL_REQUEST_URL =
+  /https?:\/\/[^\s"'<>()[\]`]+(?:\/pulls?\/\d+|\/-\/merge_requests\/\d+|\/pull-requests\/\d+|\/pullrequest\/\d+)/g;
 
 /** Pull request URLs a row mentions: in the agent's own words or a `gh pr` result. */
 function pullRequestUrlsIn(row: HermesMessageRow, call: HermesToolCall | undefined): string[] {

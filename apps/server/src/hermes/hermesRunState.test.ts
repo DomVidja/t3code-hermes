@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { HERMES_STATE_DDL, insertHermesMessage, insertHermesSession } from "./hermesRunFixtures.ts";
 import {
+  HERMES_COMPRESSION_HANDOFF_SECONDS,
   HERMES_RUN_STALE_AFTER_SECONDS,
   isHermesRunOver,
   parseHermesCronJobSources,
@@ -70,6 +71,12 @@ platforms:
 });
 
 describe("parseHermesCronJobSources", () => {
+  it("keeps the workdir of a job with a numeric id", () => {
+    expect(
+      parseHermesCronJobSources({ jobs: [{ id: 7, name: "n", workdir: "/w" }] })[0],
+    ).toMatchObject({ id: "7", workdir: "/w" });
+  });
+
   it("keeps the workdir that locates a job's project", () => {
     expect(
       parseHermesCronJobSources({
@@ -213,10 +220,60 @@ describe("run reads", () => {
       const chain = readHermesRunChain(dbPath, "new");
       expect(chain?.map((row) => row.id)).toEqual(["new", "new-continued"]);
       const messages = readHermesRunMessages(dbPath, ["new", "new-continued"], 0);
-      expect(messages?.map((row) => row.content)).toEqual(["go", "done"]);
-      const afterFirst = readHermesRunMessages(dbPath, ["new", "new-continued"], messages![0]!.id);
-      expect(afterFirst?.map((row) => row.content)).toEqual(["done"]);
+      expect(messages?.rows.map((row) => row.content)).toEqual(["go", "done"]);
+      const afterFirst = readHermesRunMessages(
+        dbPath,
+        ["new", "new-continued"],
+        messages!.rows[0]!.id,
+      );
+      expect(afterFirst?.rows.map((row) => row.content)).toEqual(["done"]);
     });
+  });
+
+  it("pages past skipped summary rows instead of stalling on them", () => {
+    withStateDb(seed, (dbPath) => {
+      // A one-row page holding only the summary still moves the cursor on.
+      const first = readHermesRunMessages(dbPath, ["new-continued"], 0, 1);
+      expect(first?.rows).toEqual([]);
+      expect(first?.full).toBe(true);
+      const next = readHermesRunMessages(dbPath, ["new-continued"], first!.lastId, 1);
+      expect(next?.rows.map((row) => row.content)).toEqual(["done"]);
+    });
+  });
+
+  it("keeps a cron job's runs apart from a job whose id extends it", () => {
+    withStateDb(
+      (db) => {
+        insertHermesSession(db, { id: "cron_foo_20260930_010000", source: "cron", startedAt: 10 });
+        insertHermesSession(db, {
+          id: "cron_foo_bar_20260930_020000",
+          source: "cron",
+          startedAt: 20,
+        });
+      },
+      (dbPath) => {
+        expect(readHermesRunRoots(dbPath, "cron:foo", 0)?.map((row) => row.id)).toEqual([
+          "cron_foo_20260930_010000",
+        ]);
+        expect(readHermesRunRoots(dbPath, "cron:foo_bar", 0)?.map((row) => row.id)).toEqual([
+          "cron_foo_bar_20260930_020000",
+        ]);
+      },
+    );
+  });
+
+  it("still finds a route's runs when one session's origin is torn", () => {
+    withStateDb(
+      (db) => {
+        seed(db);
+        db.prepare("UPDATE sessions SET origin_json = '{not json' WHERE id = 'old-busy'").run();
+      },
+      (dbPath) => {
+        expect(
+          readHermesRunRoots(dbPath, "webhook:upstream-sync", 500)?.map((row) => row.id),
+        ).toEqual(["old-busy", "new"]);
+      },
+    );
   });
 
   it("counts recent runs per source, not continuations or chats", () => {
@@ -253,6 +310,16 @@ describe("isHermesRunOver", () => {
     expect(
       isHermesRunOver([{ ...session, endedAt: 1_100, endReason: "webhook_complete" }], 1_110, null),
     ).toBe(true);
+  });
+
+  it("gives up on a compression handoff whose continuation never appeared", () => {
+    const handedOff = { ...session, endedAt: 1_100, endReason: "compression" };
+    expect(isHermesRunOver([handedOff], 1_100 + HERMES_COMPRESSION_HANDOFF_SECONDS, null)).toBe(
+      false,
+    );
+    expect(isHermesRunOver([handedOff], 1_100 + HERMES_COMPRESSION_HANDOFF_SECONDS + 1, null)).toBe(
+      true,
+    );
   });
 
   it("gives up on a run that went quiet without ending", () => {

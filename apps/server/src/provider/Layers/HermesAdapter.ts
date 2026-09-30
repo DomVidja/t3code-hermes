@@ -230,7 +230,11 @@ interface HermesResume {
    * keep talking to that profile.
    */
   readonly hermesHome?: string;
-  /** Context sent ahead of the first prompt of a fresh session, then dropped. */
+  /**
+   * Context owed ahead of the next prompt, sent once and dropped from the
+   * cursor after Hermes accepts it. Kept in the cursor until then, so a
+   * restart or a failed first prompt does not lose it.
+   */
   readonly primer?: string;
 }
 
@@ -248,7 +252,7 @@ function parseHermesResume(raw: unknown): HermesResume | undefined {
   return {
     ...(sessionId ? { sessionId } : {}),
     ...(hermesHome ? { hermesHome } : {}),
-    ...(primer && !sessionId ? { primer } : {}),
+    ...(primer ? { primer } : {}),
   };
 }
 
@@ -945,6 +949,7 @@ export function makeHermesAdapter(
               schemaVersion: HERMES_RESUME_VERSION,
               sessionId: started.sessionId,
               ...(resume?.hermesHome ? { hermesHome: resume.hermesHome } : {}),
+              ...(resume?.primer ? { primer: resume.primer } : {}),
             },
             createdAt: now,
             updatedAt: now,
@@ -1288,7 +1293,6 @@ export function makeHermesAdapter(
                 ...(text ? [{ type: "text" as const, text }] : []),
                 ...attachmentPromptParts,
               ];
-              if (primer) ctx.pendingPrimer = undefined;
 
               if (promptParts.length === 0) {
                 return yield* new ProviderAdapterValidationError({
@@ -1347,6 +1351,7 @@ export function makeHermesAdapter(
                 turnId,
                 steeringTurnId,
                 firstPromptDispatched,
+                primed: primer !== undefined,
               };
             }).pipe(
               Effect.tapCause(() =>
@@ -1443,6 +1448,15 @@ export function makeHermesAdapter(
                   method: "session/prompt",
                   detail: "Hermes session changed before the turn completed.",
                 });
+              }
+              // Hermes accepted the primed prompt, so the primer is spent.
+              if (prepared.primed && ctx.pendingPrimer !== undefined) {
+                ctx.pendingPrimer = undefined;
+                const { primer: _spent, ...cursor } = ctx.session.resumeCursor as Record<
+                  string,
+                  unknown
+                >;
+                ctx.session = { ...ctx.session, resumeCursor: cursor };
               }
               // Keep prompt settlement atomic with respect to Stop and steering.
               // interruptTurn marks its target before waiting for this lock, so

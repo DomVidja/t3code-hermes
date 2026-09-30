@@ -57,6 +57,18 @@ exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
   return wrapperPath;
 }
 
+/** Wraps a mock `hermes` so it records the HERMES_HOME it was spawned with. */
+async function makeHermesHomeRecordingWrapper(baseWrapper: string, homeLogPath: string) {
+  const wrapperPath = NodePath.join(NodePath.dirname(homeLogPath), "fake-hermes-home.sh");
+  const script = `#!/bin/sh
+printf '%s' "$HERMES_HOME" > ${JSON.stringify(homeLogPath)}
+exec ${JSON.stringify(baseWrapper)} "$@"
+`;
+  await NodeFSP.writeFile(wrapperPath, script, "utf8");
+  await NodeFSP.chmod(wrapperPath, 0o755);
+  return wrapperPath;
+}
+
 function waitForFileContent(filePath: string, attempts = 40): Effect.Effect<string> {
   const readAttempt = (remainingAttempts: number): Effect.Effect<string> =>
     Effect.gen(function* () {
@@ -809,16 +821,9 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
       const baseWrapper = yield* Effect.promise(() =>
         makeMockHermesWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
       );
-      // Records which Hermes home the spawned `hermes acp` was given.
-      const wrapperPath = NodePath.join(logDir, "fake-hermes-home.sh");
-      yield* Effect.promise(async () => {
-        await NodeFSP.writeFile(
-          wrapperPath,
-          `#!/bin/sh\nprintf '%s' "$HERMES_HOME" > ${JSON.stringify(homeLogPath)}\nexec ${JSON.stringify(baseWrapper)} "$@"\n`,
-          "utf8",
-        );
-        await NodeFSP.chmod(wrapperPath, 0o755);
-      });
+      const wrapperPath = yield* Effect.promise(() =>
+        makeHermesHomeRecordingWrapper(baseWrapper, homeLogPath),
+      );
       const adapter = yield* makeTestAdapter(wrapperPath);
       const turnsCompleted = yield* Queue.unbounded<void>();
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
@@ -836,15 +841,26 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
           primer: "<hermes_background_run>context</hermes_background_run>",
         },
       });
+      // The primer stays in the persisted cursor until Hermes has accepted it.
       assert.deepStrictEqual(session.resumeCursor, {
         schemaVersion: 1,
         sessionId: "mock-session-1",
         hermesHome: "/srv/hermes/profiles/upstream-sync",
+        primer: "<hermes_background_run>context</hermes_background_run>",
       });
       assert.equal(yield* waitForFileContent(homeLogPath), "/srv/hermes/profiles/upstream-sync");
 
-      yield* adapter.sendTurn({ threadId, input: "keep the fork's composer", attachments: [] });
+      const firstTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "keep the fork's composer",
+        attachments: [],
+      });
       yield* Queue.take(turnsCompleted);
+      assert.deepStrictEqual(firstTurn.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "mock-session-1",
+        hermesHome: "/srv/hermes/profiles/upstream-sync",
+      });
       yield* adapter.sendTurn({ threadId, input: "and push", attachments: [] });
       yield* Queue.take(turnsCompleted);
 

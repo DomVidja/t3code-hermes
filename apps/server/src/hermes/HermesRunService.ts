@@ -129,7 +129,9 @@ interface TrackedRun {
   readonly ids: HermesRunIds;
   readonly profile: HermesProfileHome;
   readonly instanceId: ProviderInstanceId;
-  readonly source: EnabledSource;
+  readonly sourceKey: string;
+  /** Fixed when the run is first followed: moving its source later leaves it here. */
+  readonly projectId: ProjectId;
   readonly sourceLabel: string;
   readonly rootSessionId: string;
   created: boolean;
@@ -347,6 +349,13 @@ const make = Effect.gen(function* () {
 
   const setSource: HermesRunService["Service"]["setSource"] = (input) =>
     Effect.gen(function* () {
+      // Saving a choice Hermes cannot act on would switch it on silently later.
+      if ((yield* hermesContext) === null) {
+        return yield* new HermesRunError({
+          reason: "providerDisabled",
+          detail: "Hermes is not enabled in this environment.",
+        });
+      }
       if (input.projectId !== null) {
         const project = yield* snapshots
           .getProjectShellById(input.projectId)
@@ -428,7 +437,7 @@ const make = Effect.gen(function* () {
 
   const hermesRunState = (run: TrackedRun, live: boolean): ThreadHermesRun => ({
     profile: run.profile.profile,
-    sourceKey: run.source.sourceKey,
+    sourceKey: run.sourceKey,
     sourceLabel: run.sourceLabel,
     sessionId: run.rootSessionId,
     latestSessionId: run.latestSessionId,
@@ -542,20 +551,20 @@ const make = Effect.gen(function* () {
       run.latestSessionId = chain.at(-1)!.id;
       const project = Option.getOrUndefined(
         yield* snapshots
-          .getProjectShellById(run.source.projectId)
+          .getProjectShellById(run.projectId)
           .pipe(Effect.orElseSucceed(() => Option.none())),
       );
       if (project === undefined) return true;
 
       const sessionIds = chain.map((session) => session.id);
       const rows: HermesMessageRow[] = [];
+      let cursor = run.cursor;
       for (;;) {
-        const batch = yield* Effect.sync(() =>
-          readHermesRunMessages(dbPath, sessionIds, rows.at(-1)?.id ?? run.cursor),
-        );
-        if (batch === null) return false;
-        rows.push(...batch);
-        if (batch.length < 500) break;
+        const page = yield* Effect.sync(() => readHermesRunMessages(dbPath, sessionIds, cursor));
+        if (page === null) return false;
+        rows.push(...page.rows);
+        cursor = page.lastId;
+        if (!page.full) break;
       }
       const lastMessageAt = rows.at(-1)?.timestamp ?? run.lastMessageAt;
       const over = isHermesRunOver(chain, nowSeconds, lastMessageAt);
@@ -573,7 +582,7 @@ const make = Effect.gen(function* () {
 
       const batch = hermesRunCommandsFor(run.ids, rows, run.toolCalls);
       for (const command of batch.commands) yield* dispatch(command);
-      if (rows.length > 0) run.cursor = rows.at(-1)!.id;
+      run.cursor = cursor;
       run.lastMessageAt = lastMessageAt;
       if (batch.lastAssistantText !== null) run.finalReport = batch.lastAssistantText;
       yield* linkPullRequests(run, batch.pullRequestUrls, project);
@@ -671,7 +680,8 @@ const make = Effect.gen(function* () {
             ids: { threadId, turnId: TurnId.make(prefix), prefix },
             profile,
             instanceId: context.instanceId,
-            source,
+            sourceKey: source.sourceKey,
+            projectId: Option.isSome(existing) ? existing.value.projectId : source.projectId,
             sourceLabel: yield* labelFor(source),
             rootSessionId: root.id,
             created: Option.isSome(existing),
@@ -686,10 +696,60 @@ const make = Effect.gen(function* () {
       }
     });
 
+  /**
+   * Picks live runs back up after a restart from the threads themselves, so a
+   * run whose source was switched off or moved meanwhile still finishes in its
+   * own thread and never leaves replies locked.
+   */
+  let resumedLiveRuns = false;
+  const resumeLiveRuns = (context: {
+    readonly instanceId: ProviderInstanceId;
+    readonly profiles: ReadonlyArray<HermesProfileHome>;
+  }) =>
+    Effect.gen(function* () {
+      const snapshot = yield* snapshots.getShellSnapshot({ unsettledOnly: true });
+      for (const thread of snapshot.threads) {
+        const hermesRun = thread.hermesRun;
+        if (hermesRun?.live !== true) continue;
+        const prefix = `hermes-run:${hermesRun.profile}:${hermesRun.sessionId}`;
+        if (runs.has(prefix)) continue;
+        const profile = context.profiles.find((entry) => entry.profile === hermesRun.profile);
+        const run: TrackedRun = {
+          ids: { threadId: thread.id, turnId: TurnId.make(prefix), prefix },
+          profile: profile ?? { profile: hermesRun.profile, home: "" },
+          instanceId: context.instanceId,
+          sourceKey: hermesRun.sourceKey,
+          projectId: thread.projectId,
+          sourceLabel: hermesRun.sourceLabel,
+          rootSessionId: hermesRun.sessionId,
+          created: true,
+          cursor: 0,
+          lastMessageAt: null,
+          latestSessionId: hermesRun.latestSessionId,
+          finalReport: null,
+          toolCalls: new Map(),
+          pullRequestUrls: new Set(),
+        };
+        if (profile === undefined) {
+          // The profile is gone, so the run can never be read again: close it
+          // rather than leave its source's replies locked.
+          const at = DateTime.formatIso(yield* DateTime.now);
+          yield* dispatch(
+            sessionCommand(run, "error", "error", at, "Its Hermes profile no longer exists."),
+          ).pipe(Effect.ignore);
+          yield* setHermesRun(run, false, "ended", at).pipe(Effect.ignore);
+          continue;
+        }
+        runs.set(prefix, run);
+      }
+      resumedLiveRuns = true;
+    });
+
   /** One pass. Returns whether any followed run is still live. */
   const tick = Effect.gen(function* () {
     const context = yield* hermesContext;
     if (context === null) return false;
+    if (!resumedLiveRuns) yield* resumeLiveRuns(context);
     if ((yield* Ref.get(enabledRef)).length > 0) yield* discover(context);
     const nowSeconds = (yield* Clock.currentTimeMillis) / 1000;
     for (const [prefix, run] of runs) {

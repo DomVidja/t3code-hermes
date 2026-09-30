@@ -12,7 +12,10 @@ import {
   ProviderInstanceId,
   type OrchestrationCommand,
   type OrchestrationProjectShell,
+  type OrchestrationThreadShell,
+  ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -83,7 +86,13 @@ function makeHermesHome() {
   return { root, home, withDb };
 }
 
-function makeLayer(root: string) {
+function makeLayer(
+  root: string,
+  options: {
+    readonly hermesEnabled?: boolean;
+    readonly liveThreads?: ReadonlyArray<OrchestrationThreadShell>;
+  } = {},
+) {
   const dispatched: OrchestrationCommand[] = [];
   const bindings: Array<{ readonly resumeCursor: unknown }> = [];
   const dependencies = Layer.mergeAll(
@@ -99,6 +108,13 @@ function makeLayer(root: string) {
       getProjectShellById: (projectId) =>
         Effect.succeed(projectId === PROJECT_ID ? Option.some(project) : Option.none()),
       getThreadShellById: () => Effect.succeed(Option.none()),
+      getShellSnapshot: () =>
+        Effect.succeed({
+          snapshotSequence: 0,
+          projects: [project],
+          threads: options.liveThreads ?? [],
+          updatedAt: "2026-09-30T00:00:00.000Z",
+        }),
     }),
     Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
       upsert: (binding) =>
@@ -110,7 +126,7 @@ function makeLayer(root: string) {
       providerInstances: {
         [ProviderInstanceId.make("hermes")]: {
           driver: ProviderDriverKind.make("hermes"),
-          enabled: true,
+          enabled: options.hermesEnabled ?? true,
           environment: [{ name: "HERMES_HOME", value: root, sensitive: false }],
         },
       },
@@ -127,7 +143,7 @@ function makeLayer(root: string) {
   };
 }
 
-const nowSeconds = () => Date.now() / 1000;
+const nowSeconds = Effect.map(Clock.currentTimeMillis, (millis) => millis / 1000);
 
 describe("HermesRunService", () => {
   it.live("discovers a profile's webhook route and suggests the repository it names", () => {
@@ -164,7 +180,7 @@ describe("HermesRunService", () => {
       });
       expect(switchedOn.sources[0]?.projectId).toBe(PROJECT_ID);
 
-      const startedAt = nowSeconds() + 1;
+      const startedAt = (yield* nowSeconds) + 1;
       hermes.withDb((db) => {
         insertHermesSession(db, {
           id: "run-1",
@@ -259,7 +275,7 @@ describe("HermesRunService", () => {
         sourceKey: "webhook:upstream-sync",
         projectId: PROJECT_ID,
       });
-      const startedAt = nowSeconds() + 1;
+      const startedAt = (yield* nowSeconds) + 1;
       hermes.withDb((db) => {
         insertHermesSession(db, {
           id: "run-quiet",
@@ -285,6 +301,70 @@ describe("HermesRunService", () => {
       });
       yield* service.sync;
       expect(dispatched).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("finishes a run that was live across a restart, in its own project", () => {
+    const hermes = makeHermesHome();
+    const liveThread = {
+      id: ThreadId.make("hermes-run:upstream-sync:run-restart"),
+      projectId: PROJECT_ID,
+      hermesRun: {
+        profile: "upstream-sync",
+        sourceKey: "webhook:upstream-sync",
+        sourceLabel: "webhook/upstream-sync",
+        sessionId: "run-restart",
+        latestSessionId: "run-restart",
+        live: true,
+      },
+    } as unknown as OrchestrationThreadShell;
+    // The source is no longer switched on: the run must still finish.
+    const { layer, dispatched } = makeLayer(hermes.root, { liveThreads: [liveThread] });
+    return Effect.gen(function* () {
+      const startedAt = (yield* nowSeconds) - 60;
+      hermes.withDb((db) => {
+        insertHermesSession(db, {
+          id: "run-restart",
+          source: "webhook",
+          route: "upstream-sync",
+          startedAt,
+          endedAt: startedAt + 30,
+          endReason: "webhook_complete",
+          toolCallCount: 1,
+        });
+        insertHermesMessage(db, {
+          sessionId: "run-restart",
+          role: "assistant",
+          content: "Needs your call on the composer.",
+          timestamp: startedAt + 20,
+        });
+      });
+      const service = yield* HermesRunService.HermesRunService;
+      yield* service.sync;
+      expect(dispatched.map((command) => command.type)).toEqual([
+        "thread.message.assistant.delta",
+        "thread.message.assistant.complete",
+        "thread.session.set",
+        "thread.session.set",
+        "thread.hermes-run.set",
+      ]);
+      expect(dispatched.at(-1)).toMatchObject({ hermesRun: { live: false } });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("refuses to switch a source on while Hermes is off", () => {
+    const hermes = makeHermesHome();
+    const { layer } = makeLayer(hermes.root, { hermesEnabled: false });
+    return Effect.gen(function* () {
+      const service = yield* HermesRunService.HermesRunService;
+      const error = yield* Effect.flip(
+        service.setSource({
+          profile: "upstream-sync",
+          sourceKey: "webhook:upstream-sync",
+          projectId: PROJECT_ID,
+        }),
+      );
+      expect(error.reason).toBe("providerDisabled");
     }).pipe(Effect.provide(layer));
   });
 });

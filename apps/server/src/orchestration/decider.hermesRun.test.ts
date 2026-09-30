@@ -112,9 +112,7 @@ it.layer(NodeServices.layer)("Hermes run threads", (it) => {
         command: reply("run-1"),
         readModel: readModel(threads),
       });
-      expect(Array.isArray(events) ? events.map((event) => event.type) : [events.type]).toContain(
-        "thread.turn-start-requested",
-      );
+      expect([events].flat().map((event) => event.type)).toContain("thread.turn-start-requested");
     }),
   );
 });
