@@ -28,6 +28,8 @@ type Child = {
   role?: string;
   model?: string;
   settled: boolean;
+  /** Cancelled with its turn before Hermes acknowledged a background dispatch. */
+  awaitingDispatch?: boolean;
   fingerprint?: string;
   providerId?: string;
 };
@@ -241,7 +243,11 @@ export class HermesDelegations {
       if (dispatched) {
         call.background = true;
         for (const child of children.values()) {
-          if (child.settled) continue;
+          // Detached children outlive their parent's cancellation, so the
+          // acknowledgement reopens any the cancelled turn settled.
+          if (child.settled && !child.awaitingDispatch) continue;
+          child.settled = false;
+          child.awaitingDispatch = false;
           events.push({
             type: "task.progress",
             payload: {
@@ -280,9 +286,12 @@ export class HermesDelegations {
           };
           children.set(index, child);
         }
+        // A live child already reported its own subagent.complete.
+        if (child.settled) continue;
         events.push(...this.complete(tool.toolCallId, child, result));
       }
       for (const child of children.values()) {
+        child.awaitingDispatch = false;
         if (child.settled) continue;
         events.push(
           ...this.complete(tool.toolCallId, child, {
@@ -326,7 +335,7 @@ export class HermesDelegations {
         }
       }
     }
-    if (call.background && [...children.values()].every((child) => child.settled))
+    if ([...children.values()].every((child) => child.settled && !child.awaitingDispatch))
       this.forget(tool.toolCallId);
     return events.map((event) => ({ ...event, ...(call.turnId ? { turnId: call.turnId } : {}) }));
   }
@@ -346,15 +355,22 @@ export class HermesDelegations {
             [...call.children.values()].some((child) => !child.settled)))
       )
         continue;
+      // Cancelling a turn can race Hermes's dispatch acknowledgement; keep the
+      // call so a late acknowledgement can reopen its still-running children.
+      const awaitDispatch = status === "cancelled" && options !== undefined && !call.background;
       for (const child of call.children.values()) {
-        if (!child.settled)
-          events.push({
-            type: "task.updated",
-            ...(call.turnId ? { turnId: call.turnId } : {}),
-            payload: { ...this.linkage(id, child), status, ...(error ? { error } : {}) },
-          });
+        if (child.settled) continue;
+        events.push({
+          type: "task.updated",
+          ...(call.turnId ? { turnId: call.turnId } : {}),
+          payload: { ...this.linkage(id, child), status, ...(error ? { error } : {}) },
+        });
+        if (awaitDispatch) {
+          child.settled = true;
+          child.awaitingDispatch = true;
+        }
       }
-      this.forget(id);
+      if (!awaitDispatch) this.forget(id);
     }
     return events;
   }

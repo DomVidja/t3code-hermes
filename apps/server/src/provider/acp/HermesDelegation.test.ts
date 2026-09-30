@@ -346,6 +346,49 @@ describe("Hermes delegate_task ACP boundary", () => {
     ).toEqual([]);
   });
 
+  it("completes a live foreground child once and releases the finished call", () => {
+    const state = new HermesDelegations();
+    const start = tool({ ...batch.start, rawInput: batch.args });
+    state.update(start, turnId);
+    state.update(
+      progress(start, { event: "subagent.complete", task_index: 0, status: "completed" }),
+      turnId,
+    );
+    const events = state.update(
+      tool({ ...batch.complete, rawOutput: batch.result }, start),
+      turnId,
+    )!;
+    expect(
+      events
+        .filter((event) => event.type === "task.completed")
+        .map((event) => event.payload.taskId),
+    ).toEqual(["tc-fixture-batch:task:1"]);
+    expect(state["calls"].size).toBe(0);
+  });
+
+  it("reopens children a cancelled turn settled when Hermes then acknowledges dispatch", () => {
+    const state = new HermesDelegations();
+    const start = tool({ ...dispatched.start, rawInput: dispatched.args });
+    state.update(start, turnId);
+    expect(
+      state.finish("cancelled", undefined, { turnId, preserveBackground: true }),
+    ).toMatchObject([{ type: "task.updated", payload: { status: "cancelled" } }]);
+    // Progress racing the acknowledgement must not retire the call.
+    state.update(progress(start, { event: "subagent.text", task_index: 0, text: "Hi" }), turnId);
+    const events = state.update(
+      tool({ ...dispatched.complete, rawOutput: dispatched.result }, start),
+      TurnId.make("next-turn"),
+    )!;
+    expect(events).toMatchObject([
+      { type: "task.progress", turnId, payload: { status: "running" } },
+    ]);
+    expect(
+      state
+        .update(progress(start, { event: "subagent.complete", task_index: 0, status: "completed" }))
+        ?.find((event) => event.type === "task.completed")?.payload.status,
+    ).toBe("completed");
+  });
+
   it("settles missing/truncated stock child results without inventing success", () => {
     const state = new HermesDelegations();
     const start = tool(batch.start);
