@@ -24,6 +24,7 @@ import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadc
 import { HermesMemoryTab } from "./HermesMemoryTab";
 import { HermesPatchesTab } from "./HermesPatchesTab";
 import { HermesTasksTab } from "./HermesTasksTab";
+import { EMPTY_HERMES_SEARCH, type HermesSearch } from "./hermesNavigation";
 
 type HermesTab = "tasks" | "memory" | "patches";
 
@@ -33,10 +34,18 @@ const TABS: ReadonlyArray<{ readonly value: HermesTab; readonly label: string }>
   { value: "patches", label: "Patches" },
 ];
 
-export function HermesPanel() {
+export function HermesPanel({ target = EMPTY_HERMES_SEARCH }: { readonly target?: HermesSearch }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState<HermesTab>("tasks");
-  const environmentId = useHermesEnvironmentId();
+  const automaticEnvironmentId = useHermesEnvironmentId();
+  const environmentId = target.environmentId ?? automaticEnvironmentId;
+
+  const targetKey = JSON.stringify([target.environmentId, target.jobId, target.runId]);
+  const [previousTarget, setPreviousTarget] = useState(targetKey);
+  if (targetKey !== previousTarget) {
+    setPreviousTarget(targetKey);
+    if (target.jobId) setTab("tasks");
+  }
 
   // Opening the panel is what clears the sidebar's unread dot.
   useEffect(() => {
@@ -82,7 +91,7 @@ export function HermesPanel() {
         <ScrollArea className="min-h-0 flex-1">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-5">
             {tab === "tasks" ? (
-              <HermesTasksTab onNewTask={handleNewTask} />
+              <HermesTasksTab onNewTask={handleNewTask} target={target} />
             ) : tab === "memory" ? (
               <HermesMemoryTab />
             ) : (

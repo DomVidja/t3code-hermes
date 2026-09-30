@@ -116,3 +116,51 @@ export function makeHermesExecutionRow(
     ...overrides,
   };
 }
+
+/** Hermes 0.21.0, cron/delivery_queue.py::_transaction (including tombstones). */
+export const HERMES_DELIVERIES_DDL = `
+  CREATE TABLE deliveries (
+    execution_id TEXT PRIMARY KEY,
+    job_json TEXT NOT NULL,
+    content TEXT NOT NULL,
+    for_failure INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK(status IN ('pending','delivering','delivered','failed','unknown')),
+    owner_process_id TEXT,
+    owner_pid INTEGER,
+    owner_started_at INTEGER,
+    created_at TEXT NOT NULL,
+    finished_at TEXT,
+    error TEXT
+  );
+  CREATE TABLE delivery_tombstones (
+    execution_id TEXT PRIMARY KEY,
+    terminal_status TEXT NOT NULL CHECK(terminal_status IN ('delivered','failed','unknown')),
+    finished_at TEXT
+  );
+`;
+
+/** Relevant columns/indexes from Hermes 0.21.0 hermes_state_common.py::_SCHEMA. */
+export const HERMES_CRON_SESSIONS_DDL = `
+  CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    model_config TEXT,
+    parent_session_id TEXT REFERENCES sessions(id),
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    end_reason TEXT
+  );
+  CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    role TEXT NOT NULL,
+    content TEXT,
+    tool_call_id TEXT,
+    tool_calls TEXT,
+    timestamp REAL NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX idx_sessions_source_id ON sessions(source, id);
+  CREATE INDEX idx_sessions_parent ON sessions(parent_session_id);
+  CREATE INDEX idx_messages_session ON messages(session_id, timestamp);
+`;

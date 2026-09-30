@@ -18,6 +18,8 @@ const state = vi.hoisted(() => ({
   sessionError: false,
   turnError: false,
   backgroundLiveness: null as "working" | null,
+  hermesRun: null as { profile: string; sourceKey: string; sessionId: string } | null,
+  turnId: "turn-1",
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -39,12 +41,13 @@ vi.mock("@effect/atom-react", () => ({
           id: "thread-1",
           title: "Fix the login form",
           archivedAt: state.archivedAt,
+          hermesRun: state.hermesRun,
           hasPendingUserInput: state.input,
           hasPendingApprovals: state.approval,
           backgroundLiveness: state.backgroundLiveness,
           session: state.sessionError ? { status: "error" } : null,
           latestTurn: {
-            turnId: "turn-1",
+            turnId: state.turnId,
             state: state.turnError ? "error" : state.completedAt ? "completed" : "running",
             completedAt: state.completedAt,
           },
@@ -71,6 +74,8 @@ vi.mock("../state/environments", () => ({
 vi.mock("../state/shell", () => ({
   environmentShell: { stateValueAtom: vi.fn() },
 }));
+// Hermes task alerts share this coordinator; they are covered by the badge suite.
+vi.mock("../state/hermesCron", () => ({ useHermesEnvironmentEnabled: () => false }));
 vi.mock("../threadNotifications", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../threadNotifications")>()),
   playNotificationSound: state.sound,
@@ -112,6 +117,8 @@ beforeEach(() => {
     sessionError: false,
     turnError: false,
     backgroundLiveness: null,
+    hermesRun: null,
+    turnId: "turn-1",
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
@@ -171,6 +178,22 @@ describe("thread notifications", () => {
     });
     expect(state.notification).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["a default-profile cron run", "default", "cron:digest", "hermes-run:default:cron_1", 0],
+    ["a reply after a cron run", "default", "cron:digest", "turn-reply", 1],
+    ["a webhook run", "default", "webhook:pr", "hermes-run:default:cron_1", 1],
+    ["another profile's cron run", "work", "cron:digest", "hermes-run:work:cron_1", 1],
+  ] as const)(
+    "leaves %s's alert to Hermes Tasks only when Tasks announces it",
+    async (_case, profile, sourceKey, turnId, alerts) => {
+      state.hermesRun = { profile, sourceKey, sessionId: "cron_1" };
+      state.turnId = turnId;
+      await render();
+      await complete();
+      expect(state.add).toHaveBeenCalledTimes(alerts);
+    },
+  );
 
   it.each(["active", "blurred", "hidden", "archived", "disabled"])(
     "does not show a completion toast for %s threads",
