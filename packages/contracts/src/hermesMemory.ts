@@ -49,7 +49,9 @@ export class HermesMemoryError extends Schema.TaggedError<HermesMemoryError>()(
       "capacity",
       "writeFailed",
     ]),
+    /** Stable, user-safe description. The underlying failure travels in `cause`. */
     detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message() {

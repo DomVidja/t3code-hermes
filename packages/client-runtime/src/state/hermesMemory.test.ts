@@ -25,6 +25,11 @@ describe("Hermes memory draft usage", () => {
     expect(hermesMemoryDraftUsage(file, "B", "\u0085A\r\nB\u0085")).toBe(7);
     expect(hermesMemoryDraftUsage(file, "B", "\ufeffB")).toBe(6);
   });
+  it("previews a replacement onto an existing entry as the collapsed result", () => {
+    expect(hermesMemoryDraftUsage(file, "B", "🙂")).toBe(1);
+    expect(hermesMemoryDraftUsage(file, "🙂", "B")).toBe(1);
+    expect(hermesMemoryDraftUsage(file, "B", "B")).toBe(5);
+  });
   it("does not mutate live entries while previewing an edit", () => {
     expect(hermesMemoryDraftUsage(file, "B", "New")).toBe(7);
     expect(file.entries).toEqual(["🙂", "B"]);

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - fs.watch directory watches have no Effect platform equivalent.
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 import * as NodePath from "node:path";
@@ -9,21 +9,19 @@ import {
   type HermesMemoryMutateInput,
   type HermesMemorySnapshot,
 } from "@t3tools/contracts";
-import {
-  Context,
-  Deferred,
-  Effect,
-  Exit,
-  Layer,
-  PubSub,
-  Queue,
-  Ref,
-  Schema,
-  Scope,
-  Semaphore,
-  Stream,
-  SynchronizedRef,
-} from "effect";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -103,8 +101,9 @@ function watchDirectories(home: string, directory: string, notify: () => void): 
 }
 
 /** One watcher set per environment, only while at least one client is subscribed.
- * No timers, no subprocess on reads, and no frames for unchanged snapshots. */
-const make = Effect.gen(function* () {
+ * No timers, no subprocess on reads, and no frames for unchanged snapshots.
+ * @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   const settings = yield* ServerSettings.ServerSettingsService;
   const changes = yield* Effect.acquireRelease(
@@ -129,10 +128,11 @@ const make = Effect.gen(function* () {
           };
     }),
     Effect.mapError(
-      () =>
+      (cause) =>
         new HermesMemoryError({
           reason: "unreadable",
           detail: "Environment settings could not be read.",
+          cause,
         }),
     ),
   );
@@ -233,7 +233,11 @@ const make = Effect.gen(function* () {
       catch: (error) =>
         isHermesMemoryError(error)
           ? error
-          : new HermesMemoryError({ reason: "unreadable", detail: unreadable.detail! }),
+          : new HermesMemoryError({
+              reason: "unreadable",
+              detail: unreadable.detail!,
+              cause: error,
+            }),
     }).pipe(Effect.onError(() => refresh));
     return (yield* refresh).snapshot;
   });

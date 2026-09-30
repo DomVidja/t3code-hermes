@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - Bounded descriptor reads and the Python writer child need direct Node APIs.
 import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -214,7 +214,10 @@ export function applyHermesMemoryMutation(
         reason: "conflict",
         detail: "That entry no longer exists. Review the latest entries and try again.",
       });
-    entries.splice(index, 1, ...(content === null ? [] : [content]));
+    // Replacing with another existing entry collapses to it, as Hermes's reader would.
+    const duplicate =
+      content !== null && entries.some((entry, i) => i !== index && entry === content);
+    entries.splice(index, 1, ...(content === null || duplicate ? [] : [content]));
   }
   if (input.action !== "remove" && memoryChars(entries) > file.charLimit) {
     throw new HermesMemoryError({
@@ -288,6 +291,12 @@ with open(str(p) + '.lock', 'a+', encoding='utf-8') as lock:
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, p)
+        if os.name != 'nt':
+            directory = os.open(str(p.parent), os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -365,6 +374,7 @@ export async function mutateHermesMemory(
         reason: "writeFailed",
         detail:
           "Could not save Hermes memory. A Python 3 interpreter and write access to the memory directory are required.",
+        cause: error,
       });
     }
     if (result === "ok") return;

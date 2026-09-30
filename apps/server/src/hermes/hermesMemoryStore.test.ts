@@ -189,6 +189,20 @@ describe("Hermes 0.21.0 memory format", () => {
 });
 
 describe("locked atomic memory writes", () => {
+  it("collapses a replacement onto an existing entry and checks the cap against the result", async () => {
+    // Counting the duplicate would be 7 + 3 + 7 = 17 > 16; the canonical result is 7.
+    const file = await seed("xy\n§\nabcdefg", "memory:\n  memory_char_limit: 16\n");
+    expect(
+      applyHermesMemoryMutation(file, {
+        target: "memory",
+        revision: file.revision,
+        action: "replace",
+        oldText: "xy",
+        content: "abcdefg",
+      }),
+    ).toEqual(["abcdefg"]);
+  });
+
   it("adds, replaces, removes, and creates a missing target without affecting the other file", async () => {
     let file = await seed();
     const oldHandle = await NodeFSP.open(resolveHermesMemoryPaths(environment).memory, "r");

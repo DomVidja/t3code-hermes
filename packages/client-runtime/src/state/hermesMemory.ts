@@ -36,7 +36,10 @@ export function hermesMemoryDraftUsage(
       entries.push(normalizeHermesMemoryEntry(content));
   } else {
     const index = entries.indexOf(oldText);
-    if (index !== -1) entries[index] = normalizeHermesMemoryEntry(content);
+    const next = normalizeHermesMemoryEntry(content);
+    // Replacing with another existing entry collapses to it, matching the server.
+    const duplicate = entries.some((entry, i) => i !== index && entry === next);
+    if (index !== -1) entries.splice(index, 1, ...(duplicate ? [] : [next]));
   }
   return hermesMemoryChars(entries);
 }
