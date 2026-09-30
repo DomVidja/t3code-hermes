@@ -10,6 +10,7 @@ import {
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
+import { annotateAgentActivity } from "@t3tools/client-runtime/work-log/agent-activity";
 import {
   questionAttachmentDraftId,
   questionAttachmentDraftPrefix,
@@ -362,6 +363,7 @@ import {
   useProjects,
   useThread,
   useThreadRefs,
+  useHermesRunReplyBlocked,
   useThreadShell,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
@@ -2898,7 +2900,16 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(threadActivities),
     [threadActivities],
   );
-  const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const showSkillActivityRows = useClientSettings((s) => s.showSkillActivityRows);
+  const showMemoryActivityRows = useClientSettings((s) => s.showMemoryActivityRows);
+  const workLogEntries = useMemo(
+    () =>
+      annotateAgentActivity(deriveWorkLogEntries(threadActivities), {
+        skills: showSkillActivityRows,
+        memory: showMemoryActivityRows,
+      }),
+    [showMemoryActivityRows, showSkillActivityRows, threadActivities],
+  );
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
   // until orchestration-v2 lands (source precedence lives in the derive).
@@ -3572,6 +3583,9 @@ export default function ChatView(props: ChatViewProps) {
   // script keeps the snapshot running while the agent already works, and a
   // follow-up must not be held behind a slow install. Before the first
   // snapshot arrives the starting session stands in for it.
+  const hermesRunBlocksSend = useHermesRunReplyBlocked(
+    routeKind === "server" ? routeThreadRef : null,
+  );
   const worktreeSetupBlocksSend =
     worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
@@ -10020,8 +10034,11 @@ export default function ChatView(props: ChatViewProps) {
                                     ? "Messages loading"
                                     : worktreeSetupBlocksSend
                                       ? "Preparing worktree"
-                                      : projectCloneSendBlockReason
+                                      : hermesRunBlocksSend
+                                        ? "Hermes is still running this task"
+                                        : projectCloneSendBlockReason
                             }
+                            interruptible={routeServerThreadShell?.hermesRun?.live !== true}
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}
                             // With attachments or contexts aboard the pick just inserts the

@@ -31,6 +31,7 @@ import {
   HERMES_CRON_RUNS_PER_JOB,
   HermesSettings,
   ProviderDriverKind,
+  ProviderInstanceId,
   resolveProviderInstanceEnabled,
   type HermesCronDelivery,
   type HermesCronJobState,
@@ -55,6 +56,18 @@ export interface HermesCronPaths {
   readonly stateDb: string;
 }
 
+/** `HERMES_HOME` with a leading `~` expanded, as a shell would, otherwise `~/.hermes`. */
+export function resolveHermesHome(
+  environment: NodeJS.ProcessEnv = process.env,
+  homedir: string = NodeOS.homedir(),
+): string {
+  const configured = environment["HERMES_HOME"]?.trim();
+  if (!configured) return NodePath.join(homedir, ".hermes");
+  if (configured === "~") return homedir;
+  if (configured.startsWith("~/")) return NodePath.join(homedir, configured.slice(2));
+  return configured;
+}
+
 /**
  * Resolves the Hermes home the same way the usage reader does — `HERMES_HOME`
  * when set, otherwise `~/.hermes`.
@@ -63,7 +76,7 @@ export function resolveHermesCronPaths(
   environment: NodeJS.ProcessEnv = process.env,
   homedir: string = NodeOS.homedir(),
 ): HermesCronPaths {
-  const home = environment["HERMES_HOME"]?.trim() || NodePath.join(homedir, ".hermes");
+  const home = resolveHermesHome(environment, homedir);
   const cronDir = NodePath.join(home, "cron");
   return {
     home,
@@ -80,6 +93,7 @@ const decodeHermesSettings = Schema.decodeUnknownOption(HermesSettings);
 
 /** The Hermes instance this environment runs: its config plus its own env overrides. */
 export interface EnabledHermesInstance {
+  readonly instanceId: ProviderInstanceId;
   readonly settings: HermesSettings;
   readonly environment: ProviderInstanceConfig["environment"];
 }
@@ -100,23 +114,27 @@ export function resolveEnabledHermesInstance(
   settings: ServerSettings,
 ): EnabledHermesInstance | null {
   const defaultId = defaultInstanceIdForDriver(HERMES_DRIVER_KIND);
-  const candidates: ProviderInstanceConfig[] = [
-    settings.providerInstances[defaultId] ?? {
-      driver: HERMES_DRIVER_KIND,
-      config: settings.providers.hermes,
-    },
+  const candidates: Array<readonly [ProviderInstanceId, ProviderInstanceConfig]> = [
+    [
+      defaultId,
+      settings.providerInstances[defaultId] ?? {
+        driver: HERMES_DRIVER_KIND,
+        config: settings.providers.hermes,
+      },
+    ],
   ];
   for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
-    if (instanceId !== defaultId) candidates.push(instance);
+    if (instanceId !== defaultId) candidates.push([ProviderInstanceId.make(instanceId), instance]);
   }
   const enabled = candidates.find(
-    (instance) =>
+    ([, instance]) =>
       instance.driver === HERMES_DRIVER_KIND && resolveProviderInstanceEnabled(instance),
   );
   if (enabled === undefined) return null;
-  const decoded = decodeHermesSettings(enabled.config ?? {});
+  const [instanceId, instance] = enabled;
+  const decoded = decodeHermesSettings(instance.config ?? {});
   if (Option.isNone(decoded)) return null;
-  return { settings: decoded.value, environment: enabled.environment };
+  return { instanceId, settings: decoded.value, environment: instance.environment };
 }
 
 /** A job as it appears on disk, after normalisation but before contract encoding. */

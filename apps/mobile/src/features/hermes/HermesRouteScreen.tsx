@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import {
   describeHermesJobStatus,
@@ -7,6 +8,12 @@ import {
   HERMES_NEW_TASK_TEMPLATE,
   type HermesCronStatusTone,
 } from "@t3tools/client-runtime/state/hermes-cron";
+import {
+  describeHermesPatchesUnavailable,
+  HERMES_DETACHED_HEAD_WARNING,
+  HERMES_PATCH_STATE_HINTS,
+  HERMES_PATCH_STATE_LABELS,
+} from "@t3tools/client-runtime/state/hermes-patches";
 import {
   describeHindsightEmptyList,
   describeHindsightRetainResult,
@@ -22,6 +29,8 @@ import type {
   HermesCronJob,
   HermesCronJobId,
   HermesCronRun,
+  HermesPatch,
+  HermesPatchState,
   HindsightBankId,
   HindsightBankStats,
   HindsightMemory,
@@ -37,6 +46,7 @@ import {
   IconPlus,
   IconRefresh,
   IconSearch,
+  IconSettings,
   IconSparkles,
   IconX,
 } from "@tabler/icons-react-native";
@@ -46,17 +56,26 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
+import { ScreenScrollView } from "../../components/ScreenScrollView";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useServerConfigs } from "../../state/entities";
+import { serverEnvironment } from "../../state/server";
 import { useHermesCron } from "../../state/hermesCron";
+import { useHermesPatches } from "../../state/hermesPatches";
 import { useHindsightMemory } from "../../state/hindsight";
 import { HermesRunDelivery } from "./HermesRunDelivery";
 
 const HERMES_DRIVER = "hermes";
-type HermesTab = "tasks" | "memory";
+type HermesTab = "tasks" | "memory" | "patches";
+
+const TAB_LABELS: Record<HermesTab, string> = {
+  tasks: "Tasks",
+  memory: "Memory",
+  patches: "Patches",
+};
 
 interface HermesEnvironmentOption {
   readonly environmentId: EnvironmentId;
@@ -105,7 +124,7 @@ export function HermesRouteScreen() {
       {environmentId === null ? (
         <CenteredState
           title="Hermes is not available"
-          description="Connect an environment with a Hermes provider instance to use Tasks and Memory."
+          description="Connect an environment with a Hermes provider instance to use Tasks, Memory, and Patches."
         />
       ) : (
         <View className="flex-1">
@@ -119,8 +138,10 @@ export function HermesRouteScreen() {
           <View className="flex-1" key={`${environmentId}:${tab}`}>
             {tab === "tasks" ? (
               <HermesTasksScreen environmentId={environmentId} />
-            ) : (
+            ) : tab === "memory" ? (
               <HermesMemoryScreen environmentId={environmentId} />
+            ) : (
+              <HermesPatchesScreen environmentId={environmentId} />
             )}
           </View>
         </View>
@@ -144,7 +165,9 @@ function HermesHeader(props: {
         </View>
         <View className="min-w-0 flex-1">
           <Text className="text-lg font-t3-semibold text-foreground">Hermes</Text>
-          <Text className="text-sm text-foreground-muted">Scheduled work and Hindsight memory</Text>
+          <Text className="text-sm text-foreground-muted">
+            Scheduled work, Hindsight memory, and patches
+          </Text>
         </View>
       </View>
 
@@ -162,7 +185,7 @@ function HermesHeader(props: {
       ) : null}
 
       <View className="flex-row rounded-full bg-subtle p-1">
-        {(["tasks", "memory"] as const).map((item) => {
+        {(["tasks", "memory", "patches"] as const).map((item) => {
           const selected = props.tab === item;
           return (
             <Pressable
@@ -183,7 +206,7 @@ function HermesHeader(props: {
                     : "text-sm text-foreground-muted"
                 }
               >
-                {item === "tasks" ? "Tasks" : "Memory"}
+                {TAB_LABELS[item]}
               </Text>
             </Pressable>
           );
@@ -434,13 +457,114 @@ function StatusChip(props: { readonly tone: HermesCronStatusTone; readonly label
   );
 }
 
+const PATCH_STATE_TONE: Record<HermesPatchState, HermesCronStatusTone> = {
+  applied: "ok",
+  notApplied: "idle",
+  doesNotApply: "paused",
+};
+
+function HermesPatchesScreen({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const insets = useSafeAreaInsets();
+  const iconColor = useUniwindTheme()["--color-icon"];
+  const patches = useHermesPatches(environmentId);
+  const snapshot = patches.snapshot;
+
+  const change = async (patch: HermesPatch, direction: "apply" | "remove") => {
+    const failure = await patches.change(patch.id, direction);
+    if (failure !== null) {
+      Alert.alert(direction === "apply" ? "Patch not applied" : "Patch not removed", failure);
+    }
+  };
+
+  if (patches.isPending) {
+    return <CenteredState title="Loading patches" description="Reading the Hermes checkout…" />;
+  }
+  if (snapshot === null) {
+    return (
+      <CenteredState
+        title="Patches are unavailable"
+        description={patches.error ?? "The environment did not answer."}
+        actionLabel="Try again"
+        onAction={patches.refresh}
+      />
+    );
+  }
+  const unavailable = describeHermesPatchesUnavailable(snapshot);
+  if (unavailable !== null) {
+    return <CenteredState title={unavailable.title} description={unavailable.description} />;
+  }
+
+  return (
+    <ScreenScrollView
+      className="flex-1"
+      contentInsetAdjustmentBehavior="automatic"
+      contentContainerClassName="gap-3 px-4 pt-3"
+      contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+      showsVerticalScrollIndicator={false}
+    >
+      {snapshot.detachedHead ? <NoticeText text={HERMES_DETACHED_HEAD_WARNING} /> : null}
+      {snapshot.patches.length === 0 ? (
+        <NoticeText text="This T3 Code release carries no Hermes patches." />
+      ) : (
+        snapshot.patches.map((patch) => {
+          const busy = patches.changingPatchId === patch.id;
+          const disabled = patches.changingPatchId !== null;
+          return (
+            <View key={patch.id} className="gap-2 rounded-[20px] border border-border bg-card p-4">
+              <View className="flex-row items-center gap-2">
+                <Text className="min-w-0 flex-1 text-base font-t3-semibold text-foreground">
+                  {patch.title}
+                </Text>
+                <StatusChip
+                  tone={PATCH_STATE_TONE[patch.state]}
+                  label={HERMES_PATCH_STATE_LABELS[patch.state]}
+                />
+              </View>
+              <Text className="text-sm text-foreground-muted">Needed for {patch.neededFor}</Text>
+              <Text className="text-xs text-foreground-muted">
+                {HERMES_PATCH_STATE_HINTS[patch.state]}
+              </Text>
+              {patch.state === "notApplied" ? (
+                <ActionButton
+                  label={busy ? "Applying…" : "Apply"}
+                  disabled={disabled}
+                  onPress={() => void change(patch, "apply")}
+                />
+              ) : patch.state === "applied" ? (
+                <ActionButton
+                  label={busy ? "Removing…" : "Remove"}
+                  disabled={disabled}
+                  onPress={() => void change(patch, "remove")}
+                />
+              ) : null}
+            </View>
+          );
+        })
+      )}
+      <Text className="px-1 text-xs text-foreground-muted" selectable>
+        Hermes checkout: {snapshot.checkoutPath}
+      </Text>
+      <ActionButton
+        label="Check again"
+        icon={<IconRefresh size={18} color={String(iconColor)} />}
+        onPress={patches.refresh}
+      />
+    </ScreenScrollView>
+  );
+}
+
 function HermesMemoryScreen({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
+  const iconColor = useUniwindTheme()["--color-icon"];
   const memory = useHindsightMemory(environmentId);
+  const enabled =
+    useAtomValue(serverEnvironment.settingsValueAtom(environmentId))?.integrations.hindsight
+      .enabled ?? true;
   const [draft, setDraft] = useState("");
   const [retainOpen, setRetainOpen] = useState(false);
   const [retainText, setRetainText] = useState("");
-  const unavailable = describeHindsightUnavailable(memory.status);
+  const unavailable = describeHindsightUnavailable(memory.status, { enabled });
 
   const submitRecall = useCallback(() => memory.submitQuery(draft), [draft, memory]);
   const clearRecall = useCallback(() => {
@@ -473,7 +597,20 @@ function HermesMemoryScreen({ environmentId }: { readonly environmentId: Environ
         description={unavailable.description}
         actionLabel={unavailable.retryable ? "Try again" : undefined}
         onAction={unavailable.retryable ? memory.retry : undefined}
-      />
+      >
+        {memory.status?.availability === "notConfigured" ? (
+          <ActionButton
+            label="Memory settings"
+            icon={<IconSettings size={18} color={String(iconColor)} />}
+            onPress={() =>
+              navigation.navigate("SettingsSheet", {
+                screen: "SettingsContent",
+                params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
+              })
+            }
+          />
+        ) : null}
+      </CenteredState>
     );
   }
   if (memory.error !== null) {
@@ -876,8 +1013,10 @@ function NoticeText({ text }: { readonly text: string }) {
 function CenteredState(props: {
   readonly title: string;
   readonly description: string;
-  readonly actionLabel?: string;
-  readonly onAction?: () => void;
+  readonly actionLabel?: string | undefined;
+  readonly onAction?: (() => void) | undefined;
+  /** Extra actions, shown before the retry. */
+  readonly children?: React.ReactNode;
 }) {
   const iconColor = useUniwindTheme()["--color-icon"];
   return (
@@ -886,6 +1025,7 @@ function CenteredState(props: {
       <Text className="text-center text-sm leading-5 text-foreground-muted">
         {props.description}
       </Text>
+      {props.children}
       {props.actionLabel && props.onAction ? (
         <ActionButton
           label={props.actionLabel}

@@ -10,6 +10,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { resolveHermesGitCheckout } from "../../hermes/hermesPatches.ts";
 import { makeHermesTextGeneration } from "../../textGeneration/HermesTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeHermesAdapter } from "../Layers/HermesAdapter.ts";
@@ -62,13 +63,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       if (!context) {
         return manual;
       }
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const checkoutRoot = path.dirname(path.dirname(path.dirname(context.realCommandPath)));
-      const isGitCheckout = yield* fileSystem
-        .exists(path.join(checkoutRoot, ".git"))
-        .pipe(Effect.orElseSucceed(() => false));
-      if (!isGitCheckout) {
+      if ((yield* resolveHermesGitCheckout(context.realCommandPath)) === null) {
         return manual;
       }
       return makeProviderMaintenanceCapabilities({

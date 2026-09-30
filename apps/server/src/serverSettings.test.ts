@@ -30,7 +30,6 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
-const decodeServerSettingsSync = Schema.decodeUnknownSync(ServerSettings);
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -1292,28 +1291,50 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
-  it("strips the Hindsight API key before settings reach a client", () => {
-    const settings = decodeServerSettingsSync({
-      integrations: {
-        hindsight: {
-          enabled: true,
-          baseUrl: "http://127.0.0.1:8888",
-          apiKey: "hs-secret",
-          defaultBank: "hermes",
+  it.effect("keeps the Hindsight API key in the secret store and redacts it for clients", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const saved = yield* serverSettings.updateSettings({
+        integrations: {
+          hindsight: {
+            baseUrl: "http://127.0.0.1:8888",
+            apiKey: "hs-secret",
+            defaultBank: "hermes",
+          },
         },
-      },
-    });
+      });
+      assert.equal(saved.integrations.hindsight.apiKey, "hs-secret");
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), "hs-secret");
 
-    assert.equal(settings.integrations.hindsight.apiKey, "hs-secret");
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(saved);
+      const redactedKey = forClient.integrations.hindsight.apiKey ?? "";
+      assert.notInclude(redactedKey, "hs-secret");
+      assert.isAbove(redactedKey.length, 0);
+      assert.equal(forClient.integrations.hindsight.baseUrl, "http://127.0.0.1:8888");
+      assert.equal(forClient.integrations.hindsight.defaultBank, "hermes");
 
-    const redacted = ServerSettingsModule.redactServerSettingsForClient(settings);
-    // Dropped outright, not blanked: no client has any use for it.
-    assert.equal("apiKey" in redacted.integrations.hindsight, false);
-    // Everything a client does need survives.
-    assert.equal(redacted.integrations.hindsight.baseUrl, "http://127.0.0.1:8888");
-    assert.equal(redacted.integrations.hindsight.defaultBank, "hermes");
-    assert.equal(redacted.integrations.hindsight.enabled, true);
-  });
+      // Echoing the marker back, or leaving the key out, keeps the saved key.
+      yield* serverSettings.updateSettings({
+        integrations: { hindsight: { apiKey: redactedKey, defaultBank: "other" } },
+      });
+      assert.equal((yield* serverSettings.getSettings).integrations.hindsight.apiKey, "hs-secret");
+
+      const cleared = yield* serverSettings.updateSettings({
+        integrations: { hindsight: { apiKey: "" } },
+      });
+      assert.equal(cleared.integrations.hindsight.apiKey, undefined);
+      assert.isTrue(Option.isNone(yield* secrets.get("hindsight-api-key")));
+      assert.equal(
+        "apiKey" in
+          ServerSettingsModule.redactServerSettingsForClient(cleared).integrations.hindsight,
+        false,
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecrets())),
+  );
 
   it.effect(
     "keeps Bitbucket tokens in the secret store and tells clients only that one is set",

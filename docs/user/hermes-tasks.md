@@ -44,6 +44,30 @@ chat and finish describing the schedule.
 
 Editing and deleting tasks also happens in chat, or through the `hermes` command line.
 
+## Follow runs as threads
+
+Hermes's background work (scheduled jobs and webhook routes, in any Hermes profile) can show up as
+threads, so a run reads like work you started in T3 Code. Open **Settings → Integrations → Hermes
+runs** to see every job and route Hermes has, and switch on the ones you want. Each switched-on
+source sends its runs to the project picked next to it; T3 Code preselects a project when the job's
+working directory or the route's config names one.
+
+- A run appears as soon as it uses a tool, and updates live while Hermes works. Runs that finish
+  with nothing to report (a final `[SILENT]`) never appear.
+- A pull request the run opens is linked to the thread, and the thread settles when that pull
+  request merges, like any other thread.
+- When a run stops without finishing its job, for example to leave a decision to you, the thread
+  stays in your active list with its final report as the last message.
+- You can reply once the run has finished. Replies wait while any run of the same job or route is
+  still going, so you never race Hermes on the same work. Your first reply starts a new Hermes
+  conversation in the run's profile that is told what the run did and how to look up the rest.
+
+Switching a source on also brings in its most recent run, so you can check the setup right away.
+Switching it off stops new runs from appearing; threads that already exist stay.
+
+The settings live on the environment, so they apply to every device connected to it. Choosing
+sources is available on web and desktop; run threads work on mobile like any other thread.
+
 ## When the panel is empty
 
 The panel distinguishes between the reasons it has nothing to show. If Hermes is not enabled on the

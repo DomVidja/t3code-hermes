@@ -237,6 +237,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["animation motion outline sidebar indicator"],
   },
   {
+    id: "skill-activity-rows",
+    title: "Skill activity",
+    to: "/settings/appearance",
+    searchTerms: ["behind the scenes work log skills loaded hermes tool rows"],
+  },
+  {
+    id: "memory-activity-rows",
+    title: "Memory activity",
+    to: "/settings/appearance",
+    searchTerms: ["behind the scenes work log memory hindsight recall retain sessions hermes"],
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",
@@ -581,6 +593,33 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/integrations",
     scope: "project-defaults",
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
+  },
+  {
+    id: "memory",
+    title: "Hindsight memory",
+    to: "/settings/integrations",
+    searchTerms: ["hindsight hermes agent memory recall remember bank"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "hermes-runs",
+    title: "Hermes runs",
+    to: "/settings/integrations",
+    searchTerms: [
+      "hermes background runs tasks webhook cron scheduled jobs threads upstream sync automation",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "memory-server",
+    title: "Hindsight server",
+    to: "/settings/integrations",
+    targetId: "memory",
+    searchTerms: ["hindsight url api key bank connection hermes memory"],
+    environmentOnly: true,
+    scope: "environment-defaults",
   },
   {
     id: "device-hosts",

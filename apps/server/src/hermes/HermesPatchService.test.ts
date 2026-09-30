@@ -1,0 +1,80 @@
+// @effect-diagnostics nodeBuiltinImport:off - builds fixture git repos synchronously.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, it } from "@effect/vitest";
+import { HermesPatchId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+
+import * as ServerSettings from "../serverSettings.ts";
+import { HERMES_PATCHES } from "./hermesPatches.ts";
+import { HermesPatchService, make } from "./HermesPatchService.ts";
+
+const git = (cwd: string, ...args: string[]) =>
+  NodeChildProcess.execFileSync("git", args, { cwd, encoding: "utf8" });
+
+const withService = (hermes: { readonly enabled: boolean; readonly binaryPath?: string }) =>
+  Effect.provide(
+    Layer.effect(HermesPatchService, make).pipe(
+      Layer.provide(ServerSettings.layerTest({ providers: { hermes } })),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  );
+
+/** A git checkout laid out like a source install, with a stand-in binary. */
+const makeHermesCheckout = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "hermes-install-" });
+  git(root, "init", "--quiet");
+  NodeFS.writeFileSync(NodePath.join(root, "README.md"), "hermes\n");
+  NodeFS.writeFileSync(NodePath.join(root, ".gitignore"), "venv/\n");
+  git(root, "add", ".");
+  git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "base");
+  const binaryPath = NodePath.join(root, "venv", "bin", "hermes");
+  NodeFS.mkdirSync(NodePath.dirname(binaryPath), { recursive: true });
+  NodeFS.writeFileSync(binaryPath, "#!/bin/sh\n", { mode: 0o755 });
+  return { root, binaryPath };
+});
+
+describe("HermesPatchService", () => {
+  it.effect("says Hermes is disabled rather than failing", () =>
+    Effect.gen(function* () {
+      const service = yield* HermesPatchService;
+      const snapshot = yield* service.list;
+      assert.strictEqual(snapshot.availability, "providerDisabled");
+      assert.deepStrictEqual(snapshot.patches, []);
+      const error = yield* Effect.flip(service.apply({ patchId: HERMES_PATCHES[0]!.id }));
+      assert.strictEqual(error.reason, "unavailable");
+    }).pipe(withService({ enabled: false })),
+  );
+
+  it.effect("reads the enabled Hermes's checkout and refuses changes that do not fit", () =>
+    Effect.gen(function* () {
+      const { root, binaryPath } = yield* makeHermesCheckout;
+      yield* Effect.gen(function* () {
+        const service = yield* HermesPatchService;
+        const snapshot = yield* service.list;
+        assert.strictEqual(snapshot.availability, "ready");
+        assert.strictEqual(snapshot.checkoutPath, NodeFS.realpathSync(root));
+        assert.isFalse(snapshot.detachedHead);
+        // The shipped patches target Hermes source this fixture does not have.
+        assert.deepStrictEqual(
+          snapshot.patches.map((patch) => patch.state),
+          HERMES_PATCHES.map(() => "doesNotApply"),
+        );
+
+        const unknown = yield* Effect.flip(
+          service.apply({ patchId: HermesPatchId.make("not-shipped") }),
+        );
+        assert.strictEqual(unknown.reason, "unknownPatch");
+        const misfit = yield* Effect.flip(service.apply({ patchId: HERMES_PATCHES[0]!.id }));
+        assert.strictEqual(misfit.reason, "wrongState");
+        assert.strictEqual(git(root, "status", "--porcelain"), "");
+      }).pipe(withService({ enabled: true, binaryPath }));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
