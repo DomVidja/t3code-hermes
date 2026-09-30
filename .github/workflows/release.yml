@@ -1084,6 +1084,21 @@ jobs:
     with:
       tag: ${{ needs.preflight.outputs.tag }}
 
+  mobile_apk:
+    name: Build sideloadable APK
+    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && github.repository != 'pingdotgg/t3code' && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/mobile-apk.yml
+    with:
+      tag: ${{ needs.preflight.outputs.tag }}
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
@@ -1477,6 +1492,7 @@ jobs:
         release,
         publish_aur,
         mobile_ipa,
+        mobile_apk,
         deploy_web,
         finalize,
         announce_discord,

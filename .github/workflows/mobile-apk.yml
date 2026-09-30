@@ -1,0 +1,200 @@
+name: Mobile APK
+
+# Builds a signed, sideloadable Android .apk of the production variant.
+#
+# Android refuses unsigned APKs and only updates an installed app from an APK
+# signed with the same key, so every build signs with the one release keystore
+# in the ANDROID_KEYSTORE_* / ANDROID_KEY_* secrets. versionCode is minutes since
+# the epoch, so each build installs over the last one.
+#
+# Builds arm64-v8a only, which covers current phones and keeps the APK and the
+# native build small.
+#
+# release.yml calls this after publishing each nightly and stable release,
+# because releases it publishes with GITHUB_TOKEN never fire the `release`
+# trigger below. Tagged builds attach the APK to the release, where Obtainium
+# can track it directly.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: true
+      ANDROID_KEYSTORE_PASSWORD:
+        required: true
+      ANDROID_KEY_ALIAS:
+        required: true
+      ANDROID_KEY_PASSWORD:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach to (blank builds the selected ref as a workflow artifact)"
+        required: false
+        type: string
+  release:
+    types: [published, prereleased]
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+
+concurrency:
+  group: mobile-apk-${{ inputs.tag || github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: Build signed APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      APP_VARIANT: production
+      EXPO_NO_GIT_STATUS: "1"
+      NODE_OPTIONS: --max-old-space-size=8192
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.TAG || github.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts \
+            --filter=@t3tools/mobile... \
+            --filter=@t3tools/scripts...
+
+      - id: version
+        name: Resolve app version
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [[ -n "$TAG" ]]; then
+            version="${TAG#v}"
+          else
+            version="$(pnpm exec expo config --type public --json | jq -r '.version // empty')"
+          fi
+          if [[ -z "$version" ]]; then
+            version="0.0.0-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "T3CODE_ANDROID_VERSION_CODE=$(( $(date +%s) / 60 ))" >> "$GITHUB_ENV"
+          echo "Building T3Code-$version.apk"
+
+      - name: Prebuild Android project
+        working-directory: apps/mobile
+        # Managed Expo app: there is no checked-in android/ directory.
+        run: pnpm exec expo prebuild --clean --platform android
+
+      - name: Restore release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" ]]; then
+            echo "ANDROID_KEYSTORE_BASE64 is not set; run the Android signing setup script first." >&2
+            exit 1
+          fi
+          base64 -d <<< "$ANDROID_KEYSTORE_BASE64" > "$RUNNER_TEMP/release.p12"
+
+      - name: Build signed Release APK
+        working-directory: apps/mobile/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        # The injected signing properties override the template's debug
+        # signing without patching the generated build.gradle.
+        run: |
+          set -euo pipefail
+          ./gradlew app:assembleRelease \
+            -PreactNativeArchitectures=arm64-v8a \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/release.p12" \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+
+      - id: package
+        name: Verify signature and package APK
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
+          if [[ ! -f "$apk" ]]; then
+            echo "Gradle did not produce $apk:" >&2
+            find apps/mobile/android/app/build/outputs -name '*.apk' -print >&2 || true
+            exit 1
+          fi
+
+          # Fail rather than ship an APK that cannot update earlier installs.
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
+          expected="$(openssl pkcs12 -in "$RUNNER_TEMP/release.p12" -passin env:ANDROID_KEYSTORE_PASSWORD -nokeys \
+            | openssl x509 -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
+          certs="$("$build_tools/apksigner" verify --print-certs "$apk")"
+          echo "$certs"
+          actual="$(grep -m1 'certificate SHA-256 digest:' <<< "$certs" | awk '{print $NF}' || true)"
+          if [[ -z "$expected" || "$expected" != "$actual" ]]; then
+            echo "APK is not signed with the release keystore (got '${actual:-none}')." >&2
+            exit 1
+          fi
+          echo "Signed with release certificate $actual"
+
+          apk_name="T3Code-$VERSION.apk"
+          apk_path="$RUNNER_TEMP/$apk_name"
+          cp "$apk" "$apk_path"
+          echo "apk_name=$apk_name" >> "$GITHUB_OUTPUT"
+          echo "apk_path=$apk_path" >> "$GITHUB_OUTPUT"
+          ls -lh "$apk_path"
+          {
+            echo "## Signed APK"
+            echo
+            echo "- \`$apk_name\` ($(du -h "$apk_path" | cut -f1)), versionCode \`$T3CODE_ANDROID_VERSION_CODE\`"
+            echo "- Install directly, or track this repo's releases with Obtainium."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK artifact
+        if: env.TAG == ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.apk_name }}
+          path: ${{ steps.package.outputs.apk_path }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach APK to release
+        if: env.TAG != ''
+        run: gh release upload "$TAG" "${{ steps.package.outputs.apk_path }}" --clobber
