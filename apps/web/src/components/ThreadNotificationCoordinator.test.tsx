@@ -69,6 +69,8 @@ vi.mock("../state/environments", () => ({
 vi.mock("../state/shell", () => ({
   environmentShell: { stateValueAtom: vi.fn() },
 }));
+// Hermes task alerts share this coordinator; they are covered by the badge suite.
+vi.mock("../state/hermesCron", () => ({ useHermesEnvironmentEnabled: () => false }));
 vi.mock("../threadNotifications", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../threadNotifications")>()),
   playNotificationSound: state.sound,
