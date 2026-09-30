@@ -532,7 +532,7 @@ function isStructuredToolOutput(text: string): boolean {
   }
 }
 
-function makeToolCallState(
+export function makeToolCallState(
   input: {
     readonly toolCallId: string;
     readonly title?: string | null | undefined;

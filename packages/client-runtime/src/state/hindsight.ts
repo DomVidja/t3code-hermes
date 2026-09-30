@@ -12,6 +12,7 @@
  */
 import {
   HINDSIGHT_TARGET_API_VERSION,
+  type HindsightBanksResult,
   type HindsightBankStats,
   type HindsightPathway,
   type HindsightPathwayFilter,
@@ -113,21 +114,29 @@ export interface HindsightUnavailableState {
 /**
  * Copy for a Hindsight that cannot answer, or `null` when it can.
  *
- * The four cases stay distinct all the way to the UI because each has a
- * different next action: write a settings block, start a process, upgrade one
- * of the two sides, or fix the specific request that just failed.
+ * The cases stay distinct all the way to the UI because each has a different
+ * next action: turn Memory on, point it at a service, start a process, upgrade
+ * one of the two sides, or fix the specific request that just failed.
+ * `enabled` is the environment's `integrations.hindsight.enabled`.
  */
 export function describeHindsightUnavailable(
   status: HindsightStatus | null,
+  options: { readonly enabled: boolean },
 ): HindsightUnavailableState | null {
   switch (status?.availability) {
     case "notConfigured":
-      return {
-        title: "Memory is not set up",
-        description:
-          "Point this environment at a Hindsight service to browse what the agent remembers. Add an integrations.hindsight block to this environment's settings file and restart the server.",
-        retryable: false,
-      };
+      return options.enabled
+        ? {
+            title: "Memory is not set up",
+            description:
+              "Set up Hindsight memory in Hermes and it is picked up here automatically, or enter a Hindsight server in Memory settings.",
+            retryable: true,
+          }
+        : {
+            title: "Memory is turned off",
+            description: "Turn it on in Memory settings to browse what the agent remembers.",
+            retryable: false,
+          };
     case "offline":
       return {
         title: "Hindsight is not answering",
@@ -149,6 +158,60 @@ export function describeHindsightUnavailable(
       };
     default:
       return null;
+  }
+}
+
+export interface HindsightConnectionSummary {
+  /** `ready` reads as healthy, `attention` as something to fix, `idle` as neither. */
+  readonly tone: "ready" | "attention" | "idle";
+  readonly label: string;
+  readonly detail: string | null;
+}
+
+/**
+ * The Memory settings' account of the connection in use: whether it answers,
+ * where it is, and whether that came from Hermes or from these settings.
+ * `result` is null until the first read lands.
+ */
+export function describeHindsightConnection(
+  result: HindsightBanksResult | null,
+  options: { readonly enabled: boolean },
+): HindsightConnectionSummary {
+  if (!options.enabled) {
+    return { tone: "idle", label: "Off", detail: "The Memory tab stays empty until this is on." };
+  }
+  if (result === null) return { tone: "idle", label: "Checking…", detail: null };
+  // An environment older than the `connection` field omits it; only its status is known.
+  const connection = result.connection;
+  if (connection === undefined) {
+    return result.status.availability === "ready"
+      ? { tone: "ready", label: "Connected", detail: null }
+      : { tone: "attention", label: "Needs attention", detail: result.status.detail };
+  }
+  if (connection === null) {
+    return {
+      tone: "attention",
+      label: "Not set up",
+      detail: "Hermes has no Hindsight config on this environment. Enter a server URL below.",
+    };
+  }
+  const where = `${connection.baseUrl} · ${connection.source === "hermes" ? "from Hermes" : "from these settings"}`;
+  switch (result.status.availability) {
+    case "ready":
+      return {
+        tone: "ready",
+        label: "Connected",
+        detail:
+          result.status.apiVersion === null ? where : `${where} · API ${result.status.apiVersion}`,
+      };
+    case "offline":
+      return { tone: "attention", label: "Not answering", detail: where };
+    default:
+      return {
+        tone: "attention",
+        label: "Needs attention",
+        detail: result.status.detail === null ? where : `${where} · ${result.status.detail}`,
+      };
   }
 }
 

@@ -1352,6 +1352,8 @@ export interface ChatComposerProps {
   isSendBusy: boolean;
   isRevertingCheckpoint?: boolean;
   sendDisabledReason: string | null;
+  /** False hides Stop while running: a mirrored Hermes run has no session here to stop. */
+  interruptible?: boolean;
   isPreparingWorktree: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
@@ -1509,6 +1511,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isSendBusy,
     isRevertingCheckpoint = false,
     sendDisabledReason: externalSendDisabledReason,
+    interruptible = true,
     isPreparingWorktree,
     environmentUnavailable,
     activePendingApproval,
@@ -7020,7 +7023,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     reserveContextWindowMeter={reserveContextWindowMeter}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
                     pendingAction={pendingPrimaryAction}
-                    isRunning={phase === "running"}
+                    isRunning={phase === "running" && interruptible}
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }

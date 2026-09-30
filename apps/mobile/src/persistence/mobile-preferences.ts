@@ -35,6 +35,9 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly planModeEnabled?: boolean;
+  /** Device-local counterparts of the web client's skill and memory activity rows. */
+  readonly showSkillActivityRows?: boolean;
+  readonly showMemoryActivityRows?: boolean;
   /** Model favorites belong to this device, like the web client setting. */
   readonly modelFavorites?: ReadonlyArray<{
     readonly provider: ProviderInstanceId;
@@ -100,6 +103,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
+    showSkillActivityRows?: boolean;
+    showMemoryActivityRows?: boolean;
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
@@ -169,6 +174,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
+  }
+  if (typeof parsed.showSkillActivityRows === "boolean") {
+    preferences.showSkillActivityRows = parsed.showSkillActivityRows;
+  }
+  if (typeof parsed.showMemoryActivityRows === "boolean") {
+    preferences.showMemoryActivityRows = parsed.showMemoryActivityRows;
   }
   if (Array.isArray(parsed.modelFavorites)) {
     preferences.modelFavorites = parsed.modelFavorites.filter(

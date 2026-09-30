@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -50,6 +51,18 @@ async function makeMockHermesWrapper(extraEnv?: Record<string, string>) {
   const script = `#!/bin/sh
 ${envExports}
 exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
+`;
+  await NodeFSP.writeFile(wrapperPath, script, "utf8");
+  await NodeFSP.chmod(wrapperPath, 0o755);
+  return wrapperPath;
+}
+
+/** Wraps a mock `hermes` so it records the HERMES_HOME it was spawned with. */
+async function makeHermesHomeRecordingWrapper(baseWrapper: string, homeLogPath: string) {
+  const wrapperPath = NodePath.join(NodePath.dirname(homeLogPath), "fake-hermes-home.sh");
+  const script = `#!/bin/sh
+printf '%s' "$HERMES_HOME" > ${JSON.stringify(homeLogPath)}
+exec ${JSON.stringify(baseWrapper)} "$@"
 `;
   await NodeFSP.writeFile(wrapperPath, script, "utf8");
   await NodeFSP.chmod(wrapperPath, 0o755);
@@ -790,6 +803,74 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
             event.type === "content.delta" && event.payload.delta === "replayed assistant text",
         ),
       );
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("starts a mirrored run's first session in its profile and primes it once", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-run:upstream-sync:s1");
+      const logDir = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hermes-primer-"))),
+        (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
+      );
+      const requestLogPath = NodePath.join(logDir, "requests.jsonl");
+      const homeLogPath = NodePath.join(logDir, "hermes-home.txt");
+      const baseWrapper = yield* Effect.promise(() =>
+        makeMockHermesWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const wrapperPath = yield* Effect.promise(() =>
+        makeHermesHomeRecordingWrapper(baseWrapper, homeLogPath),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const turnsCompleted = yield* Queue.unbounded<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "turn.completed" ? Queue.offer(turnsCompleted, undefined) : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("hermes"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        resumeCursor: {
+          schemaVersion: 1,
+          hermesHome: "/srv/hermes/profiles/upstream-sync",
+          primer: "<hermes_background_run>context</hermes_background_run>",
+        },
+      });
+      // The primer stays in the persisted cursor until Hermes has accepted it.
+      assert.deepStrictEqual(session.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "mock-session-1",
+        hermesHome: "/srv/hermes/profiles/upstream-sync",
+        primer: "<hermes_background_run>context</hermes_background_run>",
+      });
+      assert.equal(yield* waitForFileContent(homeLogPath), "/srv/hermes/profiles/upstream-sync");
+
+      const firstTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "keep the fork's composer",
+        attachments: [],
+      });
+      yield* Queue.take(turnsCompleted);
+      assert.deepStrictEqual(firstTurn.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "mock-session-1",
+        hermesHome: "/srv/hermes/profiles/upstream-sync",
+      });
+      yield* adapter.sendTurn({ threadId, input: "and push", attachments: [] });
+      yield* Queue.take(turnsCompleted);
+
+      const prompts = (yield* Effect.promise(() => readJsonLines(requestLogPath)))
+        .filter((request) => request.method === "session/prompt")
+        .map((request) => (request.params as { prompt: Array<{ text?: string }> }).prompt);
+      assert.equal(prompts.length, 2);
+      assert.equal(prompts[0]![0]?.text, "<hermes_background_run>context</hermes_background_run>");
+      assert.equal(prompts[0]![1]?.text, "keep the fork's composer");
+      assert.equal(prompts[1]![0]?.text, "and push");
 
       yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);

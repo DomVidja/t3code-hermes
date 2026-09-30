@@ -158,6 +158,10 @@ interface HermesSessionContext {
   tokenUsage: HermesTokenUsageState;
   /** The session's opening prompts, to recognise Hermes's derived title. */
   openingPrompts: Array<string>;
+  /** Environment the session's `hermes acp` runs with, including a profile's HERMES_HOME. */
+  readonly environment: NodeJS.ProcessEnv | undefined;
+  /** Context still owed ahead of the next prompt; see {@link HermesResume.primer}. */
+  pendingPrimer: string | undefined;
   stopped: boolean;
 }
 
@@ -217,11 +221,39 @@ const resolveSessionCallbackTurnId = (
   threadId: ThreadId,
 ): TurnId | undefined => sessions.get(threadId)?.activeTurnId;
 
-function parseHermesResume(raw: unknown): { sessionId: string } | undefined {
+interface HermesResume {
+  /** The ACP session to load. Absent for a thread whose first session is still to come. */
+  readonly sessionId?: string;
+  /**
+   * Hermes home (profile directory) the session lives in, when it is not the
+   * instance's own. Threads mirrored from a background run in another profile
+   * keep talking to that profile.
+   */
+  readonly hermesHome?: string;
+  /**
+   * Context owed ahead of the next prompt, sent once and dropped from the
+   * cursor after Hermes accepts it. Kept in the cursor until then, so a
+   * restart or a failed first prompt does not lose it.
+   */
+  readonly primer?: string;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function parseHermesResume(raw: unknown): HermesResume | undefined {
   if (!isRecord(raw)) return undefined;
   if (raw.schemaVersion !== HERMES_RESUME_VERSION) return undefined;
-  if (typeof raw.sessionId !== "string" || !raw.sessionId.trim()) return undefined;
-  return { sessionId: raw.sessionId.trim() };
+  const sessionId = nonEmptyString(raw.sessionId);
+  const hermesHome = nonEmptyString(raw.hermesHome);
+  const primer = nonEmptyString(raw.primer);
+  if (!sessionId && !hermesHome && !primer) return undefined;
+  return {
+    ...(sessionId ? { sessionId } : {}),
+    ...(hermesHome ? { hermesHome } : {}),
+    ...(primer ? { primer } : {}),
+  };
 }
 
 function selectPermissionOptionId(
@@ -727,6 +759,10 @@ export function makeHermesAdapter(
           // the composer's level has to be on disk before the spawn below.
           // That is also why the descriptor bills it as a next-session
           // setting rather than pretending it lands mid-conversation.
+          const resume = parseHermesResume(input.resumeCursor);
+          const sessionEnvironment = resume?.hermesHome
+            ? { ...(options?.environment ?? process.env), HERMES_HOME: resume.hermesHome }
+            : options?.environment;
           let reasoningConfigPermitHeld = false;
           yield* reasoningConfigMutex.take(1);
           reasoningConfigPermitHeld = true;
@@ -736,13 +772,13 @@ export function makeHermesAdapter(
           const startReasoningLevel = yield* applyHermesReasoningSelection({
             model: hermesModelSelection?.model,
             selections: hermesModelSelection?.options,
-            ...(options?.environment ? { environment: options.environment } : {}),
+            ...(sessionEnvironment ? { environment: sessionEnvironment } : {}),
           }).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
           );
 
-          const resumeSessionId = parseHermesResume(input.resumeCursor)?.sessionId;
+          const resumeSessionId = resume?.sessionId;
           const acpNativeLoggers = makeAcpNativeLoggers({
             nativeEventLogger,
             provider: PROVIDER,
@@ -752,7 +788,7 @@ export function makeHermesAdapter(
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeHermesAcpRuntime({
             hermesSettings,
-            ...(options?.environment ? { environment: options.environment } : {}),
+            ...(sessionEnvironment ? { environment: sessionEnvironment } : {}),
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
@@ -912,6 +948,8 @@ export function makeHermesAdapter(
             resumeCursor: {
               schemaVersion: HERMES_RESUME_VERSION,
               sessionId: started.sessionId,
+              ...(resume?.hermesHome ? { hermesHome: resume.hermesHome } : {}),
+              ...(resume?.primer ? { primer: resume.primer } : {}),
             },
             createdAt: now,
             updatedAt: now,
@@ -935,6 +973,8 @@ export function makeHermesAdapter(
             reasoningLevel: startReasoningLevel,
             tokenUsage: {},
             openingPrompts: [],
+            environment: sessionEnvironment,
+            pendingPrimer: resume?.primer,
             stopped: false,
           };
 
@@ -1182,7 +1222,7 @@ export function makeHermesAdapter(
                   const turnReasoningLevel = yield* applyHermesReasoningSelection({
                     model: turnModelSelection?.model,
                     selections: turnModelSelection?.options,
-                    ...(options?.environment ? { environment: options.environment } : {}),
+                    ...(ctx.environment ? { environment: ctx.environment } : {}),
                   }).pipe(
                     Effect.provideService(FileSystem.FileSystem, fileSystem),
                     Effect.provideService(Path.Path, path),
@@ -1246,7 +1286,10 @@ export function makeHermesAdapter(
                     });
                   }),
               );
+              // A steer joins a prompt already in flight, which carried the primer.
+              const primer = steeringTurnId === undefined ? ctx.pendingPrimer : undefined;
               const promptParts: Array<EffectAcpSchema.ContentBlock> = [
+                ...(primer ? [{ type: "text" as const, text: primer }] : []),
                 ...(text ? [{ type: "text" as const, text }] : []),
                 ...attachmentPromptParts,
               ];
@@ -1308,6 +1351,7 @@ export function makeHermesAdapter(
                 turnId,
                 steeringTurnId,
                 firstPromptDispatched,
+                primed: primer !== undefined,
               };
             }).pipe(
               Effect.tapCause(() =>
@@ -1404,6 +1448,15 @@ export function makeHermesAdapter(
                   method: "session/prompt",
                   detail: "Hermes session changed before the turn completed.",
                 });
+              }
+              // Hermes accepted the primed prompt, so the primer is spent.
+              if (prepared.primed && ctx.pendingPrimer !== undefined) {
+                ctx.pendingPrimer = undefined;
+                const { primer: _spent, ...cursor } = ctx.session.resumeCursor as Record<
+                  string,
+                  unknown
+                >;
+                ctx.session = { ...ctx.session, resumeCursor: cursor };
               }
               // Keep prompt settlement atomic with respect to Stop and steering.
               // interruptTurn marks its target before waiting for this lock, so

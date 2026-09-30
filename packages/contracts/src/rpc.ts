@@ -273,6 +273,18 @@ import {
   HermesCronStreamEvent,
 } from "./hermesCron.ts";
 import {
+  HermesRunError,
+  HermesRunSourceSetInput,
+  HermesRunSourcesListInput,
+  HermesRunSourcesResult,
+} from "./hermesRuns.ts";
+import {
+  HermesPatchChangeInput,
+  HermesPatchError,
+  HermesPatchesSnapshot,
+  HermesPatchListInput,
+} from "./hermesPatches.ts";
+import {
   HindsightBanksResult,
   HindsightBrowseInput,
   HindsightError,
@@ -432,6 +444,11 @@ export const WS_METHODS = {
   hermesCronList: "hermes.cronList",
   hermesCronSetEnabled: "hermes.cronSetEnabled",
   hermesCronSetMuted: "hermes.cronSetMuted",
+  hermesRunSourcesList: "hermes.runSourcesList",
+  hermesRunSourceSet: "hermes.runSourceSet",
+  hermesPatchList: "hermes.patchList",
+  hermesPatchApply: "hermes.patchApply",
+  hermesPatchRevert: "hermes.patchRevert",
   hindsightListBanks: "hindsight.listBanks",
   hindsightBrowse: "hindsight.browse",
   hindsightRecall: "hindsight.recall",
@@ -759,6 +776,36 @@ const WsHermesCronSetMutedRpc = Rpc.make(WS_METHODS.hermesCronSetMuted, {
   payload: HermesCronSetMutedInput,
   success: HermesCronSnapshot,
   error: Schema.Union([EnvironmentAuthorizationError, HermesCronError]),
+});
+
+const WsHermesRunSourcesListRpc = Rpc.make(WS_METHODS.hermesRunSourcesList, {
+  payload: HermesRunSourcesListInput,
+  success: HermesRunSourcesResult,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesRunError]),
+});
+
+const WsHermesRunSourceSetRpc = Rpc.make(WS_METHODS.hermesRunSourceSet, {
+  payload: HermesRunSourceSetInput,
+  success: HermesRunSourcesResult,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesRunError]),
+});
+
+const WsHermesPatchListRpc = Rpc.make(WS_METHODS.hermesPatchList, {
+  payload: HermesPatchListInput,
+  success: HermesPatchesSnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesPatchError]),
+});
+
+const WsHermesPatchApplyRpc = Rpc.make(WS_METHODS.hermesPatchApply, {
+  payload: HermesPatchChangeInput,
+  success: HermesPatchesSnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesPatchError]),
+});
+
+const WsHermesPatchRevertRpc = Rpc.make(WS_METHODS.hermesPatchRevert, {
+  payload: HermesPatchChangeInput,
+  success: HermesPatchesSnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesPatchError]),
 });
 
 const WsHindsightListBanksRpc = Rpc.make(WS_METHODS.hindsightListBanks, {
@@ -1591,6 +1638,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsHermesCronListRpc,
   WsHermesCronSetEnabledRpc,
   WsHermesCronSetMutedRpc,
+  WsHermesRunSourcesListRpc,
+  WsHermesRunSourceSetRpc,
+  WsHermesPatchListRpc,
+  WsHermesPatchApplyRpc,
+  WsHermesPatchRevertRpc,
   WsHindsightListBanksRpc,
   WsHindsightBrowseRpc,
   WsHindsightRecallRpc,

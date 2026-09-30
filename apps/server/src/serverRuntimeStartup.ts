@@ -547,6 +547,9 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   );
   const orphanedThreads = threads.filter(
     (thread) =>
+      // A live Hermes run is driven by HermesRunService from Hermes's own
+      // session store, not by a provider session, and resumes on its own.
+      thread.hermesRun?.live !== true &&
       thread.session !== null &&
       (thread.session.status === "starting" ||
         thread.session.status === "running" ||

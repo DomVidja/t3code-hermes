@@ -1125,6 +1125,32 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:hermes-cron-set-muted",
       tag: WS_METHODS.hermesCronSetMuted,
     }),
+    /** Hermes background sources and which of them mirror their runs into threads. */
+    hermesRunSources: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:hermes-run-sources",
+      tag: WS_METHODS.hermesRunSourcesList,
+      staleTimeMs: 10_000,
+    }),
+    hermesRunSourceSet: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-run-source-set",
+      tag: WS_METHODS.hermesRunSourceSet,
+    }),
+    /**
+     * Hermes patches. A query, re-read on demand: the checkout can change
+     * under T3 Code (an update, a terminal), and reading it is cheap.
+     */
+    hermesPatches: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:hermes-patches",
+      tag: WS_METHODS.hermesPatchList,
+    }),
+    hermesPatchApply: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-patch-apply",
+      tag: WS_METHODS.hermesPatchApply,
+    }),
+    hermesPatchRevert: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-patch-revert",
+      tag: WS_METHODS.hermesPatchRevert,
+    }),
     /**
      * Hindsight memory. Queries rather than a subscription: Hindsight has no
      * change feed, and the panel only wants an answer when the user asks a

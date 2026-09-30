@@ -17,7 +17,9 @@
  *
  * @module state/hindsight
  */
+import { useAtomValue } from "@effect/atom-react";
 import type {
+  EnvironmentId,
   HindsightBank,
   HindsightBankId,
   HindsightBankStats,
@@ -30,6 +32,7 @@ import {
   HINDSIGHT_DEFAULT_REFLECT_QUERY,
 } from "@t3tools/client-runtime/state/hindsight";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
@@ -39,6 +42,10 @@ import { serverEnvironment } from "./server";
 import { useAtomCommand } from "./use-atom-command";
 
 export interface HindsightMemoryState {
+  /** The environment the tab reads from, for pointing at its Memory settings. */
+  readonly environmentId: EnvironmentId | null;
+  /** `integrations.hindsight.enabled` on that environment. */
+  readonly enabled: boolean;
   readonly status: HindsightStatus | null;
   readonly banks: ReadonlyArray<HindsightBank>;
   readonly bank: HindsightBankId | null;
@@ -79,6 +86,18 @@ export function useHindsightMemory(): HindsightMemoryState & HindsightMemoryActi
   // Hindsight is configured beside Hermes, so the panel reads both from the
   // same environment rather than defaulting to whichever one opened first.
   const environmentId = useHermesEnvironmentId();
+  const enabled = useAtomValue(
+    useMemo(
+      () =>
+        Atom.make((get) =>
+          environmentId === null
+            ? true
+            : (get(serverEnvironment.settingsValueAtom(environmentId))?.integrations.hindsight
+                .enabled ?? true),
+        ),
+      [environmentId],
+    ),
+  );
 
   const [selectedBank, setSelectedBank] = useState<HindsightBankId | null>(null);
   const selectedBankRef = useRef<HindsightBankId | null>(null);
@@ -227,6 +246,8 @@ export function useHindsightMemory(): HindsightMemoryState & HindsightMemoryActi
 
   return useMemo(
     () => ({
+      environmentId,
+      enabled,
       status,
       banks,
       bank,
@@ -264,6 +285,8 @@ export function useHindsightMemory(): HindsightMemoryState & HindsightMemoryActi
       banksQuery.isPending,
       clearQuery,
       dismissReflection,
+      enabled,
+      environmentId,
       isReflecting,
       isRetaining,
       memories,

@@ -9,23 +9,25 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 
 ## What this fork changes
 
-| Change                                              | Where                                                                                                                                                       |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hermes` provider driver (ACP over stdio)           | `apps/server/src/provider/{Drivers,Layers,Services,acp}/Hermes*.ts`                                                                                         |
-| Hermes text generation (titles, commit messages, …) | `apps/server/src/textGeneration/HermesTextGeneration.ts`                                                                                                    |
-| `HermesSettings` + driver registration              | `packages/contracts/src/{settings,model}.ts`, `provider/builtInDrivers.ts`                                                                                  |
-| Hermes branding in the clients                      | `apps/web/src/components/**`, `apps/mobile/src/components/ProviderIcon.tsx`                                                                                 |
-| Auto-bootstrap default provider is overridable      | `apps/server/src/serverRuntimeStartup.ts`                                                                                                                   |
-| Model picker falls back to a populated provider     | `apps/web/src/components/chat/ModelPickerContent.tsx`                                                                                                       |
-| ACP `available_commands_update` / `usage_update`    | `apps/server/src/provider/acp/{AcpRuntimeModel,AcpSessionRuntime}.ts`                                                                                       |
-| Shared slash-command dedupe (was Claude-private)    | `apps/server/src/provider/slashCommands.ts`                                                                                                                 |
-| Hermes Skills panel (learning history)              | `apps/server/src/hermes/HermesSkillsService.ts`, `packages/contracts/src/hermesSkills.ts`, [guide](./docs/user/hermes-skills.md)                            |
-| Hermes Tasks panel (cron jobs)                      | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                        |
-| Hermes Memory panel (Hindsight)                     | `apps/server/src/integrations/hindsight/`, `packages/contracts/src/hindsight.ts`, `apps/web/src/{state/hindsight.ts,components/hermes/HermesMemoryTab.tsx}` |
-| Reasoning-effort selector (Hermes `config.yaml`)    | `apps/server/src/hermes/hermesReasoning*.ts`, `infra/hermes/`                                                                                               |
-| Central Hermes execution on shell-only SSH targets  | `infra/hermes/0002-acp-central-ssh-execution.patch`                                                                                                         |
-| `triage` files on the fork, not upstream            | `.github/triage/PLAYBOOK.md`, `apps/server/src/cli/triagePrompt.ts`                                                                                         |
-| Telemetry reports to the fork's PostHog project     | `apps/server/src/telemetry/AnalyticsService.ts`                                                                                                             |
+| Change                                              | Where                                                                                                                                                            |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hermes` provider driver (ACP over stdio)           | `apps/server/src/provider/{Drivers,Layers,Services,acp}/Hermes*.ts`                                                                                              |
+| Hermes text generation (titles, commit messages, …) | `apps/server/src/textGeneration/HermesTextGeneration.ts`                                                                                                         |
+| `HermesSettings` + driver registration              | `packages/contracts/src/{settings,model}.ts`, `provider/builtInDrivers.ts`                                                                                       |
+| Hermes branding in the clients                      | `apps/web/src/components/**`, `apps/mobile/src/components/ProviderIcon.tsx`                                                                                      |
+| Auto-bootstrap default provider is overridable      | `apps/server/src/serverRuntimeStartup.ts`                                                                                                                        |
+| Model picker falls back to a populated provider     | `apps/web/src/components/chat/ModelPickerContent.tsx`                                                                                                            |
+| ACP `available_commands_update` / `usage_update`    | `apps/server/src/provider/acp/{AcpRuntimeModel,AcpSessionRuntime}.ts`                                                                                            |
+| Shared slash-command dedupe (was Claude-private)    | `apps/server/src/provider/slashCommands.ts`                                                                                                                      |
+| Hermes Skills panel (learning history)              | `apps/server/src/hermes/HermesSkillsService.ts`, `packages/contracts/src/hermesSkills.ts`, [guide](./docs/user/hermes-skills.md)                                 |
+| Hermes Tasks panel (cron jobs)                      | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                             |
+| Hermes Memory panel (Hindsight)                     | `apps/server/src/integrations/hindsight/`, `packages/contracts/src/hindsight.ts`, `apps/web/src/{state/hindsight.ts,components/hermes/HermesMemoryTab.tsx}`      |
+| Reasoning-effort selector (Hermes `config.yaml`)    | `apps/server/src/hermes/hermesReasoning*.ts`                                                                                                                     |
+| Central Hermes execution on shell-only SSH targets  | `infra/hermes/0002-acp-central-ssh-execution.patch`                                                                                                              |
+| Hermes Patches tab (applies the carried patches)    | `apps/server/src/hermes/{HermesPatchService,hermesPatches}.ts`, `packages/contracts/src/hermesPatches.ts`, `apps/web/src/components/hermes/HermesPatchesTab.tsx` |
+| `triage` files on the fork, not upstream            | `.github/triage/PLAYBOOK.md`, `apps/server/src/cli/triagePrompt.ts`                                                                                              |
+| Telemetry reports to the fork's PostHog project     | `apps/server/src/telemetry/AnalyticsService.ts`                                                                                                                  |
+| Opt-in skill and memory rows in the work log        | `packages/client-runtime/src/work-log/agentActivity.ts`                                                                                                          |
 
 The auto-bootstrap and model-picker rows are not Hermes-specific but matter on Hermes-only hosts.
 The ACP session-update and slash-command-dedupe rows are not Hermes-specific at all — they are
@@ -223,15 +225,12 @@ Project Settings → default model.
   Hermes 0.20.2, so T3 Code reads `cron/jobs.json` and the `cron/executions.db` ledger directly and
   shells out to `hermes cron pause`/`resume` for the one mutation. Fixture-pinned tests fail loudly
   if a Hermes upgrade changes either shape.
-- **Reasoning effort needs a Hermes patch, and applies on the next turn.** ACP has no reasoning
-  channel, so the composer's Reasoning selector writes a per-model entry under
+- **Reasoning effort needs Hermes v0.21.4 or newer, and applies on the next turn.** ACP has no
+  reasoning channel, so the composer's Reasoning selector writes a per-model entry under
   `agent.reasoning_overrides` in your own `~/.hermes/config.yaml` — the same file the `hermes` CLI
-  reads, so a level picked in T3 Code is the level the terminal uses. **Stock Hermes ignores that
-  file on the ACP surface**: `acp_adapter/session.py`'s `_make_agent` never passes
-  `reasoning_config` to `AIAgent`, so ACP is the one Hermes surface that skips the
-  `resolve_reasoning_config` chokepoint and always takes the provider default. Apply
-  [`infra/hermes/0001-acp-honor-reasoning-config.patch`](./infra/hermes) to your Hermes checkout —
-  without it the selector still appears but changes nothing. With it, Hermes reads the level when
+  reads, so a level picked in T3 Code is the level the terminal uses. Hermes before v0.21.4
+  (v2026.9.21) ignored that file on the ACP surface: `_make_agent` never passed `reasoning_config`,
+  so the selector still appears there but changes nothing. From v0.21.4 Hermes reads the level when
   it builds an agent, and because `session/set_model` rebuilds the agent, T3 Code re-sends the
   current model when the level changes so a new level lands on the next turn rather than only on a
   new session. The levels offered per model come from Hermes's own
@@ -251,9 +250,11 @@ other workflows.
 
 The same job drives fork releases: every sync dispatches `release.yml` with `follow_upstream`, and
 the release's first job — running under the nightly concurrency lock, so queued runs cannot double
-publish — continues only when `main` contains the commit of upstream's latest nightly and no fork
-nightly has shipped it yet. `release.yml` has no schedule of its own, so fork nightlies track
-upstream's (a fork nightly may bundle several upstream nightlies if a conflict held the sync back).
+publish — continues only when the upstream commit captured by the sync is merged into `main`
+and absent from the latest published fork nightly. Any new upstream commits trigger a release,
+without waiting for an upstream nightly or a minimum time gap. Unchanged syncs skip; failed releases
+can retry on the next sync. This also covers merges through conflict-resolution PRs. `release.yml`
+has no schedule of its own.
 
 Two kinds of issue come out of it:
 
@@ -309,8 +310,8 @@ upstream-only infrastructure. This fork therefore diverges in `.github/workflows
   reusable workflow declares `AUR_SSH_PRIVATE_KEY` as required.) `ci.yml`, `pr-size.yml`,
   `thread-transfer-report.yml`, `mobile-fingerprint-check.yml`, and
   `mobile-showcase-screenshots.yml` run normally.
-- **Nightly release.** `release.yml` is dispatched by the upstream sync whenever upstream has cut a
-  nightly the fork has not shipped (see "Tracking upstream") and produces the desktop artifacts — macOS dmg/zip, Linux AppImage, Windows nsis — plus the
+- **Nightly release.** `release.yml` is dispatched by the upstream sync whenever it has merged
+  upstream commits the fork has not shipped (see "Tracking upstream") and produces the desktop artifacts — macOS dmg/zip, Linux AppImage, Windows nsis — plus the
   updater manifests, attached to a GitHub prerelease. Everything that needs upstream credentials
   degrades instead of failing: the T3 Connect config resolves to empty values (so builds ship with
   T3 Connect disabled), and the Vercel deploy, the version-bump commit, and the Discord

@@ -194,6 +194,8 @@ import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
 import * as HermesSkillsService from "./hermes/HermesSkillsService.ts";
+import * as HermesRunService from "./hermes/HermesRunService.ts";
+import * as HermesPatchService from "./hermes/HermesPatchService.ts";
 import * as HindsightService from "./integrations/hindsight/HindsightService.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -1090,6 +1092,8 @@ const buildAppUnderTest = (options?: {
       Layer.provide(UsageService.layerTest),
       Layer.provide(HermesCronService.layerTest),
       Layer.provide(HermesSkillsService.layerTest),
+      Layer.provide(HermesRunService.layerTest),
+      Layer.provide(HermesPatchService.layerTest),
       Layer.provide(HindsightService.layerTest),
     );
     const appLayer = appLayerWithServices.pipe(
