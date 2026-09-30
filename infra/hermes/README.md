@@ -5,6 +5,10 @@ itself, for behaviour T3 Code depends on that stock Hermes does not provide. The
 than vendored because Hermes is a separate project on its own release cadence — apply them to your
 own checkout, and drop them once upstream carries the change.
 
+The server embeds these files, and the Hermes panel's Patches tab applies them for you. After
+changing, adding, or removing a patch here, run `node scripts/generate-hermes-patches.ts` and add or
+drop its entry in `apps/server/src/hermes/hermesPatches.ts`; a test fails until both match.
+
 ## `0002-acp-central-ssh-execution.patch`
 
 **Needed by:** a single central T3/Hermes server that executes terminal and file tools on a remote
