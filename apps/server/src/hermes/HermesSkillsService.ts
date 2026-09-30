@@ -88,12 +88,38 @@ export const make = Effect.gen(function* () {
         ? null
         : resolveHermesSkillsPath(mergeProviderInstanceEnvironment(instance.environment));
     }),
-    Effect.orElseSucceed(() => null),
+    Effect.mapError(
+      (cause) =>
+        new HermesSkillsError({
+          reason: "unreadable",
+          detail: "Hermes settings could not be read.",
+          cause,
+        }),
+    ),
+  );
+  // `undefined` marks unreadable settings, which must not look like a disabled instance (`null`).
+  const knownSkillsPath = skillsPath.pipe(
+    Effect.catchTags({
+      HermesSkillsError: (error) =>
+        Effect.logWarning("Hermes skills could not read server settings", error).pipe(
+          Effect.as(undefined),
+        ),
+    }),
   );
 
   const readSnapshot = Effect.gen(function* () {
     const readAt = DateTime.formatIso(yield* DateTime.now);
-    const root = yield* skillsPath;
+    const root = yield* knownSkillsPath;
+    if (root === undefined) {
+      return {
+        root: null,
+        snapshot: {
+          ...emptySnapshot(readAt),
+          availability: "unreadable" as const,
+          detail: "Hermes settings could not be read.",
+        },
+      };
+    }
     if (root === null) return { root, snapshot: emptySnapshot(readAt) };
     const state = yield* Effect.promise(() => readHermesSkills(root));
     return {
@@ -136,10 +162,10 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const settingsChanges = yield* settings.subscribeChanges;
       return Stream.concat(Stream.make(undefined), settingsChanges).pipe(
-        Stream.mapEffect(() => skillsPath),
+        Stream.mapEffect(() => knownSkillsPath),
         Stream.changes,
         Stream.switchMap((root) => {
-          if (root === null) return Stream.fromEffect(refresh);
+          if (root === null || root === undefined) return Stream.fromEffect(refresh);
           const watch = fs
             .watch(root, { recursive: true })
             .pipe(

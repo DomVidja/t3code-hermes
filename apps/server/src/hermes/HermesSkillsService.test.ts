@@ -5,6 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  ServerSettingsError,
   type HermesSkillsStreamEvent,
   type ServerSettings as Settings,
 } from "@t3tools/contracts";
@@ -172,6 +173,38 @@ describe("HermesSkillsService", () => {
       ),
       Effect.scoped,
     ),
+  );
+
+  it.effect("reports unreadable settings distinctly from a disabled instance", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const failing = ServerSettings.ServerSettingsService.of({
+        ...settings,
+        getSettings: Effect.fail(
+          new ServerSettingsError({
+            settingsPath: "settings.json",
+            operation: "read-file",
+            cause: new Error("permission denied"),
+          }),
+        ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* HermesSkillsService;
+        const snapshot = yield* service.list({ refresh: true });
+        expect(snapshot.availability).toBe("unreadable");
+        expect(snapshot.detail).toBe("Hermes settings could not be read.");
+        const failure = yield* service.get({ path: "anything" }).pipe(Effect.flip);
+        expect(failure.reason).toBe("unreadable");
+        expect(failure.cause).toBeInstanceOf(ServerSettingsError);
+      }).pipe(
+        Effect.provide(
+          layer.pipe(
+            Layer.provide(Layer.succeed(ServerSettings.ServerSettingsService, failing)),
+            Layer.provide(Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({}))),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(ServerSettings.layerTest()), Effect.scoped),
   );
 
   it.effect("rebinds subscriptions when the enabled instance changes home", () =>
