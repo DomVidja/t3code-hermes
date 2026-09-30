@@ -1,3 +1,4 @@
+// Hermes's state.db is read with node:sqlite's synchronous read-only API, like the cron ledger.
 // @effect-diagnostics nodeBuiltinImport:off
 /**
  * Readers for the Hermes state behind background runs.

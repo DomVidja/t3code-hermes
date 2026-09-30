@@ -59,7 +59,7 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
@@ -196,7 +196,7 @@ function suggestProject(
 
 const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
@@ -755,11 +755,19 @@ const make = Effect.gen(function* () {
     for (const [prefix, run] of runs) {
       const done = yield* advance(run, nowSeconds).pipe(
         Effect.catchCause((cause) =>
-          // A thread deleted mid-run rejects every further command; let it go.
-          Effect.logWarning("Hermes run mirroring stopped for a run").pipe(
-            Effect.annotateLogs({ threadId: run.ids.threadId, cause }),
-            Effect.as(true),
-          ),
+          Effect.gen(function* () {
+            yield* Effect.logWarning("Hermes run mirroring failed for a run").pipe(
+              Effect.annotateLogs({ threadId: run.ids.threadId, cause }),
+            );
+            // A thread deleted mid-run rejects every further command, so let it
+            // go. Anything else is retried next tick: dropping a live run would
+            // leave its source's replies locked.
+            if (!run.created) return false;
+            const thread = yield* snapshots
+              .getThreadShellById(run.ids.threadId)
+              .pipe(Effect.orElseSucceed(() => Option.some(null)));
+            return Option.isNone(thread);
+          }),
         ),
       );
       if (done) {

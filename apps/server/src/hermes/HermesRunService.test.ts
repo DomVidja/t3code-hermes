@@ -91,23 +91,40 @@ function makeLayer(
   options: {
     readonly hermesEnabled?: boolean;
     readonly liveThreads?: ReadonlyArray<OrchestrationThreadShell>;
+    /** Rejects the first dispatch of this command type, as a transient failure would. */
+    readonly failOnce?: OrchestrationCommand["type"];
   } = {},
 ) {
+  let failPending = options.failOnce;
   const dispatched: OrchestrationCommand[] = [];
   const bindings: Array<{ readonly resumeCursor: unknown }> = [];
   const dependencies = Layer.mergeAll(
     Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
       dispatch: (command) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
+          if (command.type === failPending) {
+            failPending = undefined;
+            return Effect.die(new Error("transient"));
+          }
           dispatched.push(command);
-          return { sequence: dispatched.length };
+          return Effect.succeed({ sequence: dispatched.length });
         }),
     }),
     Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
       getProjectShells: () => Effect.succeed([project]),
       getProjectShellById: (projectId) =>
         Effect.succeed(projectId === PROJECT_ID ? Option.some(project) : Option.none()),
-      getThreadShellById: () => Effect.succeed(Option.none()),
+      getThreadShellById: (threadId) =>
+        Effect.succeed(
+          dispatched.some(
+            (command) => command.type === "thread.create" && command.threadId === threadId,
+          )
+            ? Option.some({
+                id: threadId,
+                projectId: PROJECT_ID,
+              } as unknown as OrchestrationThreadShell)
+            : Option.none(),
+        ),
       getShellSnapshot: () =>
         Effect.succeed({
           snapshotSequence: 0,
@@ -365,6 +382,53 @@ describe("HermesRunService", () => {
         }),
       );
       expect(error.reason).toBe("providerDisabled");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("retries a run after a transient failure instead of dropping it", () => {
+    const hermes = makeHermesHome();
+    const { layer, dispatched } = makeLayer(hermes.root, {
+      failOnce: "thread.message.assistant.delta",
+    });
+    return Effect.gen(function* () {
+      const service = yield* HermesRunService.HermesRunService;
+      yield* service.setSource({
+        profile: "upstream-sync",
+        sourceKey: "webhook:upstream-sync",
+        projectId: PROJECT_ID,
+      });
+      const startedAt = (yield* nowSeconds) + 1;
+      hermes.withDb((db) => {
+        insertHermesSession(db, {
+          id: "run-flaky",
+          source: "webhook",
+          route: "upstream-sync",
+          startedAt,
+          endedAt: startedAt + 5,
+          endReason: "webhook_complete",
+          toolCallCount: 1,
+        });
+        insertHermesMessage(db, {
+          sessionId: "run-flaky",
+          role: "assistant",
+          toolCalls: [{ id: "call-f", name: "terminal", args: { command: "git fetch" } }],
+          timestamp: startedAt + 1,
+        });
+        insertHermesMessage(db, {
+          sessionId: "run-flaky",
+          role: "assistant",
+          content: "Done.",
+          timestamp: startedAt + 2,
+        });
+      });
+      yield* service.sync;
+      expect(dispatched.some((command) => command.type === "thread.hermes-run.set")).toBe(true);
+      expect(dispatched.at(-1)?.type).not.toBe("thread.hermes-run.set");
+      yield* service.sync;
+      expect(dispatched.at(-1)).toMatchObject({
+        type: "thread.hermes-run.set",
+        hermesRun: { live: false },
+      });
     }).pipe(Effect.provide(layer));
   });
 });

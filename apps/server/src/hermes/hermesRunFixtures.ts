@@ -1,3 +1,4 @@
+// Fixtures write a real Hermes state.db through node:sqlite, as Hermes itself would.
 // @effect-diagnostics nodeBuiltinImport:off
 /**
  * Hermes `state.db` shapes pinned for tests.
