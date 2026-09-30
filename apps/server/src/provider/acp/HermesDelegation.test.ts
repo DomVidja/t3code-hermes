@@ -12,6 +12,7 @@ import {
 } from "./AcpRuntimeModel.ts";
 import { HermesDelegations, isHermesDelegationProgress } from "./HermesDelegation.ts";
 import fixture from "./fixtures/hermes-delegation.json" with { type: "json" };
+import olderFixture from "./fixtures/hermes-delegation-08b140d1.json" with { type: "json" };
 
 const decodeNotification = Schema.decodeUnknownSync(AcpSchema.SessionNotification);
 const turnId = TurnId.make("hermes-turn-1");
@@ -45,13 +46,32 @@ function progress(start: AcpToolCallState, value: Record<string, unknown>) {
 
 describe("Hermes delegate_task ACP boundary", () => {
   it("pins actual stock formatter output, not an invented raw JSON result", () => {
-    expect(fixture.hermesCommit).toBe("08b140d14e6c1d49f9b7ad02c9437fe940d54d65");
-    for (const scenario of fixture.cases) {
+    expect(fixture.hermesCommit).toBe("ac0cfa7db94cefa90cf3e35191f38b53888b9e17");
+    expect(olderFixture.hermesCommit).toBe("08b140d14e6c1d49f9b7ad02c9437fe940d54d65");
+    for (const scenario of [...fixture.cases, ...olderFixture.cases]) {
       expect(scenario.start).not.toHaveProperty("rawInput");
       expect(scenario.complete).not.toHaveProperty("rawOutput");
       expect(scenario.start.kind).toBe("execute");
     }
   });
+
+  // Hermes renamed stock titles ("delegate: goal" became "delegate_task: goal").
+  it.each([fixture, olderFixture])(
+    "recognizes stock delegations from Hermes $hermesCommit",
+    (pinned) => {
+      for (const scenario of pinned.cases) {
+        const events = new HermesDelegations().update(tool(scenario.start), turnId)!;
+        const titles = events
+          .filter((event) => event.type === "task.started")
+          .map((event) => event.payload.title);
+        expect(titles).toEqual(
+          scenario.name === "batch"
+            ? ["Inspect routing", "Run tests"]
+            : [scenario.name === "dispatched" ? "Review parser" : "Review the parser"],
+        );
+      }
+    },
+  );
 
   it("starts every batch child pending, extracting stock goals and roles", () => {
     const events = new HermesDelegations().update(tool(batch.start), turnId)!;
@@ -252,6 +272,11 @@ describe("Hermes delegate_task ACP boundary", () => {
     expect(
       state.update(tool({ ...batch.start, title: "delegate task", content: [] }), turnId),
     ).toBeUndefined();
+    // Stock controls share the delegate_task title prefix; only spawns name a goal.
+    for (const title of ["delegate_task: list", "delegate_task: stop sa-0-test1234"]) {
+      const content = [{ type: "content", content: { type: "text", text: "Delegating task" } }];
+      expect(state.update(tool({ ...batch.start, title, content }), turnId)).toBeUndefined();
+    }
     expect(
       state.update(tool({ ...batch.start, title: "terminal: echo hello" }), turnId),
     ).toBeUndefined();

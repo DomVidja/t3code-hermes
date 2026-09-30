@@ -1,6 +1,6 @@
 /**
  * Hermes delegate_task is an ordinary ACP tool, not a child session. Stock
- * 0.21 suppresses rawInput/rawOutput, even for JSON results: _structured() is
+ * Hermes suppresses rawInput/rawOutput, even for JSON results: _structured() is
  * only a Markdown formatter. Prefer the carried patch's structured fields;
  * keep the stock formatter fallback here, never in orchestration or clients.
  */
@@ -74,16 +74,22 @@ function contentText(tool: AcpToolCallState): string {
     .join("\n");
 }
 
+// Stock titles vary by Hermes version and locale ("delegate: goal", "delegate batch (2 tasks)",
+// "delegate_task: 2 tasks: a | b"), and list/steer/stop controls share them. The start content is
+// fixed English and names a goal only for spawns ("Delegating task:\n<goal>", "Delegating 2 tasks").
+const DELEGATE_TITLE =
+  /^(?:delegate_task(?::|$)|delegate task$|delegate: |delegate batch \(\d+ tasks\)$)/;
+const SPAWN_CONTENT = /^Delegating (?:task:\n\S|\d+ tasks(?:\n|$))/;
+
 function isHermesDelegation(tool: AcpToolCallState): boolean {
   const args = record(tool.data.rawInput);
   if (args.action !== undefined && args.action !== "spawn") return false;
+  if (tool.kind !== "execute" || !DELEGATE_TITLE.test(text(tool.data.title) ?? tool.title ?? ""))
+    return false;
   return (
-    tool.kind === "execute" &&
-    (/^(?:delegate: |delegate batch \(\d+ tasks\)$)/.test(
-      text(tool.data.title) ?? tool.title ?? "",
-    ) ||
-      ((tool.data.title === "delegate_task" || tool.data.title === "delegate task") &&
-        (text(args.goal) !== undefined || array(args.tasks).length > 0)))
+    text(args.goal) !== undefined ||
+    array(args.tasks).length > 0 ||
+    SPAWN_CONTENT.test(contentText(tool))
   );
 }
 
@@ -111,12 +117,12 @@ function startChildren(tool: AcpToolCallState): Child[] {
     });
   }
   const content = contentText(tool);
-  const batchCount = /^delegate batch \((\d+) tasks\)$/.exec(
-    text(tool.data.title) ?? tool.title ?? "",
-  )?.[1];
+  const batchCount =
+    /^Delegating (\d+) tasks/.exec(content)?.[1] ??
+    /^delegate batch \((\d+) tasks\)$/.exec(text(tool.data.title) ?? tool.title ?? "")?.[1];
   if (batchCount) {
-    // Stock truncates the goal list after eight children, but the title retains
-    // the count. Keep every child, filling omitted metadata from final results.
+    // Stock lists only the first eight goals but always states the count. Keep
+    // every child, filling omitted metadata from final results.
     return Array.from({ length: Number(batchCount) }, (_, index) => {
       const line = new RegExp(`^${index + 1}\\. (.*)$`, "m").exec(content)?.[1];
       const roleMatch = line ? /^(.*) \(([^()]+)\)$/.exec(line) : null;
@@ -133,7 +139,7 @@ function startChildren(tool: AcpToolCallState): Child[] {
       index: 0,
       title:
         text(content.replace(/^Delegating task:?\n?/, "")) ??
-        text((text(tool.data.title) ?? tool.title)?.replace(/^delegate: /, "")) ??
+        text((text(tool.data.title) ?? tool.title)?.replace(/^delegate(?:_task)?: /, "")) ??
         "Delegated task",
       settled: false,
     },

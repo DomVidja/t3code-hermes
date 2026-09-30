@@ -1,5 +1,5 @@
 {
-  "hermesCommit": "ac0cfa7db94cefa90cf3e35191f38b53888b9e17",
+  "hermesCommit": "08b140d14e6c1d49f9b7ad02c9437fe940d54d65",
   "acpVersion": "0.9.0",
   "cases": [
     {
@@ -35,7 +35,7 @@
         ],
         "kind": "execute",
         "locations": [],
-        "title": "delegate_task: Review the parser",
+        "title": "delegate: Review the parser",
         "toolCallId": "tc-fixture-single",
         "sessionUpdate": "tool_call"
       },
@@ -107,7 +107,7 @@
         ],
         "kind": "execute",
         "locations": [],
-        "title": "delegate_task: 2 tasks: Inspect routing | Run tests",
+        "title": "delegate batch (2 tasks)",
         "toolCallId": "tc-fixture-batch",
         "sessionUpdate": "tool_call"
       },
@@ -147,7 +147,7 @@
         ],
         "kind": "execute",
         "locations": [],
-        "title": "delegate_task: Review the parser",
+        "title": "delegate: Review the parser",
         "toolCallId": "tc-fixture-failure",
         "sessionUpdate": "tool_call"
       },
@@ -194,7 +194,7 @@
         ],
         "kind": "execute",
         "locations": [],
-        "title": "delegate_task: Review parser",
+        "title": "delegate: Review parser",
         "toolCallId": "tc-fixture-dispatched",
         "sessionUpdate": "tool_call"
       },
