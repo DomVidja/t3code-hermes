@@ -26,7 +26,11 @@ export function boundHermesOutput(text: string, limit: number): string {
   return text.slice(0, end);
 }
 
-/** Notification surfaces are plain text; retain the original Markdown only in run output. */
+/**
+ * Notification surfaces are plain text; retain the original Markdown only in run output.
+ * Every inline span is single-line and length-capped so each opener scans a bounded
+ * window: polls run this per retained run, and unclosed markers must stay linear.
+ */
 export function hermesOutputToPlainText(markdown: string): string {
   return markdown
     .replace(/^ {0,3}(?:`{3,}|~{3,})[^\n]*$/gm, "")
@@ -36,13 +40,13 @@ export function hermesOutputToPlainText(markdown: string): string {
     .replace(/^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/gm, "$1")
     .replace(/^ {0,3}(?:>[ \t]*)+/gm, "")
     .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]*)?/gm, "")
-    .replace(/!?\[([^\]\n]*)\]\([^\n)]*\)/g, "$1")
-    .replace(/!?\[([^\]\n]*)\]\[[^\]\n]*\]/g, "$1")
-    .replace(/<((?:https?:\/\/|mailto:)[^>]+)>/g, "$1")
-    .replace(/<\/?[A-Za-z][^>]*>/g, "")
+    .replace(/!?\[([^\]\n]{0,256})\]\([^\n)]{0,512}\)/g, "$1")
+    .replace(/!?\[([^\]\n]{0,256})\]\[[^\]\n]{0,256}\]/g, "$1")
+    .replace(/<((?:https?:\/\/|mailto:)[^>\n]{1,512})>/g, "$1")
+    .replace(/<\/?[A-Za-z][^>\n]{0,256}>/g, "")
     .replace(/(`+)([^`]*?)\1/g, "$2")
     .replace(
-      /(?<![\p{L}\p{N}])(\*{1,3}|_{1,3}|~~)(?=\S)(\S(?:[\s\S]*?\S)?)\1(?![\p{L}\p{N}])/gu,
+      /(?<![\p{L}\p{N}])(\*{1,3}|_{1,3}|~~)(?=\S)(\S(?:[^\n]{0,256}?\S)?)\1(?![\p{L}\p{N}])/gu,
       "$2",
     )
     .replace(/\\([\\`*{}[\]()#+.!_>~-])/g, "$1")

@@ -64,6 +64,9 @@ describe("Hermes plaintext previews", () => {
       "Morning engineering digest Builds: all checks passed on main. Review: two pull requests are ready. Next: review the release. Old incident resolved.",
     );
     expect(hermesOutputToPlainText("**A** and *B* and _C_.")).toBe("A and B and C.");
+    // Unclosed or cross-line markers stay literal instead of scanning the whole preview.
+    expect(hermesOutputToPlainText("*a ".repeat(3) + "[x](y <z")).toBe("*a *a *a [x](y <z");
+    expect(hermesOutputToPlainText("**not\nbold**")).toBe("**not bold**");
     expect(hermesOutputToPlainText("Keep snake_case, 2 * 3, and file_name.ts.")).toBe(
       "Keep snake_case, 2 * 3, and file_name.ts.",
     );
