@@ -57,7 +57,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { ScreenScrollView } from "../../components/ScreenScrollView";
-import { ProviderIcon } from "../../components/ProviderIcon";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -158,18 +157,6 @@ function HermesHeader(props: {
 }) {
   return (
     <View className="gap-3 border-b border-border px-5 pb-3 pt-3">
-      <View className="flex-row items-center gap-3">
-        <View className="size-11 items-center justify-center rounded-full bg-subtle">
-          <ProviderIcon provider="hermes" size={24} />
-        </View>
-        <View className="min-w-0 flex-1">
-          <Text className="text-lg font-t3-semibold text-foreground">Hermes</Text>
-          <Text className="text-sm text-foreground-muted">
-            Scheduled work, Hindsight memory, and patches
-          </Text>
-        </View>
-      </View>
-
       {props.environments.length > 1 ? (
         <View className="flex-row flex-wrap gap-2" accessibilityRole="radiogroup">
           {props.environments.map((environment) => (

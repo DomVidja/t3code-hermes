@@ -333,7 +333,10 @@ const SettingsContentStack = createNativeStackNavigator({
     SettingsHermes: createNativeStackScreen({
       screen: HermesRouteScreen,
       linking: "hermes",
+      // Hermes pins its tabs above internally scrolling lists, so a glass header
+      // has no primary scroll view to inset and would sit on top of the tabs.
       options: {
+        ...SHEET_SOLID_HEADER_OPTIONS,
         title: "Hermes",
       },
     }),
