@@ -157,6 +157,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
 import * as HermesRunService from "./hermes/HermesRunService.ts";
+import * as HermesPatchService from "./hermes/HermesPatchService.ts";
 import * as HindsightService from "./integrations/hindsight/HindsightService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -676,6 +677,7 @@ const makeWsRpcLayer = (
       const usage = yield* UsageService.UsageService;
       const hermesCron = yield* HermesCronService.HermesCronService;
       const hermesRuns = yield* HermesRunService.HermesRunService;
+      const hermesPatches = yield* HermesPatchService.HermesPatchService;
       const hindsight = yield* HindsightService.HindsightService;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
@@ -2711,6 +2713,18 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.hermesRunSourceSet]: (input) =>
           observeRpcEffect(WS_METHODS.hermesRunSourceSet, hermesRuns.setSource(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesPatchList]: () =>
+          observeRpcEffect(WS_METHODS.hermesPatchList, hermesPatches.list, {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesPatchApply]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesPatchApply, hermesPatches.apply(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesPatchRevert]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesPatchRevert, hermesPatches.revert(input), {
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.hindsightListBanks]: (input) =>

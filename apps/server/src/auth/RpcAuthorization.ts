@@ -70,6 +70,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.hermesCronSetMuted]: AuthOrchestrationOperateScope,
   [WS_METHODS.hermesRunSourcesList]: AuthOrchestrationReadScope,
   [WS_METHODS.hermesRunSourceSet]: AuthOrchestrationOperateScope,
+  [WS_METHODS.hermesPatchList]: AuthOrchestrationReadScope,
+  // Patching rewrites the Hermes install itself, like a provider update.
+  [WS_METHODS.hermesPatchApply]: AuthOrchestrationOperateScope,
+  [WS_METHODS.hermesPatchRevert]: AuthOrchestrationOperateScope,
   [WS_METHODS.hindsightListBanks]: AuthOrchestrationReadScope,
   [WS_METHODS.hindsightBrowse]: AuthOrchestrationReadScope,
   [WS_METHODS.hindsightRecall]: AuthOrchestrationReadScope,

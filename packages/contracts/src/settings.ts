@@ -469,6 +469,10 @@ export const ClientSettingsSchema = Schema.Struct({
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarStatusRings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Name skill loads and edits in the work log instead of "Read file". Fork opt-in. */
+  showSkillActivityRows: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Name memory reads and writes in the work log. Fork opt-in. */
+  showMemoryActivityRows: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -1755,6 +1759,8 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarStatusRings: Schema.optionalKey(Schema.Boolean),
+  showSkillActivityRows: Schema.optionalKey(Schema.Boolean),
+  showMemoryActivityRows: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

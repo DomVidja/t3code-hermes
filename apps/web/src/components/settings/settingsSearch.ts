@@ -237,6 +237,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["animation motion outline sidebar indicator"],
   },
   {
+    id: "skill-activity-rows",
+    title: "Skill activity",
+    to: "/settings/appearance",
+    searchTerms: ["behind the scenes work log skills loaded hermes tool rows"],
+  },
+  {
+    id: "memory-activity-rows",
+    title: "Memory activity",
+    to: "/settings/appearance",
+    searchTerms: ["behind the scenes work log memory hindsight recall retain sessions hermes"],
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",
