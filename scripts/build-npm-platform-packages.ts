@@ -84,8 +84,21 @@ export class NpmPackagesArchiveLayoutError extends Schema.TaggedError<NpmPackage
   }
 }
 
+/**
+ * npm name of each platform package. npm's spam filter permanently rejects
+ * new `t3-hermes-win32-*` (and `t3-hermes-win-*`) names, so Windows ships
+ * under names it accepted. The launcher resolves through this same table.
+ */
+export const NPM_PLATFORM_PACKAGE_NAMES: Readonly<Record<CliArchivePlatformKey, string>> = {
+  "darwin-arm64": "t3-hermes-darwin-arm64",
+  "linux-arm64": "t3-hermes-linux-arm64",
+  "linux-x64": "t3-hermes-linux-x64",
+  "win32-arm64": "nateweav-hermes-winbin-arm64",
+  "win32-x64": "nateweav-hermes-winbin-x64",
+};
+
 export function npmPlatformPackageName(platformKey: CliArchivePlatformKey): string {
-  return `t3-hermes-${platformKey}`;
+  return NPM_PLATFORM_PACKAGE_NAMES[platformKey];
 }
 
 /**
@@ -198,12 +211,14 @@ const { spawnSync } = require("node:child_process");
 const { constants } = require("node:os");
 const { dirname, join } = require("node:path");
 
-const SUPPORTED = [${CLI_ARCHIVE_PLATFORM_KEYS.map((key) => `"${key}"`).join(", ")}];
+const PACKAGES = ${JSON.stringify(NPM_PLATFORM_PACKAGE_NAMES)};
+const SUPPORTED = Object.keys(PACKAGES);
 const key = process.platform + "-" + process.arch;
 
 let packageDir;
 try {
-  packageDir = dirname(require.resolve("t3-hermes-" + key + "/package.json"));
+  if (!SUPPORTED.includes(key)) throw new Error("unsupported platform");
+  packageDir = dirname(require.resolve(PACKAGES[key] + "/package.json"));
 } catch {
   process.stderr.write(
     [

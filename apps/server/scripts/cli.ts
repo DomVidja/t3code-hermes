@@ -196,7 +196,9 @@ const publishCmd = Command.make(
       const platformTarballs = (yield* fs
         .readDirectory(scopeDir)
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])))
-        .filter((entry) => entry.startsWith("t3-hermes-") && entry.endsWith(".tgz"))
+        // Every tarball but the launcher is a platform package; their names
+        // are not all `t3-hermes-*` (see NPM_PLATFORM_PACKAGE_NAMES).
+        .filter((entry) => entry.endsWith(".tgz") && entry !== path.basename(launcherTarball))
         .sort()
         .map((entry) => path.join(scopeDir, entry));
       if (platformTarballs.length === 0) {
