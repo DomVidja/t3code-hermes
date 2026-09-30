@@ -21,6 +21,10 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
+  extractProviderToolTitle,
+  type AgentActivity,
+} from "@t3tools/client-runtime/work-log/agent-activity";
+import {
   isToolLifecycleItemType,
   type AssetResource,
   type OrchestrationLatestTurn,
@@ -68,6 +72,10 @@ export interface WorkLogEntry {
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
+  /** The provider's own title when the canonical one replaced it (e.g. "skill view (name)"). */
+  providerToolTitle?: string;
+  /** Skill or memory identity, attached by `annotateAgentActivity` when the user opted in. */
+  agentActivity?: AgentActivity;
   toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   toolIcon?: import("@t3tools/contracts").ToolActivityIcon;
   toolSource?: import("@t3tools/contracts").ToolActivitySource;
@@ -623,6 +631,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (title) {
     entry.toolTitle = title;
   }
+  const providerToolTitle = extractProviderToolTitle(payload);
+  if (providerToolTitle && providerToolTitle !== title) {
+    entry.providerToolTitle = providerToolTitle;
+  }
   if (toolPresentation.toolSurface) {
     entry.toolSurface = toolPresentation.toolSurface;
   }
@@ -854,6 +866,7 @@ function mergeDerivedWorkLogEntries(
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
+  const providerToolTitle = next.providerToolTitle ?? previous.providerToolTitle;
   const toolSurface = next.toolSurface ?? previous.toolSurface;
   const toolIcon = next.toolIcon ?? previous.toolIcon;
   const toolSource = next.toolSource ?? previous.toolSource;
@@ -872,6 +885,7 @@ function mergeDerivedWorkLogEntries(
     ...(rawCommand ? { rawCommand } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
+    ...(providerToolTitle ? { providerToolTitle } : {}),
     ...(toolSurface ? { toolSurface } : {}),
     ...(toolIcon ? { toolIcon } : {}),
     ...(toolSource ? { toolSource } : {}),

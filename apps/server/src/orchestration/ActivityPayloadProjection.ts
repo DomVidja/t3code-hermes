@@ -485,6 +485,12 @@ export function projectActivityPayload(
   if ("toolName" in data) {
     projectedData.toolName = data.toolName;
   }
+  // The provider's own title (e.g. Hermes' "skill view (name)") names skill and
+  // memory rows where the canonical title says only "Read file".
+  const providerTitle = asTrimmedString(data.title);
+  if (providerTitle && providerTitle !== payload.title) {
+    projectedData.title = providerTitle;
+  }
 
   const rawOutput =
     projectRawOutput(data.rawOutput) ??

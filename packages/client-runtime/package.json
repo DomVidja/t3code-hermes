@@ -263,6 +263,10 @@
       "types": "./src/work-log/presentation.ts",
       "default": "./src/work-log/presentation.ts"
     },
+    "./work-log/agent-activity": {
+      "types": "./src/work-log/agentActivity.ts",
+      "default": "./src/work-log/agentActivity.ts"
+    },
     "./work-log/tool-presentation": {
       "types": "./src/work-log/toolPresentation.ts",
       "default": "./src/work-log/toolPresentation.ts"

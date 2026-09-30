@@ -25,6 +25,7 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 | Central Hermes execution on shell-only SSH targets  | `infra/hermes/0002-acp-central-ssh-execution.patch`                                                                                                         |
 | `triage` files on the fork, not upstream            | `.github/triage/PLAYBOOK.md`, `apps/server/src/cli/triagePrompt.ts`                                                                                         |
 | Telemetry reports to the fork's PostHog project     | `apps/server/src/telemetry/AnalyticsService.ts`                                                                                                             |
+| Opt-in skill and memory rows in the work log        | `packages/client-runtime/src/work-log/agentActivity.ts`                                                                                                     |
 
 The auto-bootstrap and model-picker rows are not Hermes-specific but matter on Hermes-only hosts.
 The ACP session-update and slash-command-dedupe rows are not Hermes-specific at all — they are

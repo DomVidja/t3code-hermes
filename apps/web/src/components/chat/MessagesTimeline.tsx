@@ -108,7 +108,9 @@ import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
 import { T3Wordmark } from "../T3Wordmark";
 import {
+  BookOpenIcon,
   BotIcon,
+  BrainCircuitIcon,
   BrainIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -3322,6 +3324,10 @@ function toolGroupSummaryIconName(
       return "globe";
     case "code-search":
       return "search";
+    case "skill":
+      return "skill";
+    case "memory":
+      return "memory";
     case "other":
       return "wrench";
     case "dynamic-tool":
@@ -4143,8 +4149,10 @@ type WorkEntryIconName =
   | "eye"
   | "globe"
   | "hammer"
+  | "memory"
   | "message-circle"
   | "search"
+  | "skill"
   | "square-pen"
   | "terminal"
   | "pull-request"
@@ -4352,6 +4360,10 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <GlobeIcon className={className} aria-hidden />;
     case "hammer":
       return <HammerIcon className={className} aria-hidden />;
+    case "memory":
+      return <BrainCircuitIcon className={className} aria-hidden />;
+    case "skill":
+      return <BookOpenIcon className={className} aria-hidden />;
     case "message-circle":
       return <MessageCircleIcon className={className} aria-hidden />;
     case "search":
