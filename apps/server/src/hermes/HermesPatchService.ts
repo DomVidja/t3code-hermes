@@ -60,7 +60,7 @@ const commandFailed = (cause: unknown) =>
     cause,
   });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
