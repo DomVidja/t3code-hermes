@@ -162,6 +162,7 @@ import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
+import * as HermesRunService from "./hermes/HermesRunService.ts";
 import * as HermesPatchService from "./hermes/HermesPatchService.ts";
 import * as HindsightService from "./integrations/hindsight/HindsightService.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
@@ -280,6 +281,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ThreadSettlementReactor.layer),
   Layer.provideMerge(PullRequestSyncReactor.layer),
   Layer.provideMerge(ThreadPullRequestReactor.layer),
+  Layer.provideMerge(HermesRunService.layer),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );

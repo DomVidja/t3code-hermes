@@ -330,7 +330,11 @@ export function applyHermesAcpModelSelection<E>(input: {
    */
   readonly forceReapply?: boolean;
 }): Effect.Effect<string | undefined, E> {
-  const targetModelId = input.requestedModelId ?? input.currentModelId;
+  // Hermes model ids are `provider:model`, so the bare placeholder is never
+  // one: asking for it means "keep whatever the profile runs".
+  const requestedModelId =
+    input.requestedModelId === HERMES_FALLBACK_MODEL_ID ? undefined : input.requestedModelId;
+  const targetModelId = requestedModelId ?? input.currentModelId;
   const shouldSwitchModel =
     targetModelId !== undefined &&
     (targetModelId !== input.currentModelId || input.forceReapply === true);

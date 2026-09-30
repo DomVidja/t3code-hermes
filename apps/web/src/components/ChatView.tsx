@@ -363,6 +363,7 @@ import {
   useProjects,
   useThread,
   useThreadRefs,
+  useHermesRunReplyBlocked,
   useThreadShell,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
@@ -3582,6 +3583,9 @@ export default function ChatView(props: ChatViewProps) {
   // script keeps the snapshot running while the agent already works, and a
   // follow-up must not be held behind a slow install. Before the first
   // snapshot arrives the starting session stands in for it.
+  const hermesRunBlocksSend = useHermesRunReplyBlocked(
+    routeKind === "server" ? routeThreadRef : null,
+  );
   const worktreeSetupBlocksSend =
     worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
@@ -10030,8 +10034,11 @@ export default function ChatView(props: ChatViewProps) {
                                     ? "Messages loading"
                                     : worktreeSetupBlocksSend
                                       ? "Preparing worktree"
-                                      : projectCloneSendBlockReason
+                                      : hermesRunBlocksSend
+                                        ? "Hermes is still running this task"
+                                        : projectCloneSendBlockReason
                             }
+                            interruptible={routeServerThreadShell?.hermesRun?.live !== true}
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}
                             // With attachments or contexts aboard the pick just inserts the

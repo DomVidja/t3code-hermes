@@ -265,6 +265,12 @@ import {
   HermesCronStreamEvent,
 } from "./hermesCron.ts";
 import {
+  HermesRunError,
+  HermesRunSourceSetInput,
+  HermesRunSourcesListInput,
+  HermesRunSourcesResult,
+} from "./hermesRuns.ts";
+import {
   HermesPatchChangeInput,
   HermesPatchError,
   HermesPatchesSnapshot,
@@ -428,6 +434,8 @@ export const WS_METHODS = {
   hermesCronList: "hermes.cronList",
   hermesCronSetEnabled: "hermes.cronSetEnabled",
   hermesCronSetMuted: "hermes.cronSetMuted",
+  hermesRunSourcesList: "hermes.runSourcesList",
+  hermesRunSourceSet: "hermes.runSourceSet",
   hermesPatchList: "hermes.patchList",
   hermesPatchApply: "hermes.patchApply",
   hermesPatchRevert: "hermes.patchRevert",
@@ -738,6 +746,18 @@ const WsHermesCronSetMutedRpc = Rpc.make(WS_METHODS.hermesCronSetMuted, {
   payload: HermesCronSetMutedInput,
   success: HermesCronSnapshot,
   error: Schema.Union([EnvironmentAuthorizationError, HermesCronError]),
+});
+
+const WsHermesRunSourcesListRpc = Rpc.make(WS_METHODS.hermesRunSourcesList, {
+  payload: HermesRunSourcesListInput,
+  success: HermesRunSourcesResult,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesRunError]),
+});
+
+const WsHermesRunSourceSetRpc = Rpc.make(WS_METHODS.hermesRunSourceSet, {
+  payload: HermesRunSourceSetInput,
+  success: HermesRunSourcesResult,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesRunError]),
 });
 
 const WsHermesPatchListRpc = Rpc.make(WS_METHODS.hermesPatchList, {
@@ -1585,6 +1605,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsHermesCronListRpc,
   WsHermesCronSetEnabledRpc,
   WsHermesCronSetMutedRpc,
+  WsHermesRunSourcesListRpc,
+  WsHermesRunSourceSetRpc,
   WsHermesPatchListRpc,
   WsHermesPatchApplyRpc,
   WsHermesPatchRevertRpc,

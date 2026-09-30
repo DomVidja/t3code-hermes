@@ -7,6 +7,7 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { isHermesRunSourceBusy } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentThreadShell } from "./models.ts";
@@ -171,6 +172,18 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-thread-shells-for-projects:${key}`));
   });
 
+  // True while a reply to this Hermes-run thread has to wait for a live run
+  // of the same source. A boolean, so composers re-render only when it flips.
+  const hermesRunReplyBlockedAtomFamily = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    return Atom.make((get) => {
+      const run = get(environmentThreadIndexAtom(ref.environmentId)).get(ref.threadId)?.hermesRun;
+      return (
+        run != null && isHermesRunSourceBusy(run, get(environmentThreadsAtom(ref.environmentId)))
+      );
+    }).pipe(Atom.withLabel(`environment-thread-hermes-run-blocked:${key}`));
+  });
+
   let previousThreadRefs: ReadonlyArray<ScopedThreadRef> = [];
   const threadRefsAtom = Atom.make((get) => {
     const refs: ScopedThreadRef[] = [];
@@ -209,5 +222,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     threadShellsForProjectRefsAtom: (refs: ReadonlyArray<ScopedProjectRef>) =>
       threadShellsForProjectRefsAtomFamily(projectRefCollectionKey(refs)),
     threadShellAtom: (ref: ScopedThreadRef) => threadShellAtomFamily(threadKey(ref)),
+    hermesRunReplyBlockedAtom: (ref: ScopedThreadRef) =>
+      hermesRunReplyBlockedAtomFamily(threadKey(ref)),
   };
 }
