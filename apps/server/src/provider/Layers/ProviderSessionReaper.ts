@@ -53,6 +53,12 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
         const thread = yield* projectionSnapshotQuery
           .getThreadShellById(binding.threadId)
           .pipe(Effect.map(Option.getOrUndefined));
+        // A live Hermes run is mirrored by HermesRunService, which owns its
+        // running session and ends it itself. Its stopped binding only primes
+        // the first reply after the run, so it says nothing about the turn.
+        if (thread?.hermesRun?.live === true) {
+          return;
+        }
         if (
           thread?.session?.status !== "starting" &&
           thread?.session?.status !== "running" &&

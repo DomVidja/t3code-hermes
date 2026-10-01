@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type OrchestrationCommand,
+  type ThreadHermesRun,
   ProjectId,
   ThreadId,
   TurnId,
@@ -72,6 +73,7 @@ function makeReadModel(
       readonly updatedAt: string;
     } | null;
     readonly backgroundLiveness?: "working" | "monitoring" | null;
+    readonly hermesRun?: ThreadHermesRun | null;
   }>,
 ) {
   const now = "2026-01-01T00:00:00.000Z";
@@ -115,6 +117,7 @@ function makeReadModel(
       messages: [],
       session: thread.session,
       backgroundLiveness: thread.backgroundLiveness ?? null,
+      hermesRun: thread.hermesRun ?? null,
       activities: [],
       proposedPlans: [],
       checkpoints: [],
@@ -601,6 +604,66 @@ describe("ProviderSessionReaper", () => {
     });
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
     expect(Option.isSome(remaining)).toBe(true);
+  });
+
+  it("leaves a live Hermes run's turn running while its stopped binding waits for a reply", async () => {
+    const liveRunThreadId = ThreadId.make("thread-reaper-hermes-run");
+    const orphanedThreadId = ThreadId.make("thread-reaper-hermes-orphaned");
+    const now = "2026-01-01T00:00:00.000Z";
+    const runningSession = (threadId: ThreadId) => ({
+      threadId,
+      status: "running" as const,
+      providerName: "claudeAgent" as const,
+      runtimeMode: "full-access" as const,
+      activeTurnId: TurnId.make(`turn-${threadId}`),
+      lastError: null,
+      updatedAt: now,
+    });
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: liveRunThreadId,
+          session: runningSession(liveRunThreadId),
+          hermesRun: {
+            profile: "default",
+            sourceKey: "webhook:github",
+            sourceLabel: "GitHub webhook",
+            sessionId: "hermes-session-root",
+            latestSessionId: "hermes-session-root",
+            live: true,
+          },
+        },
+        { id: orphanedThreadId, session: runningSession(orphanedThreadId) },
+      ]),
+    });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+    for (const threadId of [liveRunThreadId, orphanedThreadId]) {
+      await runtime!.runPromise(
+        repository.upsert({
+          threadId,
+          providerName: "claudeAgent",
+          providerInstanceId: null,
+          adapterKey: "claudeAgent",
+          runtimeMode: "full-access",
+          status: "stopped",
+          lastSeenAt: now,
+          resumeCursor: null,
+          runtimePayload: null,
+        }),
+      );
+    }
+
+    await sweepAt(Date.parse(now));
+
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    expect(harness.dispatchedCommands).toHaveLength(1);
+    expect(harness.dispatchedCommands[0]).toMatchObject({
+      type: "thread.session.set",
+      threadId: orphanedThreadId,
+      session: { status: "interrupted" },
+    });
   });
 
   it("reaps an active turn after the recovery threshold instead of pinning it forever", async () => {
