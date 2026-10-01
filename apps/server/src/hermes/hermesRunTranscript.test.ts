@@ -145,6 +145,39 @@ describe("hermesRunCommandsFor", () => {
     expect(batch.pullRequestUrls).toEqual([]);
   });
 
+  it("links only the pull requests a run created, not ones `gh pr list` or `view` printed", () => {
+    const commands = {
+      "call-list":
+        "gh pr list --repo NateWeav/t3code-hermes --state open --json number,title,headRefName,url",
+      "call-view": "gh pr view 95 --repo NateWeav/t3code-hermes",
+      "call-create": "gh pr create --fill",
+    };
+    const outputs = {
+      "call-list": '[{"number":94,"url":"https://github.com/NateWeav/t3code-hermes/pull/94"}]',
+      "call-view": "url:\thttps://github.com/NateWeav/t3code-hermes/pull/95\n",
+      "call-create": "https://github.com/NateWeav/t3code-hermes/pull/98\n",
+    };
+    const pending = new Map<string, HermesToolCall>(
+      Object.entries(commands).map(([id, command]) => [
+        id,
+        { name: "terminal", args: { command } },
+      ]),
+    );
+    const batch = hermesRunCommandsFor(
+      ids,
+      Object.entries(outputs).map(([toolCallId, output], index) =>
+        row({
+          id: 20 + index,
+          role: "tool",
+          toolCallId,
+          content: JSON.stringify({ output, exit_code: 0 }),
+        }),
+      ),
+      pending,
+    );
+    expect(batch.pullRequestUrls).toEqual(["https://github.com/NateWeav/t3code-hermes/pull/98"]);
+  });
+
   it("derives the same ids on replay, so re-reading rows is a no-op for the engine", () => {
     const rows = [row({ id: 7, role: "assistant", content: "hello" })];
     const first = hermesRunCommandsFor(ids, rows, new Map());
