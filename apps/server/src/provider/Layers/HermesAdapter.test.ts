@@ -1282,3 +1282,48 @@ it.layer(hermesAdapterTestLayer)("Hermes delegation", (it) => {
     }),
   );
 });
+
+it.layer(hermesAdapterTestLayer)("Hermes background work", (it) => {
+  it.effect("keeps a patched Hermes background process live until it reports its exit", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-background-process");
+      const wrapper = yield* Effect.promise(() =>
+        makeMockHermesWrapper({ T3_ACP_HERMES_BACKGROUND: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapper);
+      const started = yield* Deferred.make<ProviderRuntimeEvent>();
+      const completed = yield* Deferred.make<ProviderRuntimeEvent>();
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "task.started"
+          ? Deferred.succeed(started, event)
+          : event.type === "task.completed"
+            ? Deferred.succeed(completed, event)
+            : Effect.void,
+      ).pipe(Effect.forkChild);
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+
+      const first = yield* adapter.sendTurn({ threadId, input: "watch CI", attachments: [] });
+      const start = yield* Deferred.await(started);
+      assert.equal(start.turnId, first.turnId);
+      assert.deepInclude(start.type === "task.started" ? start.payload : {}, {
+        taskId: "proc_ci000001",
+        taskType: "shell",
+        description: "gh pr checks 94 --watch",
+        toolUseId: "hermes-terminal-1",
+      });
+      // The turn settled, but the process still runs: nothing has completed it.
+      assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+      assert.isFalse(yield* Deferred.isDone(completed));
+
+      yield* adapter.sendTurn({ threadId, input: "is CI done?", attachments: [] });
+      const exit = yield* Deferred.await(completed);
+      assert.equal(exit.turnId, first.turnId);
+      assert.deepInclude(exit.type === "task.completed" ? exit.payload : {}, {
+        taskId: "proc_ci000001",
+        status: "failed",
+        summary: "Exit code 1",
+      });
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+});

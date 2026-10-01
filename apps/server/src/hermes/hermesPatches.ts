@@ -41,6 +41,13 @@ export const HERMES_PATCHES: ReadonlyArray<HermesPatchDefinition> = [
       "Live progress and background results for subagents Hermes delegates to. Without it, background subagents show as idle once dispatched.",
     content: bundledPatch("0003-acp-delegation-progress.patch"),
   },
+  {
+    id: HermesPatchId.make("acp-background-reports"),
+    title: "Background process reports",
+    neededFor:
+      "Monitoring status while Hermes's background processes run. Without it, a background command reads as finished the moment it starts.",
+    content: bundledPatch("0004-acp-background-reports.patch"),
+  },
 ];
 
 /**
