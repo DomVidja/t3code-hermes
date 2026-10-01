@@ -71,10 +71,22 @@ export const make = Effect.gen(function* () {
     PubSub.shutdown,
   );
 
+  // Sources whose key the hub rejected, with the config that was rejected.
+  // Each retry counts toward the hub's IP ban, so the same config is not
+  // read again; a changed key or URL, or re-enabling the source, retries.
+  const rejectedRef = yield* Ref.make<
+    ReadonlyMap<
+      UsageLimitSourceId,
+      { config: UsageLimitSourceConfig; snapshot: UsageLimitSourceSnapshot }
+    >
+  >(new Map());
+
   const readSource = Effect.fn("UsageLimitSources.readSource")(function* (
     id: UsageLimitSourceId,
     config: UsageLimitSourceConfig,
   ) {
+    const rejected = (yield* Ref.get(rejectedRef)).get(id);
+    if (rejected && Equal.equals(rejected.config, config)) return rejected.snapshot;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
     if (config.managementKey.length === 0) {
@@ -83,7 +95,11 @@ export const make = Effect.gen(function* () {
     const accounts = yield* api.readAccounts(config).pipe(Effect.result);
     if (accounts._tag === "Failure") {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
-      return { ...base, accounts: [], error: accounts.failure.detail };
+      const snapshot = { ...base, accounts: [], error: accounts.failure.detail };
+      if (accounts.failure._tag === "CliproxyKeyRejectedError") {
+        yield* Ref.update(rejectedRef, (map) => new Map(map).set(id, { config, snapshot }));
+      }
+      return snapshot;
     }
     return { ...base, accounts: accounts.success };
   });
@@ -106,6 +122,10 @@ export const make = Effect.gen(function* () {
     );
     const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
       ([, config]) => config.enabled,
+    );
+    yield* Ref.update(
+      rejectedRef,
+      (map) => new Map([...map].filter(([id]) => entries.some(([entryId]) => entryId === id))),
     );
     const snapshots = yield* Effect.forEach(
       entries,
