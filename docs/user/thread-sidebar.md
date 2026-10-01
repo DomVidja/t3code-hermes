@@ -13,6 +13,34 @@ an existing worktree, use **New thread in this worktree** from the branch toolba
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
 
+### Start without a project
+
+A thread does not need a project. To start one without a project, click **or
+start without a project** under a new thread's heading, pick **No project** from
+the project menu in that heading or from **New thread in...** in the command
+palette, or press `mod+alt+n`. On mobile, pick **No project** from the project
+list. To move a draft into a project, pick the project in the heading.
+
+Each thread without a project works in its own folder under `~/.t3/scratch` (the
+`scratch` folder of your T3 data directory), named after its date, the first words
+of its first message, and a short id, like
+`2026-09-25-convert-these-pngs-to-webp-a1b2c3d4`. Deleting a thread keeps its
+folder, so the files the agent wrote stay until you delete them. Branch, worktree, and diff controls stay hidden because
+these folders are not Git repositories. This is unavailable when the data
+directory itself sits inside a Git checkout.
+
+### Start in the background
+
+In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`
+on Windows and Linux to start a new thread and immediately open another draft. The
+next draft keeps the workspace mode and base branch you selected. With **New
+worktree**, each background submission creates its own worktree.
+
+To send the same prompt to several models on web or desktop, **Shift-click** models
+in a new thread's model picker to add or remove them. A regular click returns to a
+single model. Choose a base branch and send. Each selection starts a separate thread
+and worktree while you stay in the new thread composer. This requires a Git project.
+
 ## Status at a glance
 
 Turn on **Thread status rings** in Settings under Appearance > Motion to outline active threads' cards
@@ -31,18 +59,6 @@ reading the labels:
 Settled threads and threads you have already caught up on carry no outline.
 
 Your system's reduce-motion setting keeps the outlines and their colors but holds them still.
-
-### Start in the background
-
-In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`
-on Windows and Linux to start a new thread and immediately open another draft. The
-next draft keeps the workspace mode and base branch you selected. With **New
-worktree**, each background submission creates its own worktree.
-
-To send the same prompt to several models on web or desktop, **Shift-click** models
-in a new thread's model picker to add or remove them. A regular click returns to a
-single model. Choose a base branch and send. Each selection starts a separate thread
-and worktree while you stay in the new thread composer. This requires a Git project.
 
 ## Pin and reorder threads
 
