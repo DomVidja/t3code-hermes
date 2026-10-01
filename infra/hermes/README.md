@@ -82,7 +82,39 @@ drive the real executor, child relays, stale monitor, and background worker. Run
 `tests/acp_adapter/test_tools.py` and `test_events.py` in a scratch checkout with an isolated
 `HERMES_HOME` and `PYTHONDONTWRITEBYTECODE=1`, never in the live install.
 
-## `0004-gateway-multiplex-webhook-session-close.patch`
+## `0004-acp-background-reports.patch`
+
+**Needed by:** the sidebar's Monitoring status for background processes Hermes starts, such as a CI
+watcher, and the agent picking its work back up when they finish. Stock Hermes reports a background
+`terminal` call as finished the moment the process starts and says nothing when it exits, so T3 Code
+cannot tell the work is still running, and the agent never hears that it is done.
+
+The patch adds two ACP extension notifications. `_hermes/process` reports a background process left
+running by a `terminal` call, keyed by that tool call, and again when it exits, with its exit code.
+`_hermes/notification` carries the text Hermes's CLI injects as the next turn when background work
+finishes (process completions, watch matches, heartbeats, background subagent results), sent once the
+session is idle. Stock ACP never drains those events, so an agent that promised to report back never
+heard that its work had finished. ACP turns stay client-driven: Hermes reports, and the client decides
+whether to prompt. T3 Code prompts with the notification once no turn is running, unless the user
+pressed Stop, in which case it waits for their next message. Clients that do not know the methods
+ignore them.
+
+Verified against hermes-agent `645bb146c6` (`main`, 2026-10-01), alone and together with `0002` and
+`0003` in either order. Like `0003`, it does not apply to `08b140d14e` or older checkouts; update
+first.
+
+```bash
+cd ~/.hermes/hermes-agent
+git apply /path/to/t3code/infra/hermes/0004-acp-background-reports.patch
+```
+
+Restart the T3 Code server after applying the patch. `display.background_process_notifications: off`
+in Hermes's `config.yaml` still suppresses process notifications; process status is always reported.
+
+The patch's `tests/acp_adapter/test_background_reports.py` spawns real processes against an isolated
+process registry. Run it with the rest of `tests/acp_adapter/` in a scratch checkout, as for `0003`.
+
+## `0005-gateway-multiplex-webhook-session-close.patch`
 
 **Needed by:** gateways with `gateway.multiplex_profiles: true` that serve webhook routes for a
 named profile (`/p/<profile>/webhooks/...`). Without it, those runs never get `ended_at`, so T3
@@ -95,11 +127,11 @@ completion hook runs outside the profile scope and ended the session in the laun
 resolves from the session key. Single-profile gateways and default-profile keys are unchanged.
 
 Verified against hermes-agent `357f51c491` (`main`, 2026-10-01) and `8d30c4eaab` with `0003`
-applied. It touches only the gateway, so it is independent of `0002` and `0003`.
+applied. It touches only the gateway, so it is independent of `0002` through `0004`.
 
 ```bash
 cd ~/.hermes/hermes-agent
-git apply /path/to/t3code/infra/hermes/0004-gateway-multiplex-webhook-session-close.patch
+git apply /path/to/t3code/infra/hermes/0005-gateway-multiplex-webhook-session-close.patch
 hermes gateway restart
 ```
 

@@ -6,6 +6,7 @@ import {
   EventId,
   type ProviderApprovalDecision,
   type ProviderRuntimeEvent,
+  type ProviderSendTurnInput,
   type ProviderSession,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -72,6 +73,13 @@ import {
   resolveHermesAcpBaseModelId,
   resolveHermesSessionModeId,
 } from "../acp/HermesAcpSupport.ts";
+import {
+  HERMES_NOTIFICATION_METHOD,
+  HERMES_PROCESS_METHOD,
+  HermesBackgroundProcesses,
+  HermesNotification,
+  HermesProcessReport,
+} from "../acp/HermesBackground.ts";
 import { HermesDelegations } from "../acp/HermesDelegation.ts";
 import { type HermesAdapterShape } from "../Services/HermesAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -138,6 +146,12 @@ interface HermesSessionContext {
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly delegations: HermesDelegations;
+  /** Background processes the patched Hermes reports; see HermesBackground.ts. */
+  readonly backgroundProcesses: HermesBackgroundProcesses;
+  /** Background-work notices Hermes sent, waiting to wake the agent once idle. */
+  pendingWakes: Array<string>;
+  /** Stop holds wakes until the user's next turn, as Hermes's own TUI does. */
+  wakesHeld: boolean;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
@@ -365,6 +379,20 @@ export function makeHermesAdapter(
           provider: PROVIDER,
           threadId: ctx.threadId,
           ...(event.turnId ? { turnId: event.turnId } : {}),
+        });
+      }
+    });
+
+    const emitBackgroundProcessEvents = Effect.fnUntraced(function* (
+      ctx: HermesSessionContext,
+      events: ReturnType<HermesBackgroundProcesses["report"]>,
+    ) {
+      for (const event of events) {
+        yield* offerRuntimeEvent({
+          ...event,
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
         });
       }
     });
@@ -746,6 +774,7 @@ export function makeHermesAdapter(
         }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         yield* finishDelegations(ctx, undefined, "cancelled");
+        yield* emitBackgroundProcessEvents(ctx, ctx.backgroundProcesses.stopAll());
         sessions.delete(ctx.threadId);
         yield* offerRuntimeEvent({
           type: "session.exited",
@@ -926,6 +955,33 @@ export function makeHermesAdapter(
                 }),
               ),
             );
+            yield* acp.handleExtNotification(HERMES_PROCESS_METHOD, HermesProcessReport, (report) =>
+              mapAcpCallbackFailure(
+                Effect.gen(function* () {
+                  yield* logNative(input.threadId, HERMES_PROCESS_METHOD, report);
+                  const ctx = sessions.get(input.threadId);
+                  if (!ctx || ctx.stopped || ctx.acpSessionId !== report.sessionId) return;
+                  yield* emitBackgroundProcessEvents(
+                    ctx,
+                    ctx.backgroundProcesses.report(report, ctx.activeTurnId),
+                  );
+                }),
+              ),
+            );
+            yield* acp.handleExtNotification(
+              HERMES_NOTIFICATION_METHOD,
+              HermesNotification,
+              (notice) =>
+                mapAcpCallbackFailure(
+                  Effect.gen(function* () {
+                    yield* logNative(input.threadId, HERMES_NOTIFICATION_METHOD, notice);
+                    const ctx = sessions.get(input.threadId);
+                    if (!ctx || ctx.stopped || ctx.acpSessionId !== notice.sessionId) return;
+                    ctx.pendingWakes.push(notice.text);
+                    yield* wakeWhenIdle(input.threadId);
+                  }),
+                ),
+            );
             return yield* acp.start();
           }).pipe(
             Effect.mapError((error) =>
@@ -1004,6 +1060,9 @@ export function makeHermesAdapter(
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             delegations: new HermesDelegations(),
+            backgroundProcesses: new HermesBackgroundProcesses(),
+            pendingWakes: [],
+            wakesHeld: false,
             promptsInFlight: 0,
             firstPromptDispatched: undefined,
             currentModelId: boundModelId,
@@ -1093,6 +1152,7 @@ export function makeHermesAdapter(
                     "interrupted",
                     "Hermes ACP disconnected before the child result arrived.",
                   );
+                  yield* emitBackgroundProcessEvents(ctx, ctx.backgroundProcesses.stopAll());
                   return;
                 }
 
@@ -1244,12 +1304,19 @@ export function makeHermesAdapter(
         }).pipe(Effect.scoped),
       );
 
-    const sendTurn: HermesAdapterShape["sendTurn"] = (input) =>
+    /**
+     * One prompt. A user turn releases wakes held by Stop; a wake turn prompts
+     * with Hermes's background-work notices and has no user message of its own.
+     */
+    const runTurn = (input: ProviderSendTurnInput, origin: "user" | "wake") =>
       Effect.gen(function* () {
         const prepared = yield* withThreadLock(
           input.threadId,
           Effect.gen(function* () {
             const ctx = yield* requireSession(input.threadId);
+            if (origin === "user") {
+              ctx.wakesHeld = false;
+            }
             // A sendTurn while a prompt is in flight is a steer: the agent
             // folds the new prompt into the ongoing work, so the active turn
             // id is reused instead of opening a new turn.
@@ -1316,7 +1383,11 @@ export function makeHermesAdapter(
               }
 
               const text = input.input?.trim();
-              if (text && ctx.openingPrompts.length < HERMES_TITLE_PROMPT_LIMIT) {
+              if (
+                origin === "user" &&
+                text &&
+                ctx.openingPrompts.length < HERMES_TITLE_PROMPT_LIMIT
+              ) {
                 ctx.openingPrompts.push(text);
               }
               const attachmentPromptParts = yield* Effect.forEach(
@@ -1693,7 +1764,38 @@ export function makeHermesAdapter(
             }).pipe(Effect.catch(() => Effect.void)),
           ),
         );
+      }).pipe(Effect.ensuring(wakeWhenIdle(input.threadId)));
+
+    const sendTurn: HermesAdapterShape["sendTurn"] = (input) => runTurn(input, "user");
+
+    /**
+     * Prompt with Hermes's background-work notices once no prompt is in
+     * flight, the way Hermes's CLI starts a turn for them. Forked into the
+     * session scope: the notice arrives on the ACP dispatcher, which must stay
+     * free to deliver the prompt's own updates and response.
+     */
+    function wakeWhenIdle(threadId: ThreadId): Effect.Effect<void> {
+      return Effect.suspend(() => {
+        const ctx = sessions.get(threadId);
+        if (
+          !ctx ||
+          ctx.stopped ||
+          ctx.wakesHeld ||
+          ctx.promptsInFlight > 0 ||
+          ctx.pendingWakes.length === 0
+        ) {
+          return Effect.void;
+        }
+        const notices = ctx.pendingWakes.splice(0).join("\n\n");
+        return runTurn({ threadId, input: notices }, "wake").pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Hermes background wake failed.", { cause, threadId }),
+          ),
+          Effect.forkIn(ctx.scope),
+          Effect.asVoid,
+        );
       });
+    }
 
     const interruptTurn: HermesAdapterShape["interruptTurn"] = (threadId, turnId) =>
       Effect.gen(function* () {
@@ -1714,6 +1816,7 @@ export function makeHermesAdapter(
           if (interruptedTurnId !== undefined) {
             ctx.interruptedTurnIds.add(interruptedTurnId);
           }
+          ctx.wakesHeld = true;
           return {
             _tag: "Proceed" as const,
             acpSessionId: ctx.acpSessionId,

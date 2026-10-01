@@ -1,0 +1,423 @@
+diff --git a/acp_adapter/background.py b/acp_adapter/background.py
+new file mode 100644
+index 0000000000..98b599fe59
+--- /dev/null
++++ b/acp_adapter/background.py
+@@ -0,0 +1,210 @@
++"""Report Hermes background work to ACP clients.
++
++ACP turns are client-driven, so Hermes cannot start a turn when a background
++process exits or a detached subagent finishes. The CLI, TUI and gateway inject
++those completion-queue events as the next turn; over ACP nothing drained them,
++so an agent that promised to report back when its watcher finished never did,
++and clients could not tell the work was still running.
++
++Two extension notifications close that gap without changing ACP turn ownership:
++
++* ``_hermes/process``: a ``terminal`` call left a tracked background process
++  running (``status: "running"``), and later that process exited
++  (``status: "exited"`` with ``exitCode`` and ``reason``). Keyed by the
++  ``toolCallId`` that started it, for every background process.
++* ``_hermes/notification``: the text the CLI would inject for this session's
++  completion-queue events (process completions, watch matches, heartbeats,
++  async delegation results), sent only while the session is idle. A client
++  that wants CLI behaviour prompts the session with ``text``.
++
++Clients that do not know these methods ignore them, as ACP requires.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import logging
++import queue
++import threading
++from typing import Any
++
++import acp
++
++logger = logging.getLogger(__name__)
++
++PROCESS_METHOD = "hermes/process"
++NOTIFICATION_METHOD = "hermes/notification"
++
++
++def _notify(conn: acp.Client, loop: asyncio.AbstractEventLoop, method: str, params: dict) -> bool:
++    """Send an extension notification from a worker thread; False when it could not be sent."""
++    from agent.async_utils import safe_schedule_threadsafe
++
++    future = safe_schedule_threadsafe(
++        conn.ext_notification(method, params), loop, logger=logger, log_message=f"Failed to send ACP {method}",
++    )
++    if future is None:
++        return False
++    try:
++        future.result(timeout=5)
++        return True
++    except Exception:
++        logger.debug("Failed to send ACP %s", method, exc_info=True)
++        return False
++
++
++def track_background_process(
++    conn: acp.Client, session_id: str, loop: asyncio.AbstractEventLoop, tool_call_id: str, result: Any,
++) -> None:
++    """Report a ``terminal`` call whose result is a running background process, then its exit."""
++    from tools.process_registry import process_registry
++
++    from .tools import _json_loads_maybe
++
++    data = _json_loads_maybe(result)
++    proc_id = data.get("session_id") if isinstance(data, dict) and not data.get("error") else None
++    proc = process_registry.get(proc_id) if isinstance(proc_id, str) and proc_id else None
++    if proc is None:
++        return
++    params = {"sessionId": session_id, "toolCallId": tool_call_id, "processId": proc.id, "command": proc.command}
++    _notify(conn, loop, PROCESS_METHOD, {**params, "status": "running"})
++
++    def _report_exit() -> None:
++        # Every exit path (reader EOF, kill, lost backend) sets this event.
++        proc._completion_event.wait()
++        _notify(conn, loop, PROCESS_METHOD, {
++            **params, "status": "exited", "exitCode": proc.exit_code, "reason": proc.completion_reason,
++        })
++
++    threading.Thread(target=_report_exit, daemon=True, name=f"acp-process-{proc.id}").start()
++
++
++def _process_notifications_off() -> bool:
++    """``display.background_process_notifications: off`` opts out of process-driven wakes."""
++    try:
++        from hermes_cli.config import load_config
++
++        raw = (load_config().get("display") or {}).get("background_process_notifications")
++    except Exception:
++        return False
++    return raw is False or str(raw or "").strip().lower() == "off"
++
++
++class BackgroundNotifier:
++    """Drain the process-wide completion queue into ``_hermes/notification`` for idle sessions.
++
++    One daemon thread per ACP server. It blocks on the queue, routes each event to
++    the live session whose ``session_key`` it carries (ACP turns run with the ACP
++    session id as their session key), and holds events for a busy session until
++    one of its turns ends. Events no live session owns are dropped, as in the TUI.
++    """
++
++    # Safety net for a turn that ended without reaching ``_finish_turn``.
++    _HELD_RETRY_SECONDS = 5.0
++
++    def __init__(self, session_manager: Any) -> None:
++        self._sessions = session_manager
++        self._conn: acp.Client | None = None
++        self._loop: asyncio.AbstractEventLoop | None = None
++        self._turn_ended = threading.Event()
++        self._thread: threading.Thread | None = None
++
++    def turn_ended(self, conn: acp.Client, loop: asyncio.AbstractEventLoop) -> None:
++        """Start the pump on the first finished turn, then retry held events after each one."""
++        self._conn, self._loop = conn, loop
++        if self._thread is None:
++            self._thread = threading.Thread(target=self._run, daemon=True, name="acp-background-notifier")
++            self._thread.start()
++        self._turn_ended.set()
++
++    def _run(self) -> None:
++        from tools.process_registry import process_registry
++
++        completions = process_registry.completion_queue
++        while True:
++            completions.put(completions.get())  # wait for news, then route it below
++            while True:
++                self._turn_ended.clear()
++                try:
++                    held, idle_owner = self._deliver(process_registry)
++                except Exception:
++                    logger.warning("ACP background notification delivery failed", exc_info=True)
++                    break
++                if not held:
++                    break
++                if not idle_owner:
++                    self._turn_ended.wait(self._HELD_RETRY_SECONDS)
++
++    def _deliver(self, registry: Any) -> tuple[bool, bool]:
++        """One routing pass: deliver owned events to idle sessions, drop orphans, requeue the rest.
++
++        Returns ``(held, idle_owner)``: whether events stay queued, and whether any of
++        them belongs to an idle session (it arrived mid-pass; route it again now)."""
++        from tools.process_registry_notifications import group_process_notifications
++
++        with self._sessions._lock:
++            states = list(self._sessions._sessions.values())
++        busy: set[str] = set()
++        for state in states:
++            with state.runtime_lock:
++                running = state.is_running
++            if running:
++                busy.add(state.session_id)
++                continue
++            drained = registry.drain_notifications(session_key=state.session_id, skip_poll_observed=False)
++            for group in group_process_notifications(drained):
++                self._send(state.session_id, group, registry)
++
++        live = {state.session_id for state in states}
++        held, idle_owner = [], False
++        while True:
++            try:
++                event = registry.completion_queue.get_nowait()
++            except queue.Empty:
++                break
++            key = str(event.get("session_key") or "")
++            is_delegation = event.get("type") == "async_delegation"
++            # Mirrors drain_notifications' routing: an event with no owner at all goes to
++            # any session; a delegation result or another surface's event needs its owner.
++            ownerless = not (key or is_delegation or event.get("origin_ui_session_id"))
++            if key in live or (ownerless and live):
++                held.append(event)
++                idle_owner = idle_owner or (key not in busy if key else len(busy) < len(live))
++                continue
++            if is_delegation:
++                from tools.async_delegation import return_completion_offer
++
++                return_completion_offer(event)
++            logger.debug("Dropping %s notification no live ACP session owns", event.get("type", "completion"))
++        for event in held:
++            registry.completion_queue.put(event)
++        return bool(held), idle_owner
++
++    def _send(self, session_id: str, group: tuple, registry: Any) -> None:
++        from tools.async_delegation import claim_event_delivery, complete_event_delivery, release_event_delivery
++        from tools.process_registry_notifications import (
++            ProcessNotificationBatch, async_delegation_display_text, heartbeat_display_text,
++        )
++
++        first = group[0][0]
++        kind = first.get("type", "completion")
++        # Drained events are consumed either way; with the opt-out, the process
++        # report is the whole delivery. Subagent results are not process events.
++        if kind != "async_delegation" and _process_notifications_off():
++            return
++        claimed = [(event, text, claim) for event, text in group
++                   if (claim := claim_event_delivery(event, "acp")) is not None]
++        if not claimed:
++            return
++        if kind == "completion":
++            batch = ProcessNotificationBatch(tuple((event, text) for event, text, _claim in claimed))
++            text, title = batch.render(registry), batch.display_text(registry)
++        else:
++            text = claimed[0][1]
++            title = (async_delegation_display_text(first) if kind == "async_delegation"
++                     else heartbeat_display_text(first) if kind == "heartbeat" else text)
++        sent = text is None or _notify(self._conn, self._loop, NOTIFICATION_METHOD, {
++            "sessionId": session_id, "kind": kind, "title": title, "text": text,
++        })
++        for event, _text, claim in claimed:
++            (complete_event_delivery if sent else release_event_delivery)(event, claim)
+diff --git a/acp_adapter/events.py b/acp_adapter/events.py
+index 7bcc1d0598..b177d5e371 100644
+--- a/acp_adapter/events.py
++++ b/acp_adapter/events.py
+@@ -89,6 +89,10 @@ def close_tool_call(
+         tc_id, name, result=str(result) if result is not None else None,
+         function_args=meta.get("args"), snapshot=meta.get("snapshot"), is_error=is_error,
+     ))
++    if name == "terminal" and not is_error:
++        from .background import track_background_process
++
++        track_background_process(conn, session_id, loop, tc_id, result)
+     if not queue:
+         tool_call_ids.pop(name, None)
+     return tc_id
+diff --git a/acp_adapter/server.py b/acp_adapter/server.py
+index 2ba7d0e8ff..efe2802218 100644
+--- a/acp_adapter/server.py
++++ b/acp_adapter/server.py
+@@ -25,6 +25,7 @@ from acp.schema import (
+ )
+ 
+ from acp_adapter.auth import TERMINAL_SETUP_AUTH_METHOD_ID, build_auth_methods, detect_provider
++from acp_adapter.background import BackgroundNotifier
+ from acp_adapter.commands import SlashCommandsMixin, _estimate_tokens
+ from acp_adapter.content import PromptBlock, _content_blocks_to_openai_user_content, _extract_text
+ from acp_adapter.events import (
+@@ -255,6 +256,7 @@ class HermesACPAgent(SlashCommandsMixin, acp.Agent):
+         super().__init__()
+         self.session_manager = session_manager or SessionManager()
+         self._conn: Optional[acp.Client] = None
++        self._background = BackgroundNotifier(self.session_manager)
+ 
+     # ---- Connection lifecycle -----------------------------------------------
+ 
+@@ -994,6 +996,9 @@ class HermesACPAgent(SlashCommandsMixin, acp.Agent):
+                 state.is_running = False
+                 state.current_prompt_text = ""
+             await self._drain_queued_prompts(state, session_id, conn)
++            if conn and (background := getattr(self, "_background", None)) is not None:
++                # Background work that finished during the turn is reported now it is idle.
++                background.turn_ended(conn, asyncio.get_running_loop())
+ 
+         usage = None
+         if any(result.get(k) is not None for k in ("prompt_tokens", "completion_tokens", "total_tokens")):
+diff --git a/tests/acp_adapter/test_background_reports.py b/tests/acp_adapter/test_background_reports.py
+new file mode 100644
+index 0000000000..8115acf658
+--- /dev/null
++++ b/tests/acp_adapter/test_background_reports.py
+@@ -0,0 +1,156 @@
++"""Background processes and completion-queue events reach ACP clients."""
++
++import asyncio
++import json
++import queue
++import threading
++from types import SimpleNamespace
++
++import pytest
++
++from acp_adapter.background import NOTIFICATION_METHOD, PROCESS_METHOD, BackgroundNotifier, track_background_process
++
++
++class _Client:
++    """Records extension notifications on a real event loop thread."""
++
++    def __init__(self):
++        self.sent = []
++        self.arrived = threading.Condition()
++        self.loop = asyncio.new_event_loop()
++        threading.Thread(target=self.loop.run_forever, daemon=True).start()
++
++    async def ext_notification(self, method, params):
++        with self.arrived:
++            self.sent.append((method, params))
++            self.arrived.notify_all()
++
++    def wait_for(self, count):
++        with self.arrived:
++            assert self.arrived.wait_for(lambda: len(self.sent) >= count, timeout=5), self.sent
++        return self.sent[:count]
++
++
++@pytest.fixture
++def client():
++    client = _Client()
++    yield client
++    client.loop.call_soon_threadsafe(client.loop.stop)
++
++
++@pytest.fixture
++def registry(monkeypatch):
++    import tools.process_registry as module
++
++    registry = module.ProcessRegistry()
++    registry._completions_restored = True  # no durable ledger replay in these tests
++    monkeypatch.setattr(module, "process_registry", registry)
++    return registry
++
++
++class _Sessions:
++    """The two SessionManager attributes the notifier reads."""
++
++    def __init__(self, *session_ids):
++        self._lock = threading.Lock()
++        self._sessions = {
++            sid: SimpleNamespace(session_id=sid, is_running=False, runtime_lock=threading.Lock())
++            for sid in session_ids
++        }
++
++
++def _record_passes(notifier, monkeypatch):
++    """Queue of each routing pass's ``(held, idle_owner)`` result, put once the pass is done."""
++    passes = queue.Queue()
++    deliver = notifier._deliver
++    monkeypatch.setattr(notifier, "_deliver", lambda reg: (result := deliver(reg), passes.put(result))[0])
++    return passes
++
++
++def _completion(registry, session_key, *, proc_id="proc_aaaa1111", exit_code=1):
++    registry.completion_queue.put({
++        "type": "completion", "session_id": proc_id, "session_key": session_key,
++        "command": "gh pr checks 94", "exit_code": exit_code, "output": "X  Test Server 1",
++    })
++
++
++@pytest.mark.platforms("posix")
++def test_background_terminal_reports_running_then_exit(client, registry, tmp_path):
++    proc = registry.spawn_local("exit 3", cwd=str(tmp_path), task_id="acp-1", session_key="acp-1")
++    result = json.dumps({"output": "Background process started", "session_id": proc.id, "pid": proc.pid})
++
++    track_background_process(client, "acp-1", client.loop, "tc-1", result)
++
++    started, exited = client.wait_for(2)
++    common = {"sessionId": "acp-1", "toolCallId": "tc-1", "processId": proc.id, "command": "exit 3"}
++    assert started == (PROCESS_METHOD, {**common, "status": "running"})
++    assert exited == (PROCESS_METHOD, {**common, "status": "exited", "exitCode": 3, "reason": "exited"})
++
++
++def test_foreground_terminal_reports_nothing(client, registry):
++    track_background_process(client, "acp-1", client.loop, "tc-1", json.dumps({"output": "hi", "exit_code": 0}))
++    track_background_process(client, "acp-1", client.loop, "tc-2", json.dumps({"session_id": "proc_missing"}))
++
++    assert client.sent == []
++
++
++def test_idle_session_gets_the_cli_notification_text(client, registry):
++    notifier = BackgroundNotifier(_Sessions("acp-1"))
++    _completion(registry, "acp-1")
++
++    notifier.turn_ended(client, client.loop)
++
++    [(method, params)] = client.wait_for(1)
++    assert method == NOTIFICATION_METHOD
++    assert params["sessionId"] == "acp-1"
++    assert params["kind"] == "completion"
++    assert params["title"] == "Background Process Failed (exit 1): gh pr checks 94"
++    assert params["text"].startswith("[IMPORTANT: Background process proc_aaaa1111 exited (exit code 1)")
++    assert "X  Test Server 1" in params["text"]
++    assert registry.completion_queue.empty()
++
++
++def test_busy_session_is_notified_once_its_turn_ends(client, registry, monkeypatch):
++    sessions = _Sessions("acp-1")
++    sessions._sessions["acp-1"].is_running = True
++    notifier = BackgroundNotifier(sessions)
++    passes = _record_passes(notifier, monkeypatch)
++    notifier.turn_ended(client, client.loop)
++    _completion(registry, "acp-1")
++
++    assert passes.get(timeout=5) == (True, False)  # held for the running turn
++    assert client.sent == []
++
++    sessions._sessions["acp-1"].is_running = False
++    notifier.turn_ended(client, client.loop)
++
++    [(_method, params)] = client.wait_for(1)
++    assert params["sessionId"] == "acp-1"
++    assert registry.completion_queue.empty()
++
++
++def test_events_for_other_sessions_never_reach_this_one(client, registry, monkeypatch):
++    notifier = BackgroundNotifier(_Sessions("acp-1", "acp-2"))
++    passes = _record_passes(notifier, monkeypatch)
++    _completion(registry, "gone-session", proc_id="proc_orphan01")
++    _completion(registry, "acp-2", proc_id="proc_second02")
++
++    notifier.turn_ended(client, client.loop)
++
++    assert passes.get(timeout=5) == (False, False)  # the orphan is dropped, not requeued forever
++    [(_method, params)] = client.sent
++    assert params["sessionId"] == "acp-2"
++    assert "proc_second02" in params["text"]
++
++
++def test_completion_the_agent_already_read_is_not_resent(client, registry):
++    notifier = BackgroundNotifier(_Sessions("acp-1"))
++    registry._completion_consumed.add("proc_consumed1")
++    _completion(registry, "acp-1", proc_id="proc_consumed1")
++    _completion(registry, "acp-1", proc_id="proc_fresh0002")
++
++    notifier.turn_ended(client, client.loop)
++
++    [(_method, params)] = client.wait_for(1)
++    assert "proc_fresh0002" in params["text"]
++    assert "proc_consumed1" not in params["text"]

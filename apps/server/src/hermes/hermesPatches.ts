@@ -42,11 +42,18 @@ export const HERMES_PATCHES: ReadonlyArray<HermesPatchDefinition> = [
     content: bundledPatch("0003-acp-delegation-progress.patch"),
   },
   {
+    id: HermesPatchId.make("acp-background-reports"),
+    title: "Background process reports",
+    neededFor:
+      "Monitoring status while Hermes's background processes run, and waking the agent when they finish. Without it, a background command reads as finished the moment it starts, and the agent never hears that it is done.",
+    content: bundledPatch("0004-acp-background-reports.patch"),
+  },
+  {
     id: HermesPatchId.make("gateway-multiplex-webhook-session-close"),
     title: "Finished webhook runs in profiles",
     neededFor:
       "Multi-profile gateways, so webhook runs in a profile are marked finished. Without it, T3 Code shows those runs as failed after two hours.",
-    content: bundledPatch("0004-gateway-multiplex-webhook-session-close.patch"),
+    content: bundledPatch("0005-gateway-multiplex-webhook-session-close.patch"),
   },
 ];
 

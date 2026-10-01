@@ -22,6 +22,38 @@ const decodeTestUpdates = Schema.decodeUnknownEffect(
   Schema.Struct({ updates: Schema.Array(AcpSchema.SessionNotification) }),
 );
 let pendingHermesDelegation: string | undefined;
+/**
+ * `T3_ACP_HERMES_BACKGROUND=1`: the first prompt leaves a patched-Hermes background process
+ * running. `T3_ACP_HERMES_BACKGROUND_FINISH` says when it exits: `next-prompt` (default, reported
+ * silently), `after-turn` or `cancel` (both followed by Hermes's idle `_hermes/notification`).
+ */
+const hermesBackground = process.env.T3_ACP_HERMES_BACKGROUND === "1";
+const hermesBackgroundFinish = process.env.T3_ACP_HERMES_BACKGROUND_FINISH ?? "next-prompt";
+const hermesCiProcess = {
+  processId: "proc_ci000001",
+  command: "gh pr checks 94 --watch\necho done",
+};
+let runningHermesProcess: { sessionId: string; toolCallId: string } | undefined;
+function finishHermesProcess(notify: boolean) {
+  const finished = runningHermesProcess;
+  if (!finished) return;
+  runningHermesProcess = undefined;
+  writeJsonRpcNotification("_hermes/process", {
+    ...finished,
+    ...hermesCiProcess,
+    status: "exited",
+    exitCode: 1,
+    reason: "exited",
+  });
+  if (notify) {
+    writeJsonRpcNotification("_hermes/notification", {
+      sessionId: finished.sessionId,
+      kind: "completion",
+      title: "Background Process Failed (exit 1): gh pr checks 94 --watch echo done",
+      text: "[IMPORTANT: Background process proc_ci000001 exited (exit code 1).\nCommand: gh pr checks 94 --watch\nOutput:\nX  Test Server 1]",
+    });
+  }
+}
 const hermesDelegation = process.env.T3_ACP_HERMES_DELEGATION;
 const hermesDelegationDelayMs = Math.max(
   0,
@@ -640,6 +672,19 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      if (hermesBackgroundFinish === "cancel" && runningHermesProcess) {
+        const started = runningHermesProcess;
+        yield* Effect.sync(() => {
+          finishHermesProcess(true);
+          // A later report: once it surfaces, the client has handled the notice before it.
+          writeJsonRpcNotification("_hermes/process", {
+            ...started,
+            processId: "proc_next0002",
+            command: "tail -f server.log",
+            status: "running",
+          });
+        });
+      }
       if (process.env.T3_ACP_HERMES_DELEGATION_EXIT_ON_CANCEL === "1") {
         return yield* Effect.sync(() => process.exit(19));
       }
@@ -677,6 +722,69 @@ const program = Effect.gen(function* () {
         request.prompt.some((part) => part.type === "text" && part.text === "crash now")
       ) {
         return yield* Effect.sync(() => process.exit(23));
+      }
+
+      if (hermesBackground) {
+        const promptText = request.prompt
+          .flatMap((part) => (part.type === "text" ? [part.text] : []))
+          .join("\n");
+        if (promptText.startsWith("[IMPORTANT:") || runningHermesProcess) {
+          // The watcher has finished by the next prompt, whatever it is.
+          finishHermesProcess(false);
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: {
+                type: "text",
+                text: promptText.startsWith("[IMPORTANT:")
+                  ? "CI failed on Test Server 1; looking into it."
+                  : "Noted.",
+              },
+            },
+          });
+          return { stopReason: "end_turn" };
+        }
+        const toolCallId = `hermes-terminal-${promptCount}`;
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "terminal: gh pr checks 94 --watch",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: "Background process started" },
+              },
+            ],
+          },
+        });
+        runningHermesProcess = { sessionId: requestedSessionId, toolCallId };
+        writeJsonRpcNotification("_hermes/process", {
+          ...runningHermesProcess,
+          ...hermesCiProcess,
+          status: "running",
+        });
+        if (hermesBackgroundFinish === "after-turn") {
+          // Exits just after this prompt returns, while the session is idle.
+          yield* Effect.forkDetach(
+            Effect.sleep("20 millis").pipe(
+              Effect.andThen(Effect.sync(() => finishHermesProcess(true))),
+            ),
+          );
+        }
+        return { stopReason: "end_turn" };
       }
 
       if (hermesDelegation === "stock" || hermesDelegation === "progress") {
