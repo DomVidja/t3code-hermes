@@ -811,7 +811,10 @@ jobs:
             key="${key%.zip}"
             key="${key%.tar.gz}"
             name="$(node --input-type=module -e 'const { npmPlatformPackageName } = await import("./scripts/build-npm-platform-packages.ts"); console.log(npmPlatformPackageName(process.argv[1]));' "$key")"
-            status="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$name")"
+            # Retry transport errors (a single connection reset used to fail the
+            # whole release after every build finished). A 404 is not a curl
+            # error without --fail, so it is never retried.
+            status="$(curl -sS --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$name")"
             case "$status" in
               200) ;;
               404)
