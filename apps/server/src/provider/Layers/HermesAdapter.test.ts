@@ -1326,4 +1326,102 @@ it.layer(hermesAdapterTestLayer)("Hermes background work", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  const findDelta = (events: ReadonlyArray<ProviderRuntimeEvent>, text: string) =>
+    events.find((event) => event.type === "content.delta" && event.payload.delta === text);
+
+  const makeBackgroundRequestLog = Effect.acquireRelease(
+    Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hermes-background-"))),
+    (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
+  ).pipe(Effect.map((dir) => NodePath.join(dir, "requests.jsonl")));
+
+  const promptTexts = (requestLogPath: string) =>
+    Effect.promise(() => readJsonLines(requestLogPath)).pipe(
+      Effect.map((requests) =>
+        requests
+          .filter((request) => request.method === "session/prompt")
+          .map(
+            (request) =>
+              (request.params as { prompt: Array<{ text?: string }> }).prompt[0]?.text ?? "",
+          ),
+      ),
+    );
+
+  it.effect("wakes the agent with Hermes's notice once its background work finishes", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-background-wake");
+      const requestLogPath = yield* makeBackgroundRequestLog;
+      const wrapper = yield* Effect.promise(() =>
+        makeMockHermesWrapper({
+          T3_ACP_HERMES_BACKGROUND: "1",
+          T3_ACP_HERMES_BACKGROUND_FINISH: "after-turn",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapper);
+      const events: ProviderRuntimeEvent[] = [];
+      const woke = yield* Deferred.make<void>();
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (events.filter((item) => item.type === "turn.completed").length === 2)
+            yield* Deferred.succeed(woke, undefined);
+        }),
+      ).pipe(Effect.forkChild);
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+
+      const first = yield* adapter.sendTurn({ threadId, input: "watch CI", attachments: [] });
+      yield* Deferred.await(woke);
+
+      const [, wake] = events.filter((event) => event.type === "turn.started");
+      assert.isDefined(wake);
+      assert.notEqual(wake?.turnId, first.turnId);
+      assert.equal(
+        findDelta(events, "CI failed on Test Server 1; looking into it.")?.turnId,
+        wake?.turnId,
+      );
+      const [, wakePrompt] = yield* promptTexts(requestLogPath);
+      assert.match(wakePrompt ?? "", /^\[IMPORTANT: Background process proc_ci000001 exited/);
+      assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("holds a wake after Stop until the user's next turn", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-background-wake-held");
+      const requestLogPath = yield* makeBackgroundRequestLog;
+      const wrapper = yield* Effect.promise(() =>
+        makeMockHermesWrapper({
+          T3_ACP_HERMES_BACKGROUND: "1",
+          T3_ACP_HERMES_BACKGROUND_FINISH: "cancel",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapper);
+      const noticeHandled = yield* Deferred.make<void>();
+      const woke = yield* Deferred.make<void>();
+      let completedTurns = 0;
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "task.started" && event.payload.taskId === "proc_next0002"
+          ? Deferred.succeed(noticeHandled, undefined)
+          : event.type === "turn.completed" && ++completedTurns === 3
+            ? Deferred.succeed(woke, undefined)
+            : Effect.void,
+      ).pipe(Effect.forkChild);
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+
+      yield* adapter.sendTurn({ threadId, input: "watch CI", attachments: [] });
+      // Stop, after which the watcher finishes and Hermes sends its notice.
+      yield* adapter.interruptTurn(threadId);
+      yield* Deferred.await(noticeHandled);
+      yield* adapter.sendTurn({ threadId, input: "what happened?", attachments: [] });
+      yield* Deferred.await(woke);
+
+      const prompts = yield* promptTexts(requestLogPath);
+      assert.deepEqual(prompts.slice(0, 2), ["watch CI", "what happened?"]);
+      assert.match(prompts[2] ?? "", /^\[IMPORTANT: Background process proc_ci000001 exited/);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });

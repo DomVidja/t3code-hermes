@@ -1,8 +1,8 @@
 /**
- * Hermes background processes over ACP. Only the carried
- * `acp-background-reports` patch (infra/hermes) sends `_hermes/process`; stock
- * Hermes reports nothing once a background terminal call returns, so without
- * the patch no task is ever opened and none can be left running.
+ * Hermes background work over ACP. Only the carried `acp-background-reports`
+ * patch (infra/hermes) sends `_hermes/process` and `_hermes/notification`;
+ * stock Hermes reports nothing once a background terminal call returns, so
+ * without the patch no task is ever opened and none can be left running.
  */
 import {
   RuntimeTaskId,
@@ -25,6 +25,21 @@ export const HermesProcessReport = Schema.Struct({
   reason: Schema.optional(Schema.String),
 });
 export type HermesProcessReport = typeof HermesProcessReport.Type;
+
+export const HERMES_NOTIFICATION_METHOD = "_hermes/notification";
+
+/**
+ * Text Hermes's CLI would inject as the next turn when background work
+ * finishes (a process exit, a watch match, a subagent result). Hermes sends it
+ * only while the session is idle.
+ */
+export const HermesNotification = Schema.Struct({
+  sessionId: Schema.String,
+  kind: Schema.String,
+  title: Schema.optional(Schema.NullOr(Schema.String)),
+  text: Schema.String,
+});
+export type HermesNotification = typeof HermesNotification.Type;
 
 type TaskEvent = (
   | Pick<ProviderRuntimeTaskStartedEvent, "type" | "payload">

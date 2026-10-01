@@ -45,7 +45,7 @@ export const HERMES_PATCHES: ReadonlyArray<HermesPatchDefinition> = [
     id: HermesPatchId.make("acp-background-reports"),
     title: "Background process reports",
     neededFor:
-      "Monitoring status while Hermes's background processes run. Without it, a background command reads as finished the moment it starts.",
+      "Monitoring status while Hermes's background processes run, and waking the agent when they finish. Without it, a background command reads as finished the moment it starts, and the agent never hears that it is done.",
     content: bundledPatch("0004-acp-background-reports.patch"),
   },
 ];
