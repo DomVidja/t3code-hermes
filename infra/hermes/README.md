@@ -113,3 +113,27 @@ in Hermes's `config.yaml` still suppresses process notifications; process status
 
 The patch's `tests/acp_adapter/test_background_reports.py` spawns real processes against an isolated
 process registry. Run it with the rest of `tests/acp_adapter/` in a scratch checkout, as for `0003`.
+
+## `0005-gateway-multiplex-webhook-session-close.patch`
+
+**Needed by:** gateways with `gateway.multiplex_profiles: true` that serve webhook routes for a
+named profile (`/p/<profile>/webhooks/...`). Without it, those runs never get `ended_at`, so T3
+Code reports them as failed once its two-hour staleness window passes, and Hermes's
+`prune_sessions` never reaps the rows.
+
+The run writes its session row to `profiles/<profile>/state.db`, but the webhook adapter's
+completion hook runs outside the profile scope and ended the session in the launch home's
+`state.db`, which has no such row. The patch closes it in the store `SessionStore._db_for_key`
+resolves from the session key. Single-profile gateways and default-profile keys are unchanged.
+
+Verified against hermes-agent `357f51c491` (`main`, 2026-10-01) and `8d30c4eaab` with `0003`
+applied. It touches only the gateway, so it is independent of `0002` through `0004`.
+
+```bash
+cd ~/.hermes/hermes-agent
+git apply /path/to/t3code/infra/hermes/0005-gateway-multiplex-webhook-session-close.patch
+hermes gateway restart
+```
+
+The patch's test in `tests/gateway/test_webhook_session_close.py` runs a profile webhook delivery
+through the real adapter pipeline on a multiplexed store.
