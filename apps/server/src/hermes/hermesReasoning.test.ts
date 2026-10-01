@@ -650,7 +650,7 @@ describe("buildHermesModelCapabilities", () => {
   });
   const context = { cache, config: { agent: { reasoning_effort: "high" } }, configFile: "/x" };
 
-  it("offers and accepts reasoning for Hyperion's custom proxy model", () => {
+  it("offers and accepts reasoning for a custom proxy model", () => {
     const slug = "cliproxyapi:gpt-5.6-luna";
     const descriptor = buildHermesModelCapabilities({ slug, context }).optionDescriptors?.[0];
     expect(descriptor?.type === "select" && descriptor.options.map((option) => option.id)).toEqual([

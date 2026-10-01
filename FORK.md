@@ -9,36 +9,39 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 
 ## What this fork changes
 
-| Change                                              | Where                                                                                                                                                            |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hermes` provider driver (ACP over stdio)           | `apps/server/src/provider/{Drivers,Layers,Services,acp}/Hermes*.ts`                                                                                              |
-| Hermes delegated child agents                       | `apps/server/src/provider/acp/HermesDelegation.ts`, optional live-progress patch in `infra/hermes/`                                                              |
-| Hermes text generation (titles, commit messages, …) | `apps/server/src/textGeneration/HermesTextGeneration.ts`                                                                                                         |
-| `HermesSettings` + driver registration              | `packages/contracts/src/{settings,model}.ts`, `provider/builtInDrivers.ts`                                                                                       |
-| Hermes branding in the clients                      | `apps/web/src/components/**`, `apps/mobile/src/components/ProviderIcon.tsx`                                                                                      |
-| Auto-bootstrap default provider is overridable      | `apps/server/src/serverRuntimeStartup.ts`                                                                                                                        |
-| Model picker falls back to a populated provider     | `apps/web/src/components/chat/ModelPickerContent.tsx`                                                                                                            |
-| ACP `available_commands_update` / `usage_update`    | `apps/server/src/provider/acp/{AcpRuntimeModel,AcpSessionRuntime}.ts`                                                                                            |
-| Shared slash-command dedupe (was Claude-private)    | `apps/server/src/provider/slashCommands.ts`                                                                                                                      |
-| Hermes Skills panel (learning history)              | `apps/server/src/hermes/HermesSkillsService.ts`, `packages/contracts/src/hermesSkills.ts`, [guide](./docs/user/hermes-skills.md)                                 |
-| Hermes Tasks and delivery notifications             | `apps/server/src/hermes/`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                             |
-| Hermes Memory panel (Hindsight)                     | `apps/server/src/integrations/hindsight/`, `packages/contracts/src/hindsight.ts`, `apps/web/src/{state/hindsight.ts,components/hermes/HermesMemoryTab.tsx}`      |
-| Hermes built-in memory (browse and edit)            | `apps/server/src/hermes/HermesMemoryService.ts`, `packages/contracts/src/hermesMemory.ts`, `packages/client-runtime/src/state/hermesMemory.ts`                   |
-| Reasoning-effort selector (Hermes `config.yaml`)    | `apps/server/src/hermes/hermesReasoning*.ts`                                                                                                                     |
-| Central Hermes execution on shell-only SSH targets  | `infra/hermes/0002-acp-central-ssh-execution.patch`                                                                                                              |
-| Hermes Patches tab (applies the carried patches)    | `apps/server/src/hermes/{HermesPatchService,hermesPatches}.ts`, `packages/contracts/src/hermesPatches.ts`, `apps/web/src/components/hermes/HermesPatchesTab.tsx` |
-| `triage` files on the fork, not upstream            | `.github/triage/PLAYBOOK.md`, `apps/server/src/cli/triagePrompt.ts`                                                                                              |
-| Telemetry reports to the fork's PostHog project     | `apps/server/src/telemetry/AnalyticsService.ts`                                                                                                                  |
-| Opt-in skill and memory rows in the work log        | `packages/client-runtime/src/work-log/agentActivity.ts`                                                                                                          |
+| Change                                                                                        | Where                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Separate install: T3 Hermes app, CLI, and data                                                | `t3-hermes` CLI, `~/.t3-hermes` / `T3HERMES_HOME` (`apps/server/src/os-jank.ts`), `apps/desktop/package.json`, `apps/mobile/app.config.ts`, `assets/hermes/`                                            |
+| `hermes` provider driver (ACP over stdio)                                                     | `apps/server/src/provider/{Drivers,Layers,Services,acp}/Hermes*.ts`                                                                                                                                     |
+| Hermes delegated child agents                                                                 | `apps/server/src/provider/acp/HermesDelegation.ts`, optional live-progress patch in `infra/hermes/`                                                                                                     |
+| Hermes text generation (titles, commit messages, …)                                           | `apps/server/src/textGeneration/HermesTextGeneration.ts`                                                                                                                                                |
+| `HermesSettings` + driver registration                                                        | `packages/contracts/src/{settings,model}.ts`, `provider/builtInDrivers.ts`                                                                                                                              |
+| Hermes provider icon in the clients                                                           | `apps/web/src/components/Icons.tsx`, `apps/mobile/src/components/ProviderIcon.tsx`                                                                                                                      |
+| Auto-bootstrap default provider is overridable                                                | `apps/server/src/serverRuntimeStartup.ts`                                                                                                                                                               |
+| Model picker falls back to a populated provider                                               | `apps/web/src/components/chat/ModelPickerContent.tsx`                                                                                                                                                   |
+| ACP `usage_update` and steering mid-prompt                                                    | `apps/server/src/provider/acp/{AcpRuntimeModel,AcpSessionRuntime}.ts`                                                                                                                                   |
+| Shared slash-command dedupe (was Claude-private)                                              | `apps/server/src/provider/slashCommands.ts`                                                                                                                                                             |
+| Hermes panel on mobile                                                                        | `apps/mobile/src/features/hermes/`, `apps/mobile/src/state/hermes*.ts`                                                                                                                                  |
+| Hermes Skills panel ([guide](./docs/user/hermes-skills.md))                                   | `apps/server/src/hermes/HermesSkillsService.ts`, `packages/contracts/src/hermesSkills.ts`                                                                                                               |
+| Hermes Tasks and delivery notifications ([guide](./docs/user/hermes-tasks.md))                | `apps/server/src/hermes/{HermesCronService,hermesCron*}.ts`, `packages/contracts/src/hermesCron.ts`, `apps/web/src/components/hermes/`                                                                  |
+| Hermes runs mirrored as threads ([guide](./docs/user/hermes-tasks.md#follow-runs-as-threads)) | `apps/server/src/hermes/{HermesRunService,hermesRun*}.ts`, `packages/contracts/src/hermesRuns.ts`, `apps/web/src/components/settings/HermesRunsSettings.tsx`                                            |
+| Hermes Memory: built-in notes and Hindsight ([guide](./docs/user/hermes-memory.md))           | `apps/server/src/hermes/HermesMemoryService.ts`, `apps/server/src/integrations/hindsight/`, `packages/contracts/src/{hermesMemory,hindsight}.ts`, `apps/web/src/components/settings/MemorySettings.tsx` |
+| Reasoning-effort selector ([guide](./docs/user/hermes-reasoning.md))                          | `apps/server/src/hermes/hermesReasoning*.ts`                                                                                                                                                            |
+| Hermes Patches tab ([guide](./docs/user/hermes-patches.md))                                   | `apps/server/src/hermes/{HermesPatchService,hermesPatches}.ts`, `infra/hermes/*.patch`, `scripts/generate-hermes-patches.ts`                                                                            |
+| Hermes usage totals                                                                           | `apps/server/src/usage/usageHermes.ts`                                                                                                                                                                  |
+| Opt-in skill and memory rows in the work log                                                  | `packages/client-runtime/src/work-log/agentActivity.ts`                                                                                                                                                 |
+| Sidebar cards outlined with their status                                                      | `apps/web/src/components/ThreadStatusRing.tsx`                                                                                                                                                          |
+| OpenCode Go usage limits                                                                      | `apps/server/src/provider/openCodeGo*.ts`                                                                                                                                                               |
+| Model hub settings on mobile                                                                  | `apps/mobile/src/features/settings/EnvironmentHubSettings.tsx`                                                                                                                                          |
+| Triage and telemetry point at the fork                                                        | `apps/server/src/cli/triagePrompt.ts`, `apps/server/src/telemetry/AnalyticsService.ts`                                                                                                                  |
 
-The auto-bootstrap and model-picker rows are not Hermes-specific but matter on Hermes-only hosts.
-The ACP session-update and slash-command-dedupe rows are not Hermes-specific at all — they are
-upstream-shaped additions that any ACP provider (Cursor, Grok) picks up for free. Upstream
-hardcodes `codex` as
-the provider stamped onto auto-bootstrapped projects, and the model picker opens on whatever
-instance the thread is bound to — so on a machine with no Codex CLI you get a project wired to a
-provider with no models and a picker that renders "No models found" with no hint that other
-providers are populated.
+Upstream hardcodes `codex` as the provider stamped onto auto-bootstrapped projects, and the model
+picker opens on whatever instance the thread is bound to. On a machine with no Codex CLI that gives
+a project wired to a provider with no models, and a picker that says "No models found" with no hint
+that other providers are populated. Those two rows fix that for any single-provider host; set
+`T3CODE_BOOTSTRAP_PROVIDER_INSTANCE` and `T3CODE_BOOTSTRAP_MODEL` to choose the bootstrap pair.
+Headless `serve`, which the background service runs, never auto-bootstraps. The ACP
+and slash-command rows are not Hermes-specific either: Cursor and Grok pick them up for free.
 
 The Hermes driver reuses the existing ACP runtime (`apps/server/src/provider/acp/`) that already
 backs Cursor and Grok, so it inherits streaming, tool-call cards, approvals, session resume, and
@@ -46,12 +49,12 @@ model switching. See [docs/internals/providers.md](./docs/internals/providers.md
 
 ## Requirements
 
-- **Node `^24.13.1`** — the server runs directly from TypeScript source via Node's type stripping.
-- **pnpm 11.10.0** — `corepack enable && corepack prepare pnpm@11.10.0 --activate`.
+- **A host the CLI is built for:** Linux x64/arm64, Apple Silicon macOS, or Windows. The CLI is a
+  self-contained executable; Node.js is only needed to run `npx`. The background service needs
+  systemd user services (Linux) or launchd (macOS).
 - **Hermes Agent with the ACP adapter.** The ACP adapter was verified against **v0.20.0 (2026.8.3)**;
   cron files and execution ledgers were verified against **v0.20.2**. The adapter lives
   in the `acp_adapter` package of the Hermes checkout and needs the `acp` Python dependency.
-- A C toolchain (`build-essential` or equivalent) — some dependencies build native modules.
 
 Confirm Hermes can speak ACP before touching T3 Code. This should log
 `ACP client connected` / `Initialize from unknown (protocol v1)` on stderr:
@@ -61,32 +64,77 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
   | hermes acp
 ```
 
-If `hermes` is not on your `PATH` it is usually at `~/.hermes/hermes-agent/venv/bin/hermes`. Note
-the absolute path — you will need it below.
+If `hermes` is not on your `PATH` it is usually at `~/.hermes/hermes-agent/venv/bin/hermes`.
 
-## Install and run
+## Install
+
+For a desktop install, download the app from
+[Releases](https://github.com/NateWeav/t3code-hermes/releases); see
+[docs/user/install.md](./docs/user/install.md). It bundles its own server. The rest of this section
+is for an always-on server.
 
 ```bash
-git clone <this-repo-url> t3code && cd t3code
-pnpm install --frozen-lockfile
-pnpm --filter @t3tools/web build     # only the web app needs a build step
-node apps/server/src/bin.ts start --no-browser
+npx t3-hermes@nightly service install   # install and start the background service
+npx t3-hermes@nightly pair --tailscale  # publish it on your tailnet and print a pairing link
 ```
 
-The server resolves the built web assets at `apps/web/dist` relative to itself, so no other package
-needs building. Add `--host <ip>` and `--port <port>` to bind somewhere other than loopback, and
-pass a directory argument to set the working directory used for provider sessions.
+Always ask for `@nightly`. The fork publishes only nightlies, and npm's `latest` tag for
+`t3-hermes` is an old build that nothing updates.
 
-Mint a login (prints a URL and QR code):
+`service install` downloads the matching CLI release into `~/.t3-hermes/runtime/versions/`,
+writes a `t3-hermes.service` systemd user unit (a launchd agent on macOS), enables lingering so it
+survives logout and reboot, and starts it. It runs the release, not the npx cache, so nothing else
+needs to stay installed. State lives in `~/.t3-hermes/userdata`, separate from upstream T3 Code's
+`~/.t3`.
+
+| Task                    | Command                                   |
+| ----------------------- | ----------------------------------------- |
+| Status and log location | `npx t3-hermes@nightly service status`    |
+| Move to a newer nightly | `npx t3-hermes@nightly update`            |
+| Restart                 | `npx t3-hermes@nightly service restart`   |
+| Remove                  | `npx t3-hermes@nightly service uninstall` |
+| New pairing link        | `npx t3-hermes@nightly pair --tailscale`  |
+
+Connected clients also offer **Update server** when the host is behind. The service runs headless
+`serve`, so it does not auto-create a project. Add one from the client. See
+[docs/user/background-service.md](./docs/user/background-service.md) for troubleshooting. To work
+on the fork itself, see [docs/operations/development.md](./docs/operations/development.md).
+
+**Reaching it.** The service listens on `127.0.0.1:4773`. `pair --tailscale` fronts it with
+Tailscale Serve over HTTPS, and that mapping survives restarts. To bind a LAN or tailnet address
+directly instead, add a drop-in, which `service install` leaves alone:
 
 ```bash
-node apps/server/src/bin.ts pair --ttl 2h
+mkdir -p ~/.config/systemd/user/t3-hermes.service.d
+printf '[Service]\nEnvironment=T3CODE_HOST=<private-ip>\n' \
+  > ~/.config/systemd/user/t3-hermes.service.d/host.conf
+systemctl --user daemon-reload && npx t3-hermes@nightly service restart
+npx t3-hermes@nightly pair
+```
+
+T3 Connect is unavailable: fork builds ship with it disabled (see "CI on the fork").
+
+**Bind deliberately.** The server controls agents on the host, which is remote code execution by
+design. Bind to a private interface: a Tailscale address, or loopback behind a reverse proxy.
+Do not bind `0.0.0.0` on a machine with a public IP, and do not put it behind Tailscale Funnel.
+
+**Migrating from a source-checkout unit.** Older versions of this file had you hand-roll a
+`t3code.service` that ran `apps/server/src/bin.ts`. It uses the same `~/.t3-hermes` data, so
+threads carry over:
+
+```bash
+systemctl --user disable --now t3code.service
+rm ~/.config/systemd/user/t3code.service
+systemctl --user daemon-reload
+npx t3-hermes@nightly service install
 ```
 
 ## Enable the Hermes provider
 
-**The driver ships disabled** — it will not probe for a Hermes binary until you turn it on. Create
-`<T3HERMES_HOME>/userdata/settings.json` (`T3HERMES_HOME` defaults to `~/.t3-hermes`):
+**The driver ships disabled.** It does not probe for a Hermes binary until you turn it on. From any
+connected client, open **Settings → Providers**, enable **Hermes**, and set **Binary path** if
+`hermes` is not on the host's login-shell `PATH`. On a host with no client yet, write
+`~/.t3-hermes/userdata/settings.json` instead. The server picks up edits without a restart:
 
 ```json
 {
@@ -99,95 +147,18 @@ node apps/server/src/bin.ts pair --ttl 2h
 }
 ```
 
-`binaryPath` may be omitted if `hermes` is on the server process's `PATH`. Restart the server, then
-check `<T3HERMES_HOME>/caches/hermes.json` — a working setup reports `"status": "ready"`, the Hermes
-version, and a populated `models` array.
-
-## Enable Hindsight memory (optional)
-
-The Hermes panel's Memory tab always shows Hermes's built-in notes. It can also read an open-source
-[Hindsight](https://github.com/vectorize-io/hindsight) agent-memory service. Run Hindsight on the same
-host as the T3 server — it can stay bound to loopback, because every request is proxied through the server, which is what keeps the tab working
-from the mobile app and over T3 Connect. Add to the same `settings.json`:
-
-```json
-{
-  "integrations": {
-    "hindsight": {
-      "enabled": true,
-      "baseUrl": "http://127.0.0.1:8888",
-      "apiKey": "only-if-your-instance-requires-one",
-      "defaultBank": "hermes"
-    }
-  }
-}
-```
-
-Only `enabled` is required; `baseUrl` defaults to `http://127.0.0.1:8888`. The `apiKey` is stripped
-from settings before they are sent to any client, so it never leaves the server process. With the
-block absent the integration is completely inert — no socket is opened — and the tab renders a
-pointer at this section. See [docs/user/hermes-memory.md](./docs/user/hermes-memory.md).
+A working setup shows the Hermes version and a populated model list on the provider card; the same
+probe result is cached in `~/.t3-hermes/caches/hermes.json`.
 
 Models are discovered over ACP from Hermes's own configuration, so whatever providers you have
 credentials for in `~/.hermes/.env` are what appear in the picker. Until the first ACP handshake
 completes, the snapshot shows a single placeholder slug; that is expected.
 
-## Headless deployment
+## Hindsight memory (optional)
 
-For an always-on box, run it under systemd as a user service. Two things differ from a normal
-T3 Code install and will silently bite you otherwise:
-
-1. **Do not use `t3-hermes service install` from a source checkout.** It never runs the checkout:
-   it downloads the fork's CLI release archive for the running CLI's version into
-   `~/.t3-hermes/runtime/versions/<v>/` and runs that. The fork only publishes nightlies, so a
-   checkout's plain `apps/server/package.json` version has no release to download, and your local
-   changes would not be in it anyway. Write your own unit pointing at the checkout. For a packaged
-   install, `npx t3-hermes@nightly service install` installs the matching fork nightly.
-2. **Use `start --no-browser`, not `serve`.** `serve` forces `startupPresentation=headless`, which
-   hard-disables auto-bootstrap of a default project and thread, so you land on a project picker
-   with nothing in it. `--no-browser` keeps `start` headless-safe.
-
-```ini
-# ~/.config/systemd/user/t3code.service
-[Unit]
-Description=T3 Code server (Hermes fork)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=%h/t3code
-ExecStart=/usr/local/bin/node %h/t3code/apps/server/src/bin.ts start \
-  --host <bind-address> --port 8790 --no-browser %h
-Restart=on-failure
-RestartSec=10
-Environment=NODE_OPTIONS=--max-old-space-size=1536
-# Only needed when Codex is not installed on this host:
-Environment=T3CODE_BOOTSTRAP_PROVIDER_INSTANCE=hermes
-Environment=T3CODE_BOOTSTRAP_MODEL=<a-model-slug-hermes-reports>
-
-[Install]
-WantedBy=default.target
-```
-
-```bash
-systemctl --user daemon-reload && systemctl --user enable --now t3code
-sudo loginctl enable-linger "$USER"   # survive logout and reboot
-```
-
-**Keeping it current.** [`infra/hyperion/`](./infra/hyperion) has a self-update script plus a
-systemd timer that nightly fetches the fork, stops the service, reinstalls, rebuilds the web app,
-restarts, health-checks, and rolls back on failure. It also converts an rsync'd (non-git) copy of
-the source into a real checkout on first run. See
-[infra/hyperion/README.md](./infra/hyperion/README.md).
-
-**Bind deliberately.** The server controls agents on the host, which is remote code execution by
-design. Bind to a private interface — a Tailscale address, or loopback behind a reverse proxy.
-Do not bind `0.0.0.0` on a machine with a public IP, and do not put it behind Tailscale Funnel.
-
-`T3CODE_BOOTSTRAP_PROVIDER_INSTANCE` / `T3CODE_BOOTSTRAP_MODEL` only affect _newly_ bootstrapped
-projects. An existing project keeps the default it was created with; change that in the UI under
-Project Settings → default model.
+If Hermes already uses [Hindsight](https://github.com/vectorize-io/hindsight), the Memory tab picks
+up Hermes's own Hindsight config with no setup. To point it elsewhere or switch it off, use
+**Settings → Integrations → Memory**. See [docs/user/hermes-memory.md](./docs/user/hermes-memory.md).
 
 ## Known limitations
 
@@ -199,94 +170,65 @@ Project Settings → default model.
   (the Hermes panel's Patches tab applies it) for live child progress and background completion.
   Updates require the original ACP process to remain connected; results missed after it exits are
   not recovered from Hermes transcripts.
-- **Session modes are best-effort.** The adapter sends `session/set_mode` through the generic ACP
-  request escape hatch and only logs a warning if Hermes rejects it. Approval enforcement is done
-  by the adapter's own permission gate, so behaviour is correct either way.
 - **Central SSH execution needs the carried Hermes patch.** Stock Hermes's SSH backend copies
   credential, skill, and cache files into the target's `~/.hermes`, and ACP replaces a configured
   remote cwd with T3's local project path. Apply
-  [`infra/hermes/0002-acp-central-ssh-execution.patch`](./infra/hermes) and set
-  `TERMINAL_SSH_SYNC_FILES=false` on the remote provider instance. The target then runs only shell
-  and file operations; T3, Hermes, provider credentials, memories, and conversation state stay on
-  the central host.
+  [`0002-acp-central-ssh-execution.patch`](./infra/hermes/README.md#0002-acp-central-ssh-executionpatch)
+  (also from the Patches tab) and set `TERMINAL_SSH_SYNC_FILES=false` on the remote provider
+  instance. The target then runs only shell and file operations; T3, Hermes, provider credentials,
+  memories, and conversation state stay on the central host.
+- **Session modes are best-effort.** The adapter sends `session/set_mode` through the generic ACP
+  request escape hatch and only logs a warning if Hermes rejects it. Approval enforcement is done
+  by the adapter's own permission gate, so behaviour is correct either way.
 - **`auth.status` is inferred, not introspected.** Hermes authenticates from its own
-  `~/.hermes/.env`, which T3 Code never reads. Instead a completed ACP handshake that returned a
-  non-empty model list is reported as `authenticated` — Hermes only lists models whose upstream it
-  resolved credentials for — and the upstreams are derived from the model slug prefixes and shown on
-  the provider card. A handshake that succeeds but reports no models is `unauthenticated`.
-- **Hermes-specific surfaces are partial.** Scheduled tasks (Hermes cron) are exposed read-mostly
-  in the Hermes panel: the sidebar's clock button lists jobs with their schedule, last run, and
-  recent history, and lets you pause/resume a job or mute its notifications. Authoring stays in
-  chat — create, edit, and delete are deliberately not built, because asking Hermes for a recurring
-  task in natural language is the better interface and the CLI covers the rest. The Skills tab
-  exposes the skill library and recorded Hermes edits read-only; authoring stays in chat. Profiles are still
-  not exposed; use the `hermes` CLI for those. Chat, streaming, tool calls, approvals, resume,
-  model switching, slash commands, and the context-window meter all work.
-- **Hindsight remains a separate, optional memory store.** The panel's Hindsight section talks
-  to a [Hindsight](https://github.com/vectorize-io/hindsight) service (HTTP API 0.9.1) over the T3
-  websocket, never client-to-Hindsight, so a loopback-bound Hindsight still works from mobile and
-  through a tunnel. Recall, browsing by pathway, retaining one note, and triggering a reflection are
-  built; editing and deleting Hindsight memories deliberately are not. Mental models have no
-  meaning-based search in Hindsight's API, so a query matches them by text and they sort after the ranked results.
-  Hermes's built-in `memories/MEMORY.md` and `memories/USER.md` are shown and editable independently,
-  with live updates, character limits, and lock-respecting writes; Hindsight is not required.
-  Fixture-pinned tests fail loudly if a Hindsight upgrade changes a response shape.
-- **Task data is read from Hermes's own state files.** `hermes cron` has no JSON output mode as of
-  Hermes 0.20.2, so T3 Code reads `cron/jobs.json` and the `cron/executions.db` ledger directly and
-  shells out to `hermes cron pause`/`resume` for the one mutation. Delivery outcomes come from
-  `cron/deliveries.db`; messages fall back to the cron session in `state.db` (verified on 0.21.0).
-  Hermes immediately clears terminal queue payloads, so observed payloads are cached in memory,
-  with bounded previews on subscriptions and larger text fetched on demand. Script-only runs and
-  early failures may have no retained message. Fixture-pinned tests guard these storage shapes.
-- **Reasoning effort needs Hermes v0.21.4 or newer, and applies on the next turn.** ACP has no
-  reasoning channel, so the composer's Reasoning selector writes a per-model entry under
-  `agent.reasoning_overrides` in your own `~/.hermes/config.yaml` — the same file the `hermes` CLI
-  reads, so a level picked in T3 Code is the level the terminal uses. Hermes before v0.21.4
-  (v2026.9.21) ignored that file on the ACP surface: `_make_agent` never passed `reasoning_config`,
-  so the selector still appears there but changes nothing. From v0.21.4 Hermes reads the level when
-  it builds an agent, and because `session/set_model` rebuilds the agent, T3 Code re-sends the
-  current model when the level changes so a new level lands on the next turn rather than only on a
-  new session. The levels offered per model come from Hermes's own
-  `~/.hermes/models_dev_cache.json`; when that cache is missing or unreadable the selector is
-  omitted rather than guessed at, and a config that fails to parse is never overwritten.
-- **`respondToUserInput` is unimplemented** — Hermes has no equivalent ACP extension, so nothing
+  `~/.hermes/.env`, which T3 Code never reads. A completed ACP handshake that returned a non-empty
+  model list is reported as `authenticated`, since Hermes only lists models whose upstream it
+  resolved credentials for. A handshake that reports no models is `unauthenticated`.
+- **Task, skill, and memory authoring stays in chat.** Tasks can be paused, resumed, and muted but
+  not created or edited; asking Hermes in natural language is the better interface. Skills are
+  read-only. Hindsight memories can be recalled, retained, and reflected on, but not edited or
+  deleted. Profile management is not exposed; use the `hermes` CLI.
+- **Task data is read from Hermes's own state files**, because `hermes cron` has no JSON output.
+  Fixture-pinned tests fail loudly if a Hermes upgrade changes those shapes; see
+  `apps/server/src/hermes/hermesCronState.ts`.
+- **Reasoning effort needs Hermes v0.21.4 or newer.** Older Hermes ignores the level on the ACP
+  surface, so the selector appears but changes nothing. See
+  [docs/user/hermes-reasoning.md](./docs/user/hermes-reasoning.md).
+- **`respondToUserInput` is unimplemented.** Hermes has no equivalent ACP extension, so nothing
   ever opens such a request.
 
 ## Tracking upstream
 
-Syncing is **merge-based, not rebase-based** — this fork's `main` is pushed, so rewriting it would
-break every clone — and it runs every three hours (at :50, matching upstream's nightly cadence) from
-[`.github/workflows/sync-upstream.yml`](./.github/workflows/sync-upstream.yml)
-(`workflow_dispatch` also works). The job merges `upstream/main` into `main`, pushes, and then
-dispatches `ci.yml` by hand, because pushes made with the default `GITHUB_TOKEN` do not trigger
-other workflows.
+Syncing is **merge-based, not rebase-based**: this fork's history is public, so rewriting it would
+break every clone. [`.github/workflows/sync-upstream.yml`](./.github/workflows/sync-upstream.yml)
+runs every three hours at :50 (`workflow_dispatch` also works). It merges `upstream/main` onto an
+`automation/sync-upstream/<run>` branch, opens a PR, dispatches `ci.yml` on that branch (pushes
+made with `GITHUB_TOKEN` trigger no workflows), and enables auto-merge with a merge commit. While
+that PR is open, later runs reuse it instead of merging again.
 
-The same job drives fork releases: every sync dispatches `release.yml` with `follow_upstream`, and
-the release's first job — running under the nightly concurrency lock, so queued runs cannot double
-publish — continues only when the upstream commit captured by the sync is merged into `main`
-and absent from the latest published fork nightly. Any new upstream commits trigger a release,
-without waiting for an upstream nightly or a minimum time gap. Unchanged syncs skip; failed releases
-can retry on the next sync. This also covers merges through conflict-resolution PRs. `release.yml`
-has no schedule of its own.
+Each run also dispatches `release.yml` with `follow_upstream`, passing the upstream history already
+merged into `main`. Under the nightly concurrency lock, the release continues only when that
+history has not shipped in a fork nightly yet. So an upstream change ships on the first sync after
+its PR merges, up to three hours later. Unchanged syncs skip, and a failed release retries on the
+next sync. `release.yml` has no schedule of its own.
 
-Two kinds of issue come out of it:
+Three kinds of issue come out of it:
 
-- **`upstream-sync-conflict`** — the merge conflicted and was aborted, so `main` is untouched. The
-  issue lists the conflicted files and the run fails. Only one such issue is open at a time. The
-  Hermes `upstream-sync` profile receives the issue by webhook, merges upstream in an isolated
-  worktree, opens a `hermes/upstream-sync-<sha>` PR, merges it (merge commit, never squash) once CI is
-  green, and re-dispatches this workflow so the release follows. Where upstream now covers something
+- **`upstream-sync-conflict`**: the merge conflicted and was aborted, so `main` is untouched. The
+  issue lists the conflicted files (from `git ls-files -u`) and the run fails. Outside this repo,
+  the Hermes `upstream-sync` profile receives the issue by webhook, merges upstream in an isolated
+  worktree, opens a `hermes/upstream-sync-<sha>` PR, merges it (merge commit, never squash) once CI
+  is green, and re-dispatches the sync so the release follows. Where upstream now covers something
   the fork built, the resolver takes upstream's version and re-applies only the Hermes behavior it
-  lacks. Note that the conflicted-file list comes from `git ls-files -u`, not from
-  a grep for conflict markers: `apps/web/src/components/chat/ChatComposer.tsx` contains NUL bytes,
-  so grep and rg classify it as binary and skip it silently (git will not even write conflict
-  markers into it). Any sweep you write by hand must read the index, or use `grep -a`.
-- **`hermes-parity-review`** — advisory, and the merge still landed. It fires when the incoming
+  lacks. Until that PR merges, every sync retries the merge and comments on the issue again.
+- **`hermes-parity-review`**: advisory, filed once the sync PR is open. It fires when the incoming
   upstream commits touched two or more sibling provider adapters
   (`Drivers/{Claude,Codex,Cursor,Grok,OpenCode}*.ts`) or anything under `provider/acp/`, because
-  upstream has fixed a bug across every sibling adapter in a commit that merged perfectly cleanly
-  while leaving the Hermes copy broken. Git cannot see that kind of drift; a human has to check
+  upstream has fixed a bug across every sibling adapter in a commit that merged cleanly while
+  leaving the Hermes copy broken. Git cannot see that kind of drift; a human has to check
   `HermesDriver.ts`, `HermesAcpSupport.ts`, and `HermesTextGeneration.ts`.
+- **`upstream-sync-failed`**: the run failed for any reason other than a conflict, such as a
+  rejected push or a `gh` outage.
 
 To sync by hand:
 
@@ -295,50 +237,55 @@ git remote add upstream https://github.com/pingdotgg/t3code
 git fetch upstream && git merge upstream/main
 ```
 
-The Hermes driver is additive — new files plus registration lines — so conflicts are usually
-limited to `builtInDrivers.ts`, `settings.ts`, and the client branding lists. Three files carry
-enough fork-specific judgment that they should always be resolved by hand rather than by taking one
-side wholesale: `apps/web/src/components/chat/ChatComposer.tsx`,
-`apps/web/src/components/chat/ChatView.tsx`, and the usage provider list in `usageProviders.ts`.
+The Hermes driver is additive (new files plus registration lines), so conflicts are usually
+limited to `builtInDrivers.ts`, `settings.ts`, and the client branding lists. Resolve
+`apps/web/src/components/chat/ChatComposer.tsx`, `apps/web/src/components/ChatView.tsx`, and both
+`usageProviders.ts` files (`apps/web/src/components/usage/`, `apps/mobile/src/features/usage/`) by
+reading both sides rather than taking one wholesale.
 
 ## CI on the fork
 
 Upstream's workflows target paid Blacksmith runners that only exist in its org, and several deploy
 upstream-only infrastructure. This fork therefore diverges in `.github/workflows/` as follows.
 
-- **Runners.** Every `blacksmith-*` label is replaced: Linux jobs run on `ubuntu-24.04`, Windows on
-  `windows-latest`, and most macOS jobs run on the self-hosted Apple Silicon runner
-  (`[self-hosted, macOS, ARM64, t3code-mac-arm64]`) — the desktop build matrix's two mac entries
-  (arm64 natively, x64 cross-compiled), `ci.yml`'s mobile native static analysis,
-  the iOS half of `mobile-showcase-screenshots.yml`, and `macos-self-hosted-build.yml`. GitHub's
-  hosted macOS minutes bill at 10x on a private repo. The IPA build uses the standard hosted
-  `macos-26` Apple Silicon runner, free on this public fork, so it can run while the laptop is offline.
-  That machine needs **Xcode** (the simulator screenshots), **Homebrew** (the
-  mobile lint Brewfile), and a **Rust toolchain host** for the resource monitor — and while the
-  laptop is offline those jobs simply queue rather than fail.
+- **Runners.** Fork jobs run on GitHub-hosted runners, free on this public repo: `ubuntu-24.04`,
+  `ubuntu-24.04-arm`, `windows-latest`, `windows-11-arm`, `macos-14`, `macos-26`, and
+  `macos-latest`. Only `macos-self-hosted-build.yml` (every push to `main`) and the iOS half of
+  `mobile-showcase-screenshots.yml` use the self-hosted Apple Silicon laptop
+  (`[self-hosted, macOS, ARM64, t3code-mac-arm64]`, declared in `.github/actionlint.yaml`); those
+  jobs queue while it is offline. `desktop-macos-preview*.yml` (the `preview:mac` label) and
+  `windows-tests.yml` (dispatch only) still name Blacksmith runners and would wait forever here.
 - **Guarded workflows.** `deploy-relay.yml`, `mobile-eas-preview.yml`, `mobile-eas-production.yml`,
-  `web-preview.yml`, `publish-aur.yml`, `pr-vouch.yml`, and `issue-labels.yml` carry a job-level
-  `if: github.repository == 'pingdotgg/t3code'`, so they skip here and still work if this fork is
-  ever merged back. (`release.yml`'s `publish_aur` caller carries the same guard, because the
-  reusable workflow declares `AUR_SSH_PRIVATE_KEY` as required.) `ci.yml`, `pr-size.yml`,
-  `thread-transfer-report.yml`, `mobile-fingerprint-check.yml`, and
-  `mobile-showcase-screenshots.yml` run normally.
-- **Nightly release.** `release.yml` is dispatched by the upstream sync whenever it has merged
-  upstream commits the fork has not shipped (see "Tracking upstream") and produces the desktop artifacts — macOS dmg/zip, Linux AppImage, Windows nsis — plus the
-  updater manifests, attached to a GitHub prerelease. Everything that needs upstream credentials
-  degrades instead of failing: the T3 Connect config resolves to empty values (so builds ship with
-  T3 Connect disabled), and the Vercel deploy, the version-bump commit, and the Discord
-  announcement skip when their secrets are absent. Windows code signing degrades to unsigned;
-  macOS builds are signed with the stable self-signed identity in `MACOS_SELF_SIGNED_P12`, when
-  set, so in-app updates pass Squirrel.Mac's same-signer check (see
-  [docs/operations/release.md](./docs/operations/release.md)). The desktop updater feed is derived
-  from `GITHUB_REPOSITORY`, so fork builds self-update from fork releases.
-- **npm.** The CLI publishes as `t3-hermes` plus one `t3-hermes-<platform>` package per platform,
-  under the `nightly` dist-tag, through trusted publishing. A platform package that does not exist
-  on npm yet is left out and reported in an `npm-packages-skipped` issue, because its first publish
-  has to be done by hand. Use `npx t3-hermes@nightly`: nightlies never move `latest`.
-- **iOS IPA.** `mobile-ipa.yml` builds an unsigned, sideloadable `T3Code-<version>.ipa` of the
-  production Expo variant on GitHub-hosted macOS. It has no schedule: run it via
-  `workflow_dispatch` to get a workflow artifact, or let a published release trigger it to have the
-  IPA attached to that release. Install it with AltStore or Sideloadly, which re-sign on install —
-  which is why the build turns code signing off entirely.
+  `web-preview.yml`, `publish-aur.yml`, `pr-vouch.yml`, and `issue-labels.yml`, plus `release.yml`'s
+  `publish_aur` and `deploy_marketing` jobs, carry `github.repository == 'pingdotgg/t3code'`, so
+  they skip here and still work if this fork is ever merged back. The reverse guard
+  (`!= 'pingdotgg/t3code'`) keeps the fork-only jobs inert upstream: `sync-upstream.yml`, the mobile
+  builds, fork release notes, and failure reporting. `publish_cli` only runs in
+  `NateWeav/t3code-hermes`.
+- **Nightly release.** `release.yml` is dispatched by the upstream sync (see "Tracking upstream").
+  It builds macOS dmg/zip (arm64 and x64), Linux AppImage and `.deb`, and Windows nsis, each for
+  x64 and arm64, plus the updater manifests and CLI archives, attached to a GitHub prerelease. Its
+  notes list the upstream commits it ships (`.github/scripts/fork-release-notes.cjs`). Everything
+  that needs upstream credentials degrades instead of failing: the T3 Connect config resolves to
+  empty values (so builds ship with T3 Connect disabled), and the Vercel deploy, the version-bump
+  commit, and the Discord announcement skip when their secrets are absent. Windows code signing
+  degrades to unsigned; macOS builds are signed with the stable self-signed identity in
+  `MACOS_SELF_SIGNED_P12` when set, so in-app updates pass Squirrel.Mac's same-signer check (see
+  [self-signed fallback](./docs/operations/release.md#self-signed-fallback)). The desktop updater
+  feed is derived from `GITHUB_REPOSITORY`, so fork builds self-update from fork releases.
+  Dispatching `release.yml` by hand defaults to the `preview` channel, which nothing installs
+  unless asked for by name.
+- **npm.** The CLI publishes as `t3-hermes` plus one package per platform archive under the
+  `nightly` dist-tag, through trusted publishing. Most are `t3-hermes-<platform>`; Windows uses
+  `nateweav-hermes-winbin-<arch>` because npm's spam filter rejects the `t3-hermes-win32-*` names
+  (`packages/shared/src/cliRelease.ts`). Intel macOS has no CLI archive. A platform package that
+  does not exist on npm yet is left out and reported in an `npm-packages-skipped` issue, because its
+  first publish has to be done by hand. Use `npx t3-hermes@nightly`: nightlies never move `latest`.
+- **Mobile builds.** After each nightly and stable release, `release.yml` calls `mobile-ipa.yml`
+  and `mobile-apk.yml` directly, because releases published with `GITHUB_TOKEN` never fire the
+  `release` trigger. `mobile-ipa.yml` builds an unsigned, sideloadable `.ipa` on hosted macOS; Feather,
+  AltStore, and Sideloadly re-sign on install. Tagged builds also refresh an AltStore-format source
+  on the `ipa-source` branch so Feather can offer updates. `mobile-apk.yml` builds an arm64 `.apk`
+  signed with the release keystore in the `ANDROID_KEYSTORE_*` / `ANDROID_KEY_*` secrets, which
+  Obtainium can track. Dispatch either with a `tag` to attach a build to that release, or without
+  one for a workflow artifact.
