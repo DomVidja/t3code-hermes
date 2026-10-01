@@ -81,3 +81,27 @@ The patch's `tests/acp_adapter/test_delegation_progress.py` and `test_delegation
 drive the real executor, child relays, stale monitor, and background worker. Run them with
 `tests/acp_adapter/test_tools.py` and `test_events.py` in a scratch checkout with an isolated
 `HERMES_HOME` and `PYTHONDONTWRITEBYTECODE=1`, never in the live install.
+
+## `0004-gateway-multiplex-webhook-session-close.patch`
+
+**Needed by:** gateways with `gateway.multiplex_profiles: true` that serve webhook routes for a
+named profile (`/p/<profile>/webhooks/...`). Without it, those runs never get `ended_at`, so T3
+Code reports them as failed once its two-hour staleness window passes, and Hermes's
+`prune_sessions` never reaps the rows.
+
+The run writes its session row to `profiles/<profile>/state.db`, but the webhook adapter's
+completion hook runs outside the profile scope and ended the session in the launch home's
+`state.db`, which has no such row. The patch closes it in the store `SessionStore._db_for_key`
+resolves from the session key. Single-profile gateways and default-profile keys are unchanged.
+
+Verified against hermes-agent `357f51c491` (`main`, 2026-10-01) and `8d30c4eaab` with `0003`
+applied. It touches only the gateway, so it is independent of `0002` and `0003`.
+
+```bash
+cd ~/.hermes/hermes-agent
+git apply /path/to/t3code/infra/hermes/0004-gateway-multiplex-webhook-session-close.patch
+hermes gateway restart
+```
+
+The patch's test in `tests/gateway/test_webhook_session_close.py` runs a profile webhook delivery
+through the real adapter pipeline on a multiplexed store.

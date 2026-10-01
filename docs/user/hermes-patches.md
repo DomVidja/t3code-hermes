@@ -14,7 +14,9 @@ Each patch shows one of three states:
   rebased one.
 
 **Remove** takes an applied patch back out. Applying or removing affects new Hermes sessions; a
-chat that is already running keeps the Hermes it started with.
+chat that is already running keeps the Hermes it started with. A patch to the Hermes gateway, such
+as the one for webhook runs in profiles, takes effect once you restart the gateway with
+`hermes gateway restart`.
 
 ## Things to know
 
