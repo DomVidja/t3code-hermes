@@ -370,12 +370,17 @@ export function isSilentReport(text: string | null): boolean {
 const PULL_REQUEST_URL =
   /https?:\/\/[^\s"'<>()[\]`]+(?:\/pulls?\/\d+|\/-\/merge_requests\/\d+|\/pull-requests\/\d+|\/pullrequest\/\d+)/g;
 
-/** Pull request URLs a row mentions: in the agent's own words or a `gh pr` result. */
+/**
+ * Pull request URLs a run worked on: in the agent's own words or the output of `gh pr create`.
+ * Read-only commands (`list`, `view`, `status`, ...) print pull requests the run merely looked
+ * at, and linking those lets an unrelated merge settle the run's thread. `gh pr merge` prints
+ * no URL, and a pull request the run opened was already linked by its `create`.
+ */
 function pullRequestUrlsIn(row: HermesMessageRow, call: HermesToolCall | undefined): string[] {
   const fromTool =
     row.role === "tool" &&
     call?.name === "terminal" &&
-    /\bgh\s+pr\s+(create|merge|view|list)\b/.test(arg(call.args, "command"));
+    /\bgh\s+pr\s+create\b/.test(arg(call.args, "command"));
   if (row.role !== "assistant" && !fromTool) return [];
   return [...new Set(row.content.match(PULL_REQUEST_URL) ?? [])];
 }
