@@ -215,6 +215,40 @@ describe("run reads", () => {
     );
   });
 
+  it("reads the model a run ran on, provider-qualified when the provider is routable", () => {
+    withStateDb(
+      (db) => {
+        insertHermesSession(db, {
+          id: "codex",
+          source: "webhook",
+          route: "upstream-sync",
+          startedAt: 100,
+          model: "gpt-5.6-sol",
+          billingProvider: "openai-codex",
+        });
+        insertHermesSession(db, {
+          id: "proxy",
+          source: "webhook",
+          route: "upstream-sync",
+          startedAt: 200,
+          model: "claude-opus-5-5",
+          billingProvider: "custom",
+        });
+        insertHermesSession(db, {
+          id: "unknown",
+          source: "webhook",
+          route: "upstream-sync",
+          startedAt: 300,
+        });
+      },
+      (dbPath) => {
+        expect(
+          readHermesRunRoots(dbPath, "webhook:upstream-sync", 0)?.map((row) => row.model),
+        ).toEqual(["openai-codex:gpt-5.6-sol", "claude-opus-5-5", null]);
+      },
+    );
+  });
+
   it("follows compression into the continued session and skips its summary", () => {
     withStateDb(seed, (dbPath) => {
       const chain = readHermesRunChain(dbPath, "new");
@@ -300,6 +334,7 @@ describe("isHermesRunOver", () => {
     endReason: null,
     lastActivityAt: null,
     toolCallCount: 1,
+    model: null,
   };
 
   it("is live until the newest session ends for a reason other than compression", () => {

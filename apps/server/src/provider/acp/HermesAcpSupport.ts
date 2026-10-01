@@ -334,8 +334,16 @@ export function applyHermesAcpModelSelection<E>(input: {
 }): Effect.Effect<string | undefined, E> {
   // Hermes model ids are `provider:model`, so the bare placeholder is never
   // one: asking for it means "keep whatever the profile runs".
+  // A bare model naming the one already running (a background run's thread
+  // records the bare model when its provider was a `custom` endpoint) is a
+  // keep as well.
   const requestedModelId =
-    input.requestedModelId === HERMES_FALLBACK_MODEL_ID ? undefined : input.requestedModelId;
+    input.requestedModelId === HERMES_FALLBACK_MODEL_ID ||
+    (input.requestedModelId !== undefined &&
+      !input.requestedModelId.includes(":") &&
+      input.currentModelId?.endsWith(`:${input.requestedModelId}`))
+      ? undefined
+      : input.requestedModelId;
   const targetModelId = requestedModelId ?? input.currentModelId;
   const shouldSwitchModel =
     targetModelId !== undefined &&

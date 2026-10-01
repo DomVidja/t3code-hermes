@@ -259,6 +259,21 @@ export interface HermesSessionRow {
   readonly endReason: string | null;
   readonly lastActivityAt: number | null;
   readonly toolCallCount: number;
+  /**
+   * The model the session ran on, as a Hermes ACP model id: `provider:model`
+   * when the row names a routable provider, else the bare model.
+   */
+  readonly model: string | null;
+}
+
+// Hermes's own non-routable billing buckets (`_BARE_BILLING_PROVIDERS`).
+const BARE_BILLING_PROVIDERS = new Set(["auto", "custom"]);
+
+function sessionModelFrom(row: Record<string, unknown>): string | null {
+  const model = text(row["model"]).trim();
+  if (!model) return null;
+  const provider = text(row["billing_provider"]).trim().toLowerCase();
+  return provider && !BARE_BILLING_PROVIDERS.has(provider) ? `${provider}:${model}` : model;
 }
 
 function sessionRowFrom(row: Record<string, unknown>): HermesSessionRow | null {
@@ -273,10 +288,11 @@ function sessionRowFrom(row: Record<string, unknown>): HermesSessionRow | null {
     endReason: text(row["end_reason"]).trim() || null,
     lastActivityAt: seconds(row["last_activity_at"]),
     toolCallCount: seconds(row["tool_call_count"]) ?? 0,
+    model: sessionModelFrom(row),
   };
 }
 
-const SESSION_COLUMNS = `s.id, s.title, s.started_at, s.ended_at, s.end_reason, s.last_activity_at, s.tool_call_count`;
+const SESSION_COLUMNS = `s.id, s.title, s.started_at, s.ended_at, s.end_reason, s.last_activity_at, s.tool_call_count, s.model, s.billing_provider`;
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
