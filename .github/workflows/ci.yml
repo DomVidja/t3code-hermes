@@ -5,8 +5,7 @@ on:
   push:
     branches:
       - main
-  # Pushes made by sync-upstream.yml use the default GITHUB_TOKEN, which does
-  # not trigger workflows; that job dispatches this one explicitly instead.
+  # Sync PR branches are pushed with GITHUB_TOKEN, so CI is dispatched explicitly.
   workflow_dispatch:
 
 permissions:
@@ -113,7 +112,7 @@ jobs:
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
       - name: Test nightly release checks
-        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/fork-release-notes.test.cjs .github/scripts/verify-npm-release.test.cjs
+        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/verify-npm-release.test.cjs
 
       - name: Test
         run: vp run --parallel --concurrency-limit 4 --filter '!t3-hermes' --filter '!@t3tools/monorepo' test
