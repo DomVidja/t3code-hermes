@@ -19,14 +19,14 @@ launch T3 Hermes and configure providers afterwards.
 
 ## Run without installing
 
-When the CLI package is published for your Hermes release:
-
 ```bash
-npx t3-hermes@latest
+npx t3-hermes@nightly
 ```
 
 This starts the server and opens the local web app. Run
-`npx t3-hermes@latest --help` for command-line options.
+`npx t3-hermes@nightly --help` for command-line options. T3 Hermes publishes
+only nightly builds, so always ask for `@nightly`. To keep a server running
+after you log out, use the [background service](./background-service.md).
 
 The executable is built for Apple Silicon Macs, Linux, and Windows. There is
 no Intel Mac build of it, because Node cannot produce a single executable for
@@ -35,14 +35,14 @@ on an Intel Mac, build it from source. You need Node.js 24 and `vp` (see
 [Install vp](https://github.com/pingdotgg/t3code#install-vp)):
 
 ```bash
-git clone https://github.com/pingdotgg/t3code
-cd t3code && vp i && vp run build:desktop
+git clone https://github.com/NateWeav/t3code-hermes
+cd t3code-hermes && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
 
-A server run this way is a plain Node program: `t3 update` and the background
-service do not apply, so update it with `git pull` and a rebuild, and start it
-however you run other Node processes.
+A server run this way is a plain Node program: `t3-hermes update` and the
+background service do not apply, so update it with `git pull` and a rebuild,
+and start it however you run other Node processes.
 
 ## Desktop app
 
