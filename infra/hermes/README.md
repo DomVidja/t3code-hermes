@@ -85,8 +85,9 @@ drive the real executor, child relays, stale monitor, and background worker. Run
 ## `0004-acp-background-reports.patch`
 
 **Needed by:** the sidebar's Monitoring status for background processes Hermes starts, such as a CI
-watcher. Stock Hermes reports a background `terminal` call as finished the moment the process starts
-and says nothing when it exits, so T3 Code cannot tell the work is still running.
+watcher, and the agent picking its work back up when they finish. Stock Hermes reports a background
+`terminal` call as finished the moment the process starts and says nothing when it exits, so T3 Code
+cannot tell the work is still running, and the agent never hears that it is done.
 
 The patch adds two ACP extension notifications. `_hermes/process` reports a background process left
 running by a `terminal` call, keyed by that tool call, and again when it exits, with its exit code.
@@ -94,7 +95,9 @@ running by a `terminal` call, keyed by that tool call, and again when it exits, 
 finishes (process completions, watch matches, heartbeats, background subagent results), sent once the
 session is idle. Stock ACP never drains those events, so an agent that promised to report back never
 heard that its work had finished. ACP turns stay client-driven: Hermes reports, and the client decides
-whether to prompt. Clients that do not know the methods ignore them.
+whether to prompt. T3 Code prompts with the notification once no turn is running, unless the user
+pressed Stop, in which case it waits for their next message. Clients that do not know the methods
+ignore them.
 
 Verified against hermes-agent `645bb146c6` (`main`, 2026-10-01), alone and together with `0002` and
 `0003` in either order. Like `0003`, it does not apply to `08b140d14e` or older checkouts; update
