@@ -903,6 +903,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.ref }}
+          # Full history and tags for the fork release notes below. Sparse
+          # checkout already makes this a blobless clone.
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
@@ -1034,6 +1037,25 @@ jobs:
           Built from `${{ needs.preflight.outputs.ref }}`.
           EOF
 
+      # Fork-only. GitHub's generated notes list only this repository's PRs,
+      # so upstream changes would show up as one "merge upstream" line. List
+      # the upstream commits next to the fork's own changes instead. Never
+      # blocks a release: without the file, publishing falls back to
+      # generated notes.
+      - name: Write fork release notes
+        if: github.repository != 'pingdotgg/t3code' && needs.preflight.outputs.release_channel != 'preview' && needs.preflight.outputs.previous_tag != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          git fetch --no-tags --filter=blob:none https://github.com/pingdotgg/t3code main
+          node .github/scripts/fork-release-notes.cjs \
+            --previous-tag "${{ needs.preflight.outputs.previous_tag }}" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --ref "${{ needs.preflight.outputs.ref }}" \
+            --upstream-ref FETCH_HEAD \
+            --upstream-repo pingdotgg/t3code \
+            --output release-notes.md
+
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''
         uses: softprops/action-gh-release@v3
@@ -1041,8 +1063,8 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
-          generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
-          body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
+          generate_release_notes: ${{ hashFiles('release-notes.md') == '' }}
+          body_path: ${{ hashFiles('release-notes.md') != '' && 'release-notes.md' || '' }}
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
@@ -1057,8 +1079,8 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
-          generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
-          body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
+          generate_release_notes: ${{ hashFiles('release-notes.md') == '' }}
+          body_path: ${{ hashFiles('release-notes.md') != '' && 'release-notes.md' || '' }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: ${{ steps.release_files.outputs.files }}
