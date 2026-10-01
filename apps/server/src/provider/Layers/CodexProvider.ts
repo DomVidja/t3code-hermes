@@ -451,8 +451,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       }),
       requestAllCodexModels(client),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
-      // usage this probe" rather than costing the account and models.
-      input.skipNativeUsage
+      // usage this probe" rather than costing the account and models. Without
+      // an account (a custom model provider such as a CLIProxyAPI hub) Codex
+      // has no usage to report and rejects the request.
+      input.skipNativeUsage || !accountResponse.account
         ? Effect.succeed(undefined)
         : client.request("account/rateLimits/read", null).pipe(
             Effect.map((response): CodexRateLimitsProbe => ({
@@ -674,7 +676,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot.account);
   const usageLimits =
-    snapshot.account.account?.type === "apiKey"
+    !snapshot.account.account || snapshot.account.account.type === "apiKey"
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({
