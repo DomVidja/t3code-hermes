@@ -117,6 +117,8 @@ export interface HermesSessionFixture {
   readonly parentSessionId?: string | null;
   readonly title?: string | null;
   readonly toolCallCount?: number;
+  readonly model?: string | null;
+  readonly billingProvider?: string | null;
 }
 
 /** Inserts a session the way the webhook platform or cron scheduler writes one. */
@@ -134,8 +136,8 @@ export function insertHermesSession(db: NodeSqlite.DatabaseSync, session: Hermes
         });
   db.prepare(
     `INSERT INTO sessions (id, source, user_id, origin_json, parent_session_id, started_at,
-       ended_at, end_reason, title, tool_call_count)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ended_at, end_reason, title, tool_call_count, model, billing_provider)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     session.id,
     session.source,
@@ -147,6 +149,8 @@ export function insertHermesSession(db: NodeSqlite.DatabaseSync, session: Hermes
     session.endReason ?? null,
     session.title ?? null,
     session.toolCallCount ?? 0,
+    session.model ?? null,
+    session.billingProvider ?? null,
   );
 }
 

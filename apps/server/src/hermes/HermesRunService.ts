@@ -516,7 +516,7 @@ const make = Effect.gen(function* () {
         title: root.title ?? `${run.sourceLabel} · ${RUN_TITLE_DATE.format(root.startedAt * 1000)}`,
         modelSelection: {
           instanceId: run.instanceId,
-          model: DEFAULT_MODEL_BY_PROVIDER[HERMES] ?? "hermes-4",
+          model: root.model ?? DEFAULT_MODEL_BY_PROVIDER[HERMES] ?? "hermes-4",
         },
         runtimeMode: DEFAULT_RUNTIME_MODE,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,

@@ -190,6 +190,20 @@ describe("applyHermesAcpModelSelection", () => {
     }),
   );
 
+  it.effect("keeps the running model when asked for it without its provider", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyHermesAcpModelSelection({
+        runtime,
+        currentModelId: "custom:cliproxyapi:claude-opus-5-5",
+        requestedModelId: "claude-opus-5-5",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toBe("custom:cliproxyapi:claude-opus-5-5");
+    }),
+  );
+
   it.effect("skips set_model when requested matches current or is absent", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();

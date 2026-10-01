@@ -205,6 +205,8 @@ describe("HermesRunService", () => {
           route: "upstream-sync",
           startedAt,
           toolCallCount: 1,
+          model: "gpt-5.6-sol",
+          billingProvider: "openai-codex",
         });
         insertHermesMessage(db, {
           sessionId: "run-1",
@@ -240,6 +242,9 @@ describe("HermesRunService", () => {
         "thread.activity.append",
         "thread.pull-request.link",
       ]);
+      expect(dispatched[0]).toMatchObject({
+        modelSelection: { model: "openai-codex:gpt-5.6-sol" },
+      });
       expect(dispatched[1]).toMatchObject({
         hermesRun: { profile: "upstream-sync", sourceLabel: "webhook/upstream-sync", live: true },
       });
