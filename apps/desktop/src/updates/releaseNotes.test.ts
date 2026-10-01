@@ -60,6 +60,19 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     });
   });
 
+  it("excludes a GitHub HTML Full Changelog footer", () => {
+    const result = normalizeDesktopUpdateReleaseNotes(
+      "<ul><li>Older fix</li><li>Newer fix</li></ul>" +
+        '<p><strong>Full Changelog</strong>: <a href="https://github.com/o/r/compare/v1...v2"><tt>v1...v2</tt></a></p>',
+      "1.2.3",
+      "latest",
+    );
+
+    expect(result.releaseNotes).toEqual([
+      { version: "1.2.3", items: ["Newer fix", "Older fix"], totalItems: 2 },
+    ]);
+  });
+
   it("does not count Markdown or HTML section headings as changes", () => {
     const changes = Array.from({ length: 8 }, (_, index) => `Change ${index + 1}`);
     const result = normalizeDesktopUpdateReleaseNotes(
