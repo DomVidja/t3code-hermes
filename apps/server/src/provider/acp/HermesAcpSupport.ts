@@ -340,6 +340,7 @@ export function applyHermesAcpModelSelection<E>(input: {
   const requestedModelId =
     input.requestedModelId === HERMES_FALLBACK_MODEL_ID ||
     (input.requestedModelId !== undefined &&
+      !input.requestedModelId.includes(":") &&
       input.currentModelId?.endsWith(`:${input.requestedModelId}`))
       ? undefined
       : input.requestedModelId;

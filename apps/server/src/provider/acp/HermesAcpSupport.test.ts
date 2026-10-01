@@ -204,6 +204,20 @@ describe("applyHermesAcpModelSelection", () => {
     }),
   );
 
+  it.effect("switches when a provider-qualified request only shares the running model's tail", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyHermesAcpModelSelection({
+        runtime,
+        currentModelId: "custom:cliproxyapi:gpt-6-astra",
+        requestedModelId: "cliproxyapi:gpt-6-astra",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual(["cliproxyapi:gpt-6-astra"]);
+      expect(result).toBe("cliproxyapi:gpt-6-astra");
+    }),
+  );
+
   it.effect("skips set_model when requested matches current or is absent", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
