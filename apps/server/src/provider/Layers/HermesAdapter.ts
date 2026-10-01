@@ -72,6 +72,11 @@ import {
   resolveHermesAcpBaseModelId,
   resolveHermesSessionModeId,
 } from "../acp/HermesAcpSupport.ts";
+import {
+  HERMES_PROCESS_METHOD,
+  HermesBackgroundProcesses,
+  HermesProcessReport,
+} from "../acp/HermesBackground.ts";
 import { HermesDelegations } from "../acp/HermesDelegation.ts";
 import { type HermesAdapterShape } from "../Services/HermesAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -138,6 +143,8 @@ interface HermesSessionContext {
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly delegations: HermesDelegations;
+  /** Background processes the patched Hermes reports; see HermesBackground.ts. */
+  readonly backgroundProcesses: HermesBackgroundProcesses;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
@@ -365,6 +372,20 @@ export function makeHermesAdapter(
           provider: PROVIDER,
           threadId: ctx.threadId,
           ...(event.turnId ? { turnId: event.turnId } : {}),
+        });
+      }
+    });
+
+    const emitBackgroundProcessEvents = Effect.fnUntraced(function* (
+      ctx: HermesSessionContext,
+      events: ReturnType<HermesBackgroundProcesses["report"]>,
+    ) {
+      for (const event of events) {
+        yield* offerRuntimeEvent({
+          ...event,
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
         });
       }
     });
@@ -746,6 +767,7 @@ export function makeHermesAdapter(
         }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         yield* finishDelegations(ctx, undefined, "cancelled");
+        yield* emitBackgroundProcessEvents(ctx, ctx.backgroundProcesses.stopAll());
         sessions.delete(ctx.threadId);
         yield* offerRuntimeEvent({
           type: "session.exited",
@@ -926,6 +948,19 @@ export function makeHermesAdapter(
                 }),
               ),
             );
+            yield* acp.handleExtNotification(HERMES_PROCESS_METHOD, HermesProcessReport, (report) =>
+              mapAcpCallbackFailure(
+                Effect.gen(function* () {
+                  yield* logNative(input.threadId, HERMES_PROCESS_METHOD, report);
+                  const ctx = sessions.get(input.threadId);
+                  if (!ctx || ctx.stopped || ctx.acpSessionId !== report.sessionId) return;
+                  yield* emitBackgroundProcessEvents(
+                    ctx,
+                    ctx.backgroundProcesses.report(report, ctx.activeTurnId),
+                  );
+                }),
+              ),
+            );
             return yield* acp.start();
           }).pipe(
             Effect.mapError((error) =>
@@ -1004,6 +1039,7 @@ export function makeHermesAdapter(
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             delegations: new HermesDelegations(),
+            backgroundProcesses: new HermesBackgroundProcesses(),
             promptsInFlight: 0,
             firstPromptDispatched: undefined,
             currentModelId: boundModelId,
@@ -1093,6 +1129,7 @@ export function makeHermesAdapter(
                     "interrupted",
                     "Hermes ACP disconnected before the child result arrived.",
                   );
+                  yield* emitBackgroundProcessEvents(ctx, ctx.backgroundProcesses.stopAll());
                   return;
                 }
 

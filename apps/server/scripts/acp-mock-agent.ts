@@ -22,6 +22,9 @@ const decodeTestUpdates = Schema.decodeUnknownEffect(
   Schema.Struct({ updates: Schema.Array(AcpSchema.SessionNotification) }),
 );
 let pendingHermesDelegation: string | undefined;
+/** `T3_ACP_HERMES_BACKGROUND=1`: the first prompt leaves a patched-Hermes background process running. */
+const hermesBackground = process.env.T3_ACP_HERMES_BACKGROUND === "1";
+let runningHermesProcess: { sessionId: string; toolCallId: string } | undefined;
 const hermesDelegation = process.env.T3_ACP_HERMES_DELEGATION;
 const hermesDelegationDelayMs = Math.max(
   0,
@@ -677,6 +680,57 @@ const program = Effect.gen(function* () {
         request.prompt.some((part) => part.type === "text" && part.text === "crash now")
       ) {
         return yield* Effect.sync(() => process.exit(23));
+      }
+
+      if (hermesBackground) {
+        const ciProcess = {
+          processId: "proc_ci000001",
+          command: "gh pr checks 94 --watch\necho done",
+        };
+        // The next prompt finds the process exited, as a CI watcher would be.
+        if (runningHermesProcess) {
+          writeJsonRpcNotification("_hermes/process", {
+            ...runningHermesProcess,
+            ...ciProcess,
+            status: "exited",
+            exitCode: 1,
+            reason: "exited",
+          });
+          runningHermesProcess = undefined;
+          return { stopReason: "end_turn" };
+        }
+        const toolCallId = `hermes-terminal-${promptCount}`;
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "terminal: gh pr checks 94 --watch",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: "Background process started" },
+              },
+            ],
+          },
+        });
+        runningHermesProcess = { sessionId: requestedSessionId, toolCallId };
+        writeJsonRpcNotification("_hermes/process", {
+          ...runningHermesProcess,
+          ...ciProcess,
+          status: "running",
+        });
+        return { stopReason: "end_turn" };
       }
 
       if (hermesDelegation === "stock" || hermesDelegation === "progress") {

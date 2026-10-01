@@ -81,3 +81,32 @@ The patch's `tests/acp_adapter/test_delegation_progress.py` and `test_delegation
 drive the real executor, child relays, stale monitor, and background worker. Run them with
 `tests/acp_adapter/test_tools.py` and `test_events.py` in a scratch checkout with an isolated
 `HERMES_HOME` and `PYTHONDONTWRITEBYTECODE=1`, never in the live install.
+
+## `0004-acp-background-reports.patch`
+
+**Needed by:** the sidebar's Monitoring status for background processes Hermes starts, such as a CI
+watcher. Stock Hermes reports a background `terminal` call as finished the moment the process starts
+and says nothing when it exits, so T3 Code cannot tell the work is still running.
+
+The patch adds two ACP extension notifications. `_hermes/process` reports a background process left
+running by a `terminal` call, keyed by that tool call, and again when it exits, with its exit code.
+`_hermes/notification` carries the text Hermes's CLI injects as the next turn when background work
+finishes (process completions, watch matches, heartbeats, background subagent results), sent once the
+session is idle. Stock ACP never drains those events, so an agent that promised to report back never
+heard that its work had finished. ACP turns stay client-driven: Hermes reports, and the client decides
+whether to prompt. Clients that do not know the methods ignore them.
+
+Verified against hermes-agent `645bb146c6` (`main`, 2026-10-01), alone and together with `0002` and
+`0003` in either order. Like `0003`, it does not apply to `08b140d14e` or older checkouts; update
+first.
+
+```bash
+cd ~/.hermes/hermes-agent
+git apply /path/to/t3code/infra/hermes/0004-acp-background-reports.patch
+```
+
+Restart the T3 Code server after applying the patch. `display.background_process_notifications: off`
+in Hermes's `config.yaml` still suppresses process notifications; process status is always reported.
+
+The patch's `tests/acp_adapter/test_background_reports.py` spawns real processes against an isolated
+process registry. Run it with the rest of `tests/acp_adapter/` in a scratch checkout, as for `0003`.
