@@ -491,6 +491,9 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
 
             assert.strictEqual(status.status, "ready");
             assert.strictEqual(status.auth.status, "unknown");
+            // A custom model provider (e.g. a CLIProxyAPI hub) has no account
+            // usage to read, so it is not reported as a failed probe.
+            assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
           }),
       );
 
