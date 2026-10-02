@@ -57,11 +57,11 @@ exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
   return wrapperPath;
 }
 
-/** Wraps a mock `hermes` so it records the HERMES_HOME it was spawned with. */
-async function makeHermesHomeRecordingWrapper(baseWrapper: string, homeLogPath: string) {
-  const wrapperPath = NodePath.join(NodePath.dirname(homeLogPath), "fake-hermes-home.sh");
+/** Wraps a mock `hermes` so it records, bracketed, one env var it was spawned with. */
+async function makeEnvRecordingWrapper(baseWrapper: string, logPath: string, name: string) {
+  const wrapperPath = NodePath.join(NodePath.dirname(logPath), "fake-hermes-env.sh");
   const script = `#!/bin/sh
-printf '%s' "$HERMES_HOME" > ${JSON.stringify(homeLogPath)}
+printf '[%s]' "$${name}" > ${JSON.stringify(logPath)}
 exec ${JSON.stringify(baseWrapper)} "$@"
 `;
   await NodeFSP.writeFile(wrapperPath, script, "utf8");
@@ -809,6 +809,35 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
     }),
   );
 
+  it.effect("turns on Hermes YOLO only for full-access sessions so subagents follow it", () =>
+    Effect.gen(function* () {
+      const logDir = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hermes-yolo-"))),
+        (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
+      );
+      const baseWrapper = yield* Effect.promise(() => makeMockHermesWrapper());
+      for (const [runtimeMode, expected] of [
+        ["full-access", "[1]"],
+        ["approval-required", "[]"],
+      ] as const) {
+        const threadId = ThreadId.make(`hermes-yolo-${runtimeMode}`);
+        const logPath = NodePath.join(logDir, `${runtimeMode}.txt`);
+        const wrapperPath = yield* Effect.promise(() =>
+          makeEnvRecordingWrapper(baseWrapper, logPath, "HERMES_YOLO_MODE"),
+        );
+        const adapter = yield* makeTestAdapter(wrapperPath);
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("hermes"),
+          cwd: process.cwd(),
+          runtimeMode,
+        });
+        assert.equal(yield* waitForFileContent(logPath), expected);
+        yield* adapter.stopSession(threadId);
+      }
+    }),
+  );
+
   it.effect("starts a mirrored run's first session in its profile and primes it once", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("hermes-run:upstream-sync:s1");
@@ -822,7 +851,7 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
         makeMockHermesWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
       );
       const wrapperPath = yield* Effect.promise(() =>
-        makeHermesHomeRecordingWrapper(baseWrapper, homeLogPath),
+        makeEnvRecordingWrapper(baseWrapper, homeLogPath, "HERMES_HOME"),
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
       const turnsCompleted = yield* Queue.unbounded<void>();
@@ -848,7 +877,7 @@ it.layer(hermesAdapterTestLayer)("HermesAdapterLive", (it) => {
         hermesHome: "/srv/hermes/profiles/upstream-sync",
         primer: "<hermes_background_run>context</hermes_background_run>",
       });
-      assert.equal(yield* waitForFileContent(homeLogPath), "/srv/hermes/profiles/upstream-sync");
+      assert.equal(yield* waitForFileContent(homeLogPath), "[/srv/hermes/profiles/upstream-sync]");
 
       const firstTurn = yield* adapter.sendTurn({
         threadId,

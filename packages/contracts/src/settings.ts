@@ -473,6 +473,12 @@ export const ClientSettingsSchema = Schema.Struct({
   showSkillActivityRows: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Name memory reads and writes in the work log. Fork opt-in. */
   showMemoryActivityRows: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Beta: working and monitoring threads fold into a Working shelf and return
+  // to the top of the inbox once they need the user. The inbox then orders by
+  // time, so manual placement there is ignored (and kept) while it is on.
+  sidebarWorkingShelfEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -1761,6 +1767,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarStatusRings: Schema.optionalKey(Schema.Boolean),
   showSkillActivityRows: Schema.optionalKey(Schema.Boolean),
   showMemoryActivityRows: Schema.optionalKey(Schema.Boolean),
+  sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

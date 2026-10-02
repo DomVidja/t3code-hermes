@@ -129,6 +129,10 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
       agent.error
     );
   }
+  // A stopped row's last progress reads as if it were still working.
+  if (agent.status === "cancelled" || agent.status === "interrupted") {
+    return agent.error ?? agent.result ?? null;
+  }
   return (
     agent.error ??
     agent.result ??
@@ -150,7 +154,10 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       : agent.role;
   const metadata = [
     modelLabel,
-    `${formatSubagentTokenCount(agent.usage?.totalTokens)} tok`,
+    // Some providers (Hermes) only count a child's tokens once it finishes.
+    agent.usage?.totalTokens !== undefined
+      ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
+      : null,
     agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
@@ -487,7 +494,9 @@ function CollapsedWorkflowSection({
         <span className="ml-auto flex items-center gap-1.5 font-mono text-2xs text-muted-foreground/80">
           {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
           <span>{members.length} agents</span>
-          <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
+          {totalTokens !== null ? (
+            <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
+          ) : null}
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />
         </span>
@@ -575,7 +584,9 @@ export function AgentsPanel({
           {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
           {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
         </span>
-        <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
+        {model.totalTokens !== null ? (
+          <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
+        ) : null}
       </footer>
     </div>
   );
