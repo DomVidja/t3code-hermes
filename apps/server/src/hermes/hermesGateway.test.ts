@@ -19,13 +19,14 @@ describe("hermes gateway", () => {
     const home = makeHome();
     const gateway = await startFakeGateway({ home, pid: 4242, supervisor: "launchd" });
     try {
-      const started = new Date("2026-09-30T19:19:03Z");
-      NodeFS.utimesSync(gateway.pidFile, started, started);
+      // 2026-09-30T19:19:03Z, in seconds as utimes takes it.
+      const startedAtSeconds = 1_790_795_943;
+      NodeFS.utimesSync(gateway.pidFile, startedAtSeconds, startedAtSeconds);
       const running = await readRunningHermesGateway(home);
       assert.deepStrictEqual(running, {
         pid: 4242,
         supervisor: "launchd",
-        startedAtMs: started.getTime(),
+        startedAtMs: startedAtSeconds * 1000,
       });
     } finally {
       await gateway.close();

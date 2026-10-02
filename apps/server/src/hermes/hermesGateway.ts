@@ -76,7 +76,7 @@ function requestLine(socketPath: string, request: string): Promise<string | null
 }
 
 /** Asks the gateway serving `home` who it is, or null when none answers. */
-export async function identifyHermesGateway(home: string): Promise<HermesGatewayIdentity | null> {
+async function identifyHermesGateway(home: string): Promise<HermesGatewayIdentity | null> {
   const socketPath = await resolveControlSocketPath(home);
   if (socketPath === null) return null;
   const line = await requestLine(
