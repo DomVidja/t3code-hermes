@@ -191,6 +191,18 @@ describe("Hermes delegate_task ACP boundary", () => {
     ).toEqual([]);
   });
 
+  it("ignores Hermes spinner frames relayed as child thinking", () => {
+    const state = new HermesDelegations();
+    const start = tool({ ...batch.start, rawInput: batch.args });
+    state.update(start, turnId);
+    state.update(progress(start, { event: "subagent.text", task_index: 0, text: "Hi" }), turnId);
+    for (const text of ["(¬‿¬) analyzing...", "(¬‿¬) analyzing...ಠ_ಠ deliberating..."]) {
+      expect(
+        state.update(progress(start, { event: "subagent.thinking", task_index: 0, text }), turnId),
+      ).toEqual([]);
+    }
+  });
+
   it("does not confuse stock background dispatch with successful completion", () => {
     const state = new HermesDelegations();
     const start = tool(dispatched.start);
