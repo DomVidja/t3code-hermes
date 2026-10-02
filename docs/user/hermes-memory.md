@@ -47,6 +47,23 @@ Hermes' key is only ever sent to Hermes' own Hindsight address, never to one you
 Switch Memory off in the same place to stop the environment from contacting Hindsight at all.
 Without Hindsight configured, you can still browse and edit Hermes memory above it.
 
+### Give every agent Hindsight memory
+
+To have Claude Code, Codex, and Hermes recall from and retain to the same Hindsight server, turn on
+**Hindsight for every agent** in **Settings → Providers** on web and desktop, or in the Providers
+section of your environment's settings on mobile. It uses the server from Memory above, so set that
+up first. Each environment wires the agents on its own machine, so pick the device at the top of
+Providers to turn it on for a remote one.
+
+Claude Code and Codex are wired by Hindsight's own installer, which adds hooks and a `hindsight`
+MCP server to `~/.claude` and `~/.codex`; that machine needs Node.js 18 or newer on its `PATH`.
+Hermes is switched to its built-in Hindsight memory provider. Only agents whose CLI is installed on
+that machine are wired. A Claude Code or Codex account with its own config directory is not covered
+yet, and the status line names it.
+
+Turning it off removes only what T3 Code added. If you had already wired an agent yourself, or Hermes
+already used Hindsight, it stays as it was. Your memories stay in Hindsight either way.
+
 ## Recalling and browsing
 
 A line above the search box sizes up the bank you are looking at: how many memories and links it

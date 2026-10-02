@@ -15,6 +15,7 @@ import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { EnvironmentAgentMemorySettings } from "./EnvironmentAgentMemorySettings";
 import { EnvironmentMemorySettings } from "./EnvironmentMemorySettings";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -331,6 +332,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                         ) : null}
                       </View>
                     ))}
+                  {connected && allowed ? (
+                    <EnvironmentAgentMemorySettings environmentId={environmentId} />
+                  ) : null}
                 </SettingsSection>
                 {connected && allowed ? (
                   <EnvironmentMemorySettings environmentId={environmentId} />

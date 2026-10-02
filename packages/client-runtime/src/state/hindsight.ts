@@ -12,6 +12,8 @@
  */
 import {
   HINDSIGHT_TARGET_API_VERSION,
+  type HindsightAgentMemoryState,
+  type HindsightAgentTarget,
   type HindsightBanksResult,
   type HindsightBankStats,
   type HindsightPathway,
@@ -239,4 +241,78 @@ export function describeHindsightRetainResult(itemsCount: number): string {
   return itemsCount === 1
     ? "Hindsight extracted 1 memory from it."
     : `Hindsight extracted ${itemsCount} memories from it.`;
+}
+
+const HINDSIGHT_AGENT_LABELS: Record<HindsightAgentTarget, string> = {
+  claudeCode: "Claude Code",
+  codex: "Codex",
+  hermes: "Hermes",
+};
+
+export interface HindsightAgentMemoryRow {
+  readonly target: HindsightAgentTarget;
+  readonly label: string;
+  readonly status: string;
+  readonly tone: "ready" | "attention" | "idle";
+  readonly detail: string | null;
+}
+
+export interface HindsightAgentMemorySummary {
+  readonly tone: "ready" | "attention" | "idle";
+  readonly label: string;
+  readonly detail: string | null;
+  readonly agents: ReadonlyArray<HindsightAgentMemoryRow>;
+}
+
+/**
+ * The Providers settings' account of agent memory: one headline for the
+ * switch, then one row per agent configured on the environment. `state` is
+ * null until the environment answers, or when it predates agent memory.
+ */
+export function describeHindsightAgentMemory(
+  state: HindsightAgentMemoryState | null,
+  options: { readonly enabled: boolean },
+): HindsightAgentMemorySummary {
+  if (state === null) return { tone: "idle", label: "Checking…", detail: null, agents: [] };
+  const agents = state.agents.map((agent): HindsightAgentMemoryRow => ({
+    target: agent.target,
+    label: HINDSIGHT_AGENT_LABELS[agent.target],
+    status:
+      agent.state === "installed" ? "Wired" : agent.state === "failed" ? "Failed" : "Not wired",
+    tone: agent.state === "installed" ? "ready" : agent.state === "failed" ? "attention" : "idle",
+    detail: agent.detail,
+  }));
+  const headline = (
+    tone: HindsightAgentMemorySummary["tone"],
+    label: string,
+    detail: string | null,
+  ): HindsightAgentMemorySummary => ({ tone, label, detail, agents });
+
+  if (state.applying) return headline("idle", "Applying…", null);
+  if (state.blocker === "notConfigured") {
+    return headline(
+      "attention",
+      "No Hindsight server",
+      "Set one up in Settings → Integrations → Memory first.",
+    );
+  }
+  if (state.blocker === "nodeMissing") {
+    return headline(
+      "attention",
+      "Node.js not found",
+      "Hindsight's installer and the hooks it adds need Node.js 18+ on this machine's PATH.",
+    );
+  }
+  if (state.detail !== null) return headline("attention", "Needs attention", state.detail);
+  if (!options.enabled) return headline("idle", "Off", null);
+  if (agents.length === 0) {
+    return headline(
+      "idle",
+      "No supported agents",
+      "Claude Code, Codex, and Hermes aren't set up on this environment.",
+    );
+  }
+  return agents.every((agent) => agent.tone === "ready")
+    ? headline("ready", "On", null)
+    : headline("attention", "Needs attention", null);
 }
