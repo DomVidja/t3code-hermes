@@ -91,6 +91,10 @@ const RESTARTABLE_SUPERVISORS = new Set(["systemd", "launchd", "external"]);
 const isRestartable = (gateway: RunningHermesGateway) =>
   RESTARTABLE_SUPERVISORS.has(gateway.supervisor);
 
+/** How long to wait for a restarted gateway's control socket: 10 × 1s. */
+const REPLACEMENT_ATTEMPTS = 10;
+const REPLACEMENT_RETRY_DELAY = "1 second";
+
 interface GatewayRestart {
   readonly running: boolean;
   readonly failure: string | null;
@@ -266,6 +270,18 @@ export const make = Effect.gen(function* () {
       return yield* readSnapshot(checkout);
     }).pipe(changeLock.withPermits(1));
 
+  /** The gateway answering once one other than `previousPid` does, or the last read. */
+  const awaitReplacement = (hermesHome: string, previousPid: number) =>
+    Effect.gen(function* () {
+      let gateway = yield* readGateway(hermesHome);
+      for (let attempt = 1; attempt < REPLACEMENT_ATTEMPTS; attempt++) {
+        if (gateway !== null && gateway.pid !== previousPid) break;
+        yield* Effect.sleep(REPLACEMENT_RETRY_DELAY);
+        gateway = yield* readGateway(hermesHome);
+      }
+      return gateway;
+    });
+
   /**
    * Runs `hermes gateway restart` with the instance's environment, so its
    * `HERMES_HOME` picks the gateway. Hermes owns the how: it drains in-flight
@@ -284,7 +300,9 @@ export const make = Effect.gen(function* () {
           shell: spawnCommand.shell,
         }),
       );
-      const after = yield* readGateway(checkout.hermesHome);
+      // The replacement can be alive before its control socket answers.
+      const after =
+        result.code === 0 ? yield* awaitReplacement(checkout.hermesHome, previousPid) : null;
       if (result.code === 0 && after !== null && after.pid !== previousPid) return null;
       yield* Effect.logWarning("hermes gateway restart did not replace the gateway").pipe(
         Effect.annotateLogs({ exitCode: result.code, replaced: after?.pid !== previousPid }),
@@ -312,16 +330,24 @@ export const make = Effect.gen(function* () {
       });
     }
     const gateway = yield* readGateway(checkout.hermesHome);
-    const started = yield* Ref.modify(restartRef, (current): [boolean, GatewayRestart] => {
-      if (current.running) return [false, current];
-      if (gateway === null || !isRestartable(gateway)) return [false, current];
-      return [true, { running: true, failure: null, fiber: null }];
-    });
-    if (started && gateway !== null) {
-      const fiber = yield* provide(runRestart(checkout, gateway.pid)).pipe(
-        Effect.forkIn(restartScope),
-      );
-      yield* Ref.update(restartRef, (current) => ({ ...current, fiber }));
+    // One step: an interrupt between marking `running` and forking would
+    // leave the tab reading "restarting" until the server restarts.
+    const started = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const claimed = yield* Ref.modify(restartRef, (current): [boolean, GatewayRestart] => {
+          if (current.running) return [false, current];
+          if (gateway === null || !isRestartable(gateway)) return [false, current];
+          return [true, { running: true, failure: null, fiber: null }];
+        });
+        if (!claimed || gateway === null) return false;
+        const fiber = yield* provide(runRestart(checkout, gateway.pid)).pipe(
+          Effect.forkIn(restartScope),
+        );
+        yield* Ref.update(restartRef, (current) => ({ ...current, fiber }));
+        return true;
+      }),
+    );
+    if (started) {
       // The answer to this request is "it started", however fast it finishes.
       const snapshot = yield* readSnapshot(checkout);
       return {

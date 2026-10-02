@@ -160,6 +160,29 @@ describe("HermesPatchService", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // Live clock: the service really waits between reads of the socket.
+  it.live("waits for the replacement gateway's socket to answer", () =>
+    Effect.gen(function* () {
+      const { binaryPath, home } = yield* makeRestartableCheckout({ exitCode: 0 });
+      const gateway = yield* Effect.acquireRelease(
+        Effect.promise(() => startFakeGateway({ home, pid: 4242 })),
+        (fake) => Effect.promise(fake.close),
+      );
+      // The restart command returns while the old process still answers.
+      gateway.answerPid(4242);
+      setTimeout(() => gateway.answerPid(null), 1_500);
+
+      yield* Effect.gen(function* () {
+        const service = yield* HermesPatchService;
+        yield* service.restartGateway;
+        yield* service.awaitGatewayRestart;
+        const after = yield* service.list;
+        assert.isNull(after.gatewayRestartFailure);
+        assert.strictEqual(after.gateway?.state, "upToDate");
+      }).pipe(withInstance(binaryPath, home));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reports a restart that did not replace the gateway", () =>
     Effect.gen(function* () {
       const { binaryPath, home } = yield* makeRestartableCheckout({ exitCode: 1 });
