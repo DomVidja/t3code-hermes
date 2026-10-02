@@ -134,7 +134,7 @@ const resolvePatchState = Effect.fn("resolveHermesPatchState")(function* (
 });
 
 /** Repository paths a patch version changes, from its `--- a/` and `+++ b/` headers. */
-export const hermesPatchPaths = (content: string): ReadonlyArray<string> => {
+const hermesPatchPaths = (content: string): ReadonlyArray<string> => {
   const paths = new Set<string>();
   for (const line of content.split("\n")) {
     const match = /^(?:---|\+\+\+) [ab]\/(.+)$/.exec(line);
@@ -213,7 +213,7 @@ const isHeadOlderThan = Effect.fn("isHermesHeadOlderThan")(function* (
  * what the user can do about it. `explainedPaths` are paths changed by
  * patches that are applied, so their edits are ours, not the user's.
  */
-export const classifyHermesPatchMisfit = Effect.fn("classifyHermesPatchMisfit")(function* (
+const classifyHermesPatchMisfit = Effect.fn("classifyHermesPatchMisfit")(function* (
   checkoutRoot: string,
   patch: HermesPatchDefinition,
   context: {
