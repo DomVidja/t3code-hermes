@@ -317,3 +317,61 @@ export function describeHindsightAgentMemory(
     ? headline("ready", null, null)
     : headline("attention", "Needs attention", null);
 }
+
+/** One connected machine, as the all-machines switch needs to see it. */
+export interface HindsightMachineInput {
+  /** `integrations.hindsight.agentMemory` on that machine. */
+  readonly enabled: boolean;
+  /** This client may change settings there. */
+  readonly writable: boolean;
+  /** Its agent memory state, or null until the machine has answered. */
+  readonly state: HindsightAgentMemoryState | null;
+}
+
+export interface HindsightMachinesSummary {
+  /** Every writable machine has it on. */
+  readonly checked: boolean;
+  /** Some writable machines have it on and some do not. */
+  readonly mixed: boolean;
+  /** The switch is useless until a machine can be written to. */
+  readonly canToggle: boolean;
+  readonly tone: "ready" | "attention" | "idle";
+  /** One line for the switch; null whenever the switch and the rows say it all. */
+  readonly label: string | null;
+}
+
+/**
+ * The one switch over every connected machine. It reads as on only when every
+ * machine this client can write to has agent memory on; a partial set shows as
+ * mixed so one click finishes the job rather than undoing it.
+ */
+export function summarizeHindsightMachines(
+  machines: ReadonlyArray<HindsightMachineInput>,
+): HindsightMachinesSummary {
+  const writable = machines.filter((machine) => machine.writable);
+  const on = writable.filter((machine) => machine.enabled).length;
+  const checked = writable.length > 0 && on === writable.length;
+  const mixed = on > 0 && on < writable.length;
+  const summaries = machines.map((machine) =>
+    describeHindsightAgentMemory(machine.state, { enabled: machine.enabled }),
+  );
+  const tone: HindsightMachinesSummary["tone"] = summaries.some(
+    (summary) => summary.tone === "attention",
+  )
+    ? "attention"
+    : summaries.some((summary) => summary.label === "Applying…")
+      ? "idle"
+      : checked
+        ? "ready"
+        : "idle";
+  // Only what the rows cannot say themselves; each row carries its own state.
+  const label =
+    machines.length === 0
+      ? "No connected machines"
+      : writable.length === 0
+        ? "No machine lets this client change settings"
+        : mixed
+          ? `On for ${on} of ${writable.length} machines`
+          : null;
+  return { checked, mixed, canToggle: writable.length > 0, tone, label };
+}

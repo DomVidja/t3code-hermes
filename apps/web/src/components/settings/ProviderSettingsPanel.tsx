@@ -442,6 +442,8 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
           }
         />
       ) : null}
+      {/* Spans every connected device, whichever one is selected above. */}
+      {options.length > 0 ? <HindsightAgentMemorySettings /> : null}
     </>
   );
 }
@@ -1168,12 +1170,6 @@ export function EnvironmentProviderSettings({
         environmentLabel={environmentLabel}
         sources={settings.usageLimitSources}
         cursorKeychainUsageEnabled={settings.cursorKeychainUsageEnabled}
-        readOnly={readOnly}
-      />
-
-      <HindsightAgentMemorySettings
-        key={`agent-memory:${environmentId}`}
-        environmentId={environmentId}
         readOnly={readOnly}
       />
 

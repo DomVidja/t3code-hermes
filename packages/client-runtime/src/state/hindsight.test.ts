@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { describeHindsightAgentMemory } from "./hindsight.ts";
+import { describeHindsightAgentMemory, summarizeHindsightMachines } from "./hindsight.ts";
 
 const base = { applying: false, blocker: null, agents: [], detail: null } as const;
 
@@ -39,5 +39,37 @@ describe("describeHindsightAgentMemory", () => {
         { enabled: true },
       ).label,
     ).toBe("Applying…");
+  });
+});
+
+describe("summarizeHindsightMachines", () => {
+  const wired = {
+    ...base,
+    agents: [{ target: "codex", state: "installed", detail: null }],
+  } as const;
+
+  it("reads as mixed until every writable machine is on, so one click finishes the job", () => {
+    const summary = summarizeHindsightMachines([
+      { enabled: true, writable: true, state: wired },
+      { enabled: false, writable: true, state: base },
+      { enabled: false, writable: false, state: base },
+    ]);
+    expect(summary).toMatchObject({ checked: false, mixed: true, label: "On for 1 of 2 machines" });
+  });
+
+  it("is plainly on with no headline once every writable machine is wired", () => {
+    expect(
+      summarizeHindsightMachines([
+        { enabled: true, writable: true, state: wired },
+        { enabled: false, writable: false, state: base },
+      ]),
+    ).toMatchObject({ checked: true, mixed: false, tone: "ready", label: null });
+  });
+
+  it("cannot be toggled with nothing writable", () => {
+    expect(summarizeHindsightMachines([]).canToggle).toBe(false);
+    expect(
+      summarizeHindsightMachines([{ enabled: false, writable: false, state: null }]).canToggle,
+    ).toBe(false);
   });
 });
