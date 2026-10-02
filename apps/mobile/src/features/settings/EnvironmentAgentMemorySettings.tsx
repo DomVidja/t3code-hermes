@@ -83,7 +83,9 @@ export function EnvironmentAgentMemorySettings({
                   : "text-sm text-foreground-muted"
               }
             >
-              {`${agent.label} · ${agent.status}${agent.detail === null ? "" : ` · ${agent.detail}`}`}
+              {[agent.label, agent.status, agent.detail]
+                .filter((part) => part !== null)
+                .join(" · ")}
             </Text>
           ))}
         </View>

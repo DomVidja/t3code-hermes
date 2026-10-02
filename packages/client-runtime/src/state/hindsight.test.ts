@@ -27,6 +27,7 @@ describe("describeHindsightAgentMemory", () => {
       { enabled: true },
     );
     expect(summary.tone).toBe("attention");
+    expect(summary.agents[0]?.status).toBeNull();
     expect(summary.agents[1]).toMatchObject({ label: "Hermes", status: "Failed" });
   });
 
