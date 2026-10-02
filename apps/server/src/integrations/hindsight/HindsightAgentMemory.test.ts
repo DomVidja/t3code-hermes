@@ -338,6 +338,20 @@ describe("HindsightAgentMemory", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("leaves a config.yaml it created empty once Hermes is switched back", () => {
+    const harness = setup({ agentMemory: true, missing: ["claude", "codex"] });
+    const configFile = NodePath.join(harness.hermesHome, "config.yaml");
+    return Effect.gen(function* () {
+      yield* harness.apply;
+      expect(hermesProvider(harness.hermesHome)).toBe("hindsight");
+
+      yield* harness.setAgentMemory(false);
+      yield* harness.apply;
+
+      expect(NodeFS.readFileSync(configFile, "utf8")).toBe("");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("leaves a Hermes config.yaml it cannot parse untouched", () => {
     const broken = "memory: [unclosed\n";
     const harness = setup({ agentMemory: true, missing: ["claude", "codex"], hermesYaml: broken });

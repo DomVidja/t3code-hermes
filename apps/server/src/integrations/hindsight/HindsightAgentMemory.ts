@@ -391,9 +391,11 @@ export const make = Effect.fn("HindsightAgentMemory.make")(function* (
       } else {
         document.setIn(["memory", "provider"], provider);
       }
+      // A file left with nothing in it reads better empty than as `{}`.
+      const emptied = isMap(document.contents) && document.contents.items.length === 0;
       return yield* writeFileStringAtomically({
         filePath: hermesConfigFile(home),
-        contents: document.toString(),
+        contents: emptied ? "" : document.toString(),
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
