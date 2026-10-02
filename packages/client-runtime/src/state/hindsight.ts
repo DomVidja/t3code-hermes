@@ -252,7 +252,7 @@ const HINDSIGHT_AGENT_LABELS: Record<HindsightAgentTarget, string> = {
 export interface HindsightAgentMemoryRow {
   readonly target: HindsightAgentTarget;
   readonly label: string;
-  /** Null once wired: the dot says so, and a column of "Wired" is noise. */
+  /** Only a failure gets a word; the dot already says wired or not. */
   readonly status: string | null;
   readonly tone: "ready" | "attention" | "idle";
   readonly detail: string | null;
@@ -279,7 +279,7 @@ export function describeHindsightAgentMemory(
   const agents = state.agents.map((agent): HindsightAgentMemoryRow => ({
     target: agent.target,
     label: HINDSIGHT_AGENT_LABELS[agent.target],
-    status: agent.state === "installed" ? null : agent.state === "failed" ? "Failed" : "Not wired",
+    status: agent.state === "failed" ? "Failed" : null,
     tone: agent.state === "installed" ? "ready" : agent.state === "failed" ? "attention" : "idle",
     detail: agent.detail,
   }));
