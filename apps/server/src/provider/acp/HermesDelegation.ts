@@ -66,6 +66,27 @@ function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+/**
+ * Hermes counts a child's tokens only once it finishes: flat on a live
+ * `subagent.complete`, nested under `tokens` in a result entry. Its output
+ * count already includes reasoning.
+ */
+function tokenUsage(result: Record<string, unknown>) {
+  const tokens = record(result.tokens);
+  const round = (value: number | undefined) =>
+    value === undefined ? undefined : Math.round(value);
+  const input = round(count(result.input_tokens) ?? count(tokens.input));
+  const output = round(count(result.output_tokens) ?? count(tokens.output));
+  const reasoning = round(count(result.reasoning_tokens));
+  if (input === undefined && output === undefined) return {};
+  return {
+    totalTokens: (input ?? 0) + (output ?? 0),
+    ...(input !== undefined ? { inputTokens: input } : {}),
+    ...(output !== undefined ? { outputTokens: output } : {}),
+    ...(reasoning !== undefined ? { reasoningOutputTokens: reasoning } : {}),
+  };
+}
+
 function contentText(tool: AcpToolCallState): string {
   return (Array.isArray(tool.data.content) ? tool.data.content : [])
     .flatMap((item) => {
@@ -412,6 +433,11 @@ export class HermesDelegations {
     const toolUses = Array.isArray(result.tool_trace)
       ? result.tool_trace.length
       : count(result.tool_count);
+    const usage = {
+      ...tokenUsage(result),
+      ...(duration !== undefined ? { durationMs: Math.round(duration * 1000) } : {}),
+      ...(toolUses !== undefined ? { toolUses } : {}),
+    };
     child.settled = true;
     const events: TaskEvent[] = [];
     if (error)
@@ -429,14 +455,7 @@ export class HermesDelegations {
         ...this.linkage(id, child),
         status,
         ...(summary || error ? { summary: summary ?? error! } : {}),
-        ...(duration !== undefined || toolUses !== undefined
-          ? {
-              typedUsage: {
-                ...(duration !== undefined ? { durationMs: Math.round(duration * 1000) } : {}),
-                ...(toolUses !== undefined ? { toolUses } : {}),
-              },
-            }
-          : {}),
+        ...(Object.keys(usage).length > 0 ? { typedUsage: usage } : {}),
       },
     });
     return events;

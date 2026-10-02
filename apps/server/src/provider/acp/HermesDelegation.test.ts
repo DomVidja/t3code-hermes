@@ -154,6 +154,47 @@ describe("Hermes delegate_task ACP boundary", () => {
     ).toEqual(["completed", "failed"]);
   });
 
+  it("reports a finished child's tokens from either Hermes shape", () => {
+    const live = new HermesDelegations();
+    const start = tool({ ...batch.start, rawInput: batch.args });
+    live.update(start, turnId);
+    const [completed] = live.update(
+      progress(start, {
+        event: "subagent.complete",
+        task_index: 0,
+        status: "completed",
+        input_tokens: 1200,
+        output_tokens: 340,
+        reasoning_tokens: 80,
+        duration_seconds: 4,
+      }),
+      turnId,
+    )!;
+    expect(completed?.payload).toMatchObject({
+      typedUsage: {
+        totalTokens: 1540,
+        inputTokens: 1200,
+        outputTokens: 340,
+        reasoningOutputTokens: 80,
+        durationMs: 4000,
+      },
+    });
+
+    const structured = new HermesDelegations();
+    const stockStart = tool({ ...batch.start, rawInput: batch.args });
+    structured.update(stockStart, turnId);
+    const result = {
+      results: [{ task_index: 0, status: "completed", tokens: { input: 900, output: 100 } }],
+    };
+    const events = structured.update(
+      tool({ ...batch.complete, content: [], rawOutput: result }, stockStart),
+      turnId,
+    )!;
+    expect(events.find((event) => event.type === "task.completed")?.payload).toMatchObject({
+      typedUsage: { totalTokens: 1000, inputTokens: 900, outputTokens: 100 },
+    });
+  });
+
   it("keeps short interleaved child progress and ignores duplicate/late text", () => {
     const state = new HermesDelegations();
     const start = tool({ ...batch.start, rawInput: batch.args });
