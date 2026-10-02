@@ -1,0 +1,78 @@
+{
+  "name": "T3 Hermes",
+  "identifier": "com.nateweav.t3hermes.source",
+  "sourceURL": "https://raw.githubusercontent.com/NateWeav/t3code-hermes/ipa-source/source.json",
+  "iconURL": "https://raw.githubusercontent.com/NateWeav/t3code-hermes/HEAD/assets/hermes/ios-1024.png",
+  "apps": [
+    {
+      "name": "T3 Hermes",
+      "bundleIdentifier": "com.nateweav.t3hermes",
+      "developerName": "NateWeav",
+      "localizedDescription": "Nightly and stable builds from NateWeav/t3code-hermes releases.",
+      "iconURL": "https://raw.githubusercontent.com/NateWeav/t3code-hermes/HEAD/assets/hermes/ios-1024.png",
+      "versions": [
+        {
+          "version": "0.0.45-nightly.20261002.116",
+          "date": "2026-10-02T07:00:24Z",
+          "localizedDescription": "T3 Code Nightly 0.0.45-nightly.20261002.116 (6d5b87b72078)",
+          "downloadURL": "https://github.com/NateWeav/t3code-hermes/releases/download/v0.0.45-nightly.20261002.116/T3Code-0.0.45-nightly.20261002.116.ipa",
+          "size": 42183790
+        },
+        {
+          "version": "0.0.45-nightly.20261001.113",
+          "date": "2026-10-01T19:09:03Z",
+          "localizedDescription": "T3 Code Nightly 0.0.45-nightly.20261001.113 (581de0e368d2)",
+          "downloadURL": "https://github.com/NateWeav/t3code-hermes/releases/download/v0.0.45-nightly.20261001.113/T3Code-0.0.45-nightly.20261001.113.ipa",
+          "size": 42182946
+        },
+        {
+          "version": "0.0.45-nightly.20261001.111",
+          "date": "2026-10-01T10:58:43Z",
+          "localizedDescription": "T3 Code Nightly 0.0.45-nightly.20261001.111 (0571ecc84745)",
+          "downloadURL": "https://github.com/NateWeav/t3code-hermes/releases/download/v0.0.45-nightly.20261001.111/T3Code-0.0.45-nightly.20261001.111.ipa",
+          "size": 42161381
+        },
+        {
+          "version": "0.0.45-nightly.20261001.109",
+          "date": "2026-10-01T01:28:48Z",
+          "localizedDescription": "T3 Code Nightly 0.0.45-nightly.20261001.109 (f8bc0625c39c)",
+          "downloadURL": "https://github.com/NateWeav/t3code-hermes/releases/download/v0.0.45-nightly.20261001.109/T3Code-0.0.45-nightly.20261001.109.ipa",
+          "size": 42158212
+        },
+        {
+          "version": "0.0.45-nightly.20260930.108",
+          "date": "2026-09-30T20:50:36Z",
+          "localizedDescription": "T3 Code Nightly 0.0.45-nightly.20260930.108 (0ee1b3d21886)",
+          "downloadURL": "https://github.com/NateWeav/t3code-hermes/releases/download/v0.0.45-nightly.20260930.108/T3Code-0.0.45-nightly.20260930.108.ipa",
+          "size": 42156370
+        },
+        {
+          "version": "0.0.45-nightly.20260930.107",
+          "date": "2026-09-30T19:53:06Z",
+          "localizedDescription": "T3 Code Nightly 0.0.45-nightly.20260930.107 (a992a27069c1)",
+          "downloadURL": "https://github.com/NateWeav/t3code-hermes/releases/download/v0.0.45-nightly.20260930.107/T3Code-0.0.45-nightly.20260930.107.ipa",
+          "size": 42154390
+        },
+        {
+          "version": "0.0.45-nightly.20260930.104",
+          "date": "2026-09-30T04:14:12Z",
+          "localizedDescription": "T3 Code Nightly 0.0.45-nightly.20260930.104 (43910a258dd7)",
+          "downloadURL": "https://github.com/NateWeav/t3code-hermes/releases/download/v0.0.45-nightly.20260930.104/T3Code-0.0.45-nightly.20260930.104.ipa",
+          "size": 42130607
+        },
+        {
+          "version": "0.0.44-nightly.20260929.102",
+          "date": "2026-09-29T21:03:12Z",
+          "localizedDescription": "T3 Code Nightly 0.0.44-nightly.20260929.102 (c1ae601bbf9f)",
+          "downloadURL": "https://github.com/NateWeav/t3code-hermes/releases/download/v0.0.44-nightly.20260929.102/T3Code-0.0.44-nightly.20260929.102.ipa",
+          "size": 42119428
+        }
+      ],
+      "version": "0.0.45-nightly.20261002.116",
+      "versionDate": "2026-10-02T07:00:24Z",
+      "downloadURL": "https://github.com/NateWeav/t3code-hermes/releases/download/v0.0.45-nightly.20261002.116/T3Code-0.0.45-nightly.20261002.116.ipa",
+      "size": 42183790
+    }
+  ],
+  "news": []
+}
