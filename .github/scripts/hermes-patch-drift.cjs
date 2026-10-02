@@ -313,6 +313,17 @@ async function runAll(hermes, python, files) {
 }
 
 async function test({ hermes, state: statePath, python }) {
+  // Hermes's tests/conftest.py fails any test touching a path below ~/.hermes,
+  // which would read as drift. Refuse instead of reporting spurious failures.
+  const realHome = path.join(os.homedir(), ".hermes") + path.sep;
+  for (const [label, dir] of [
+    ["--hermes", hermes],
+    ["TMPDIR", os.tmpdir()],
+  ]) {
+    if ((path.resolve(dir) + path.sep).startsWith(realHome)) {
+      throw new Error(`${label} (${dir}) is under ${realHome}; Hermes's tests refuse to run there`);
+    }
+  }
   const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
   console.log("Baseline: unpatched Hermes main");
   const baseline = await runAll(hermes, python, state.testFiles);
