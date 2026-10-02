@@ -851,9 +851,17 @@ export function makeHermesAdapter(
           });
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          // Hermes subagents cannot ask for approval, so they deny dangerous
+          // commands unless YOLO is on. Full access has to reach them too. The
+          // flag is process-wide, which is safe because a runtime-mode change
+          // restarts the session.
+          const spawnEnvironment =
+            input.runtimeMode === "full-access"
+              ? { ...(sessionEnvironment ?? process.env), HERMES_YOLO_MODE: "1" }
+              : sessionEnvironment;
           const acp = yield* makeHermesAcpRuntime({
             hermesSettings,
-            ...(sessionEnvironment ? { environment: sessionEnvironment } : {}),
+            ...(spawnEnvironment ? { environment: spawnEnvironment } : {}),
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
