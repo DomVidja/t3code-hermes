@@ -188,7 +188,7 @@ export function installerConfigMatches(
 }
 
 /** Whether an agent's hook config carries an entry the installer wrote. */
-export function hasInstallerHook(hooks: unknown): boolean {
+function hasInstallerHook(hooks: unknown): boolean {
   return hooks !== null && hooks !== undefined && JSON.stringify(hooks).includes(INSTALLER_MARKER);
 }
 
