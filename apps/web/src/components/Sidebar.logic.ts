@@ -6,7 +6,12 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  EnvironmentId,
+  OrchestrationLatestTurn,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
@@ -643,6 +648,19 @@ export function useThreadJumpHintVisibility(): {
     showThreadJumpHints,
     updateThreadJumpHintsVisibility,
   };
+}
+
+/**
+ * Server timestamp an open thread is stamped as visited at. A finished turn
+ * stamps its completion, so reading it clears Done but a later completion
+ * still lights up. A running turn stamps its request time: without that, a
+ * thread left mid-way through its first turn has no visit at all, and
+ * hasUnseenCompletion treats never-visited as read, so Done never appears.
+ */
+export function resolveThreadVisitStamp(
+  latestTurn: Pick<OrchestrationLatestTurn, "requestedAt" | "completedAt"> | null | undefined,
+): string | null {
+  return latestTurn?.completedAt ?? latestTurn?.requestedAt ?? null;
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {

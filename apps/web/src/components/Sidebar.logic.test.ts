@@ -27,6 +27,7 @@ import {
   resolveSidebarThreadStatus,
   resolveThreadStatusRing,
   resolveThreadStatusPill,
+  resolveThreadVisitStamp,
   resolveWorkingStartedAt,
   searchSidebarThreads,
   formatWorkingDurationLabel,
@@ -381,6 +382,28 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveThreadVisitStamp", () => {
+  const statusInput = (lastVisitedAt: string | null) => ({
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestTurn: makeLatestTurn(),
+    lastVisitedAt: lastVisitedAt ?? undefined,
+    session: null,
+  });
+
+  it("shows Done for a thread left before its first turn finished", () => {
+    const visitedMidTurn = resolveThreadVisitStamp(makeLatestTurn({ completedAt: null }));
+    expect(hasUnseenCompletion(statusInput(visitedMidTurn))).toBe(true);
+  });
+
+  it("clears Done once the finished turn has been read", () => {
+    const visitedAfterFinish = resolveThreadVisitStamp(makeLatestTurn());
+    expect(hasUnseenCompletion(statusInput(visitedAfterFinish))).toBe(false);
   });
 });
 
