@@ -94,13 +94,15 @@ export function HindsightAgentMemorySettings({
         description="Give Claude Code, Codex, and Hermes on this device long-term memory in the Hindsight server set up under Integrations → Memory. Turning it off removes only what T3 Code added."
         status={
           <ul className="flex flex-col gap-1 text-xs">
-            <li className="flex min-w-0 items-center gap-2">
-              <ToneDot tone={summary.tone} />
-              <span className="font-medium text-foreground">{summary.label}</span>
-              {summary.detail === null ? null : (
-                <span className="min-w-0 truncate text-muted-foreground">{summary.detail}</span>
-              )}
-            </li>
+            {summary.label === null ? null : (
+              <li className="flex min-w-0 items-center gap-2">
+                <ToneDot tone={summary.tone} />
+                <span className="font-medium text-foreground">{summary.label}</span>
+                {summary.detail === null ? null : (
+                  <span className="min-w-0 truncate text-muted-foreground">{summary.detail}</span>
+                )}
+              </li>
+            )}
             {summary.agents.map((agent) => (
               <li key={agent.target} className="flex min-w-0 items-center gap-2">
                 <ToneDot tone={agent.tone} />

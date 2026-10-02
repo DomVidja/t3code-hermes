@@ -16,9 +16,10 @@ describe("describeHindsightAgentMemory", () => {
 
   it("only reads as on when every agent is actually wired", () => {
     const wired = { target: "codex", state: "installed", detail: null } as const;
-    expect(describeHindsightAgentMemory({ ...base, agents: [wired] }, { enabled: true }).tone).toBe(
-      "ready",
-    );
+    // Fully wired needs no headline: the switch already says it is on.
+    expect(
+      describeHindsightAgentMemory({ ...base, agents: [wired] }, { enabled: true }),
+    ).toMatchObject({ tone: "ready", label: null });
     const summary = describeHindsightAgentMemory(
       {
         ...base,

@@ -260,7 +260,8 @@ export interface HindsightAgentMemoryRow {
 
 export interface HindsightAgentMemorySummary {
   readonly tone: "ready" | "attention" | "idle";
-  readonly label: string;
+  /** Null when the switch already says it all: plainly on, or plainly off. */
+  readonly label: string | null;
   readonly detail: string | null;
   readonly agents: ReadonlyArray<HindsightAgentMemoryRow>;
 }
@@ -284,7 +285,7 @@ export function describeHindsightAgentMemory(
   }));
   const headline = (
     tone: HindsightAgentMemorySummary["tone"],
-    label: string,
+    label: string | null,
     detail: string | null,
   ): HindsightAgentMemorySummary => ({ tone, label, detail, agents });
 
@@ -304,7 +305,7 @@ export function describeHindsightAgentMemory(
     );
   }
   if (state.detail !== null) return headline("attention", "Needs attention", state.detail);
-  if (!options.enabled) return headline("idle", "Off", null);
+  if (!options.enabled) return headline("idle", null, null);
   if (agents.length === 0) {
     return headline(
       "idle",
@@ -313,6 +314,6 @@ export function describeHindsightAgentMemory(
     );
   }
   return agents.every((agent) => agent.tone === "ready")
-    ? headline("ready", "On", null)
+    ? headline("ready", null, null)
     : headline("attention", "Needs attention", null);
 }

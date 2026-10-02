@@ -48,6 +48,7 @@ export function EnvironmentAgentMemorySettings({
       }
     : describeHindsightAgentMemory(state, { enabled });
   const busy = saving || unavailable || state?.applying === true;
+  const subtitle = [summary.label, summary.detail].filter((part) => part !== null).join(" · ");
 
   const setEnabled = async (agentMemory: boolean) => {
     setSaving(true);
@@ -66,7 +67,7 @@ export function EnvironmentAgentMemorySettings({
       <SettingsSwitchRow
         icon="brain"
         label="Hindsight for every agent"
-        subtitle={summary.detail === null ? summary.label : `${summary.label} · ${summary.detail}`}
+        {...(subtitle.length === 0 ? {} : { subtitle })}
         disabled={busy}
         value={enabled}
         onValueChange={(next) => void setEnabled(next)}
