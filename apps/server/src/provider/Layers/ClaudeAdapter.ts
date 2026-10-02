@@ -72,9 +72,11 @@ import {
 } from "@t3tools/shared/claudeCompaction";
 import { HostProcessIsExecutable } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -350,6 +352,20 @@ interface ToolInFlight {
   readonly parentToolUseId?: string;
 }
 
+/**
+ * A ScheduleWakeup call (self-paced /loop) that has not fired yet. It is
+ * presented as a live "monitor" task so the thread reads as Monitoring
+ * between check-ins, and so the session reaper keeps the process that owns
+ * the timer alive. It ends when the wakeup's turn starts, a newer call or
+ * `stop: true` replaces it, the session stops, or the backstop runs because
+ * the SDK never fired it.
+ */
+interface ClaudePendingWakeup {
+  readonly taskId: string;
+  readonly fireAtMs: number;
+  readonly backstop: Fiber.Fiber<void, never>;
+}
+
 interface ClaudeTaskState {
   readonly id: string;
   subject: string;
@@ -387,6 +403,12 @@ interface ClaudeTaskAgentState {
 const PENDING_TASK_ENTRY_CAP = 256;
 /** How long Stop waits for Claude to abort a turn before killing the process. */
 const CLAUDE_INTERRUPT_GRACE = "3 seconds";
+// ScheduleWakeup clamps its delay to this range. Wakeups only fire while the
+// session is idle, so they can land after the requested time; the backstop
+// waits this long past it before giving the wakeup up.
+const SCHEDULE_WAKEUP_MIN_DELAY_SECONDS = 60;
+const SCHEDULE_WAKEUP_MAX_DELAY_SECONDS = 3600;
+const SCHEDULE_WAKEUP_BACKSTOP_GRACE = Duration.minutes(2);
 
 /**
  * Buffers a value that a later task_started reads by tool_use_id (a racing
@@ -454,6 +476,7 @@ interface ClaudeSessionContext {
   readonly workflowMemberFingerprints: Map<string, string>;
   /** Task ids that have started and not yet reached a terminal state. */
   readonly liveTaskIds: Set<string>;
+  pendingWakeup: ClaudePendingWakeup | undefined;
   turnState: ClaudeTurnState | undefined;
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
@@ -3198,6 +3221,116 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  // Ends the pending wakeup's monitor task if it is still `taskId`. Separate
+  // from endPendingWakeup so the backstop fiber never interrupts itself.
+  const finishWakeup = Effect.fn("finishWakeup")(function* (
+    context: ClaudeSessionContext,
+    taskId: string,
+    status: "completed" | "stopped",
+  ) {
+    if (context.pendingWakeup?.taskId !== taskId) return;
+    context.pendingWakeup = undefined;
+    if (!context.liveTaskIds.delete(taskId)) return;
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "task.completed",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+      payload: {
+        taskId: RuntimeTaskId.make(taskId),
+        status,
+        ...taskLinkageFor(context.taskAgents, taskId),
+      },
+      providerRefs: nativeProviderRefs(context),
+    });
+    context.taskAgents.delete(taskId);
+  });
+
+  const endPendingWakeup = Effect.fn("endPendingWakeup")(function* (
+    context: ClaudeSessionContext,
+    status: "completed" | "stopped",
+  ) {
+    const wakeup = context.pendingWakeup;
+    if (!wakeup) return;
+    yield* finishWakeup(context, wakeup.taskId, status);
+    yield* Fiber.interrupt(wakeup.backstop);
+  });
+
+  // A turn that starts at or after the fire time is the wakeup firing (or a
+  // user turn that the wakeup will follow straight away).
+  const settleFiredWakeup = Effect.fn("settleFiredWakeup")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    const wakeup = context.pendingWakeup;
+    if (!wakeup || (yield* Clock.currentTimeMillis) < wakeup.fireAtMs) return;
+    yield* endPendingWakeup(context, "completed");
+  });
+
+  const recordScheduledWakeup = Effect.fn("recordScheduledWakeup")(function* (
+    context: ClaudeSessionContext,
+    tool: ToolInFlight,
+  ) {
+    const { delaySeconds, stop } = tool.input;
+    if (stop === true) {
+      yield* endPendingWakeup(context, "stopped");
+      return;
+    }
+    if (typeof delaySeconds !== "number" || !Number.isFinite(delaySeconds)) return;
+    yield* endPendingWakeup(context, "stopped");
+
+    const delayMs =
+      Math.min(
+        Math.max(delaySeconds, SCHEDULE_WAKEUP_MIN_DELAY_SECONDS),
+        SCHEDULE_WAKEUP_MAX_DELAY_SECONDS,
+      ) * 1000;
+    const fireAtMs = (yield* Clock.currentTimeMillis) + delayMs;
+    const taskId = `wakeup:${tool.itemId}`;
+    const minutes = Math.max(1, Math.round(delayMs / 60_000));
+    const reason = trimmedString(tool.input.reason);
+    const description = `Check back in ${minutes} min${reason ? `: ${reason}` : ""}`;
+    context.taskAgents.set(taskId, {
+      taskId,
+      toolUseId: tool.itemId,
+      description,
+      subagentType: undefined,
+      taskType: "monitor",
+      workflowName: undefined,
+      skipTranscript: false,
+      runHandles: undefined,
+      owningAgentId: undefined,
+      model: undefined,
+      effort: undefined,
+    });
+    context.liveTaskIds.add(taskId);
+    const backstop = yield* Effect.sleep(
+      Duration.sum(Duration.millis(delayMs), SCHEDULE_WAKEUP_BACKSTOP_GRACE),
+    ).pipe(
+      Effect.andThen(finishWakeup(context, taskId, "completed")),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkDetach,
+    );
+    context.pendingWakeup = { taskId, fireAtMs, backstop };
+
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "task.started",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+      payload: {
+        taskId: RuntimeTaskId.make(taskId),
+        description,
+        ...taskLinkageFor(context.taskAgents, taskId),
+      },
+      providerRefs: nativeProviderRefs(context),
+    });
+  });
+
   const handleUserMessage = Effect.fn("handleUserMessage")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -3342,6 +3475,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
       }
 
+      if (!toolResult.isError && tool.toolName === "ScheduleWakeup" && !tool.agentId) {
+        yield* recordScheduledWakeup(context, tool);
+      }
+
       if (
         !toolResult.isError &&
         applyClaudeTaskToolResult(context.claudeTasks, tool, toolUseResult)
@@ -3471,6 +3608,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: {},
         },
       });
+      yield* settleFiredWakeup(context);
     }
 
     const content = message.message?.content;
@@ -4352,6 +4490,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     context.stopped = true;
 
+    // The wakeup dies with the process; its task settles as stopped below.
+    const wakeup = context.pendingWakeup;
+    context.pendingWakeup = undefined;
+    if (wakeup) {
+      yield* Fiber.interrupt(wakeup.backstop);
+    }
+
     for (const taskId of Array.from(context.liveTaskIds)) {
       if (!context.liveTaskIds.delete(taskId)) {
         continue;
@@ -5124,6 +5269,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         subagentToolParents,
         workflowMemberFingerprints,
         liveTaskIds,
+        pendingWakeup: undefined,
         turnState: undefined,
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
@@ -5314,6 +5460,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         payload: modelSelection?.model ? { model: modelSelection.model } : {},
         providerRefs: {},
       });
+      yield* settleFiredWakeup(context);
     }
 
     // Re-scan on every send: skills are added and switched off mid-session,
