@@ -129,6 +129,10 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
       agent.error
     );
   }
+  // A stopped row's last progress reads as if it were still working.
+  if (agent.status === "cancelled" || agent.status === "interrupted") {
+    return agent.error ?? agent.result ?? null;
+  }
   return (
     agent.error ??
     agent.result ??

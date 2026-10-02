@@ -316,7 +316,9 @@ export class HermesDelegations {
         this.metadata(child, progress);
         if (progress.event === "subagent.complete") {
           events.push(...this.complete(tool.toolCallId, child, progress));
-        } else {
+        } else if (progress.event !== "subagent.thinking") {
+          // Thinking ticks are Hermes's spinner frames ("(¬‿¬) analyzing..."),
+          // not progress worth a row or a websocket event.
           const summary = text(progress.text)?.slice(-2000);
           const lastToolName = text(progress.tool);
           const event: TaskEvent = {
