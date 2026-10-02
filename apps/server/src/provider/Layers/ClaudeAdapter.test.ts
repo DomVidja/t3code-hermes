@@ -3984,6 +3984,159 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  describe("ScheduleWakeup", () => {
+    const emitScheduleWakeup = (
+      harness: ReturnType<typeof makeHarness>,
+      toolUseId: string,
+      input: Record<string, unknown>,
+    ) => {
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session",
+        uuid: `${toolUseId}-start`,
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: toolUseId, name: "ScheduleWakeup", input: {} },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session",
+        uuid: `${toolUseId}-input`,
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: JSON.stringify(input) },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session",
+        uuid: `${toolUseId}-stop`,
+        parent_tool_use_id: null,
+        event: { type: "content_block_stop", index: 0 },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "user",
+        session_id: "sdk-session",
+        uuid: `${toolUseId}-result`,
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: toolUseId, content: "Scheduled." }],
+        },
+      } as unknown as SDKMessage);
+    };
+
+    const nextTaskEvent = (adapter: ClaudeAdapterShape) =>
+      adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.map((events) => Array.from(events)[0]),
+        Effect.forkChild,
+      );
+
+    it.effect("stays a live monitor task until the wakeup's turn starts", () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({ threadId: session.threadId, input: "babysit", attachments: [] });
+
+        const startedFiber = yield* nextTaskEvent(adapter);
+        emitScheduleWakeup(harness, "tool-wakeup-1", {
+          delaySeconds: 270,
+          reason: "watching CI",
+          prompt: "check CI",
+        });
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session",
+          uuid: "result-babysit",
+        } as unknown as SDKMessage);
+        const started = yield* Fiber.join(startedFiber);
+        assert.equal(started?.type, "task.started");
+        if (started?.type === "task.started") {
+          assert.equal(started.payload.taskType, "monitor");
+          assert.equal(started.payload.description, "Check back in 5 min: watching CI");
+        }
+
+        // The wakeup fires as a Claude-initiated turn.
+        yield* TestClock.adjust("270 seconds");
+        const completedFiber = yield* nextTaskEvent(adapter);
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session",
+          uuid: "assistant-wakeup",
+          parent_tool_use_id: null,
+          message: { id: "msg-wakeup", content: [{ type: "text", text: "Checking CI." }] },
+        } as unknown as SDKMessage);
+        const completed = yield* Fiber.join(completedFiber);
+        assert.equal(completed?.type, "task.completed");
+        if (completed?.type === "task.completed" && started?.type === "task.started") {
+          assert.equal(completed.payload.taskId, started.payload.taskId);
+          assert.equal(completed.payload.status, "completed");
+          assert.equal(completed.payload.taskType, "monitor");
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
+
+    it.effect("ends on stop, and at the backstop when the wakeup never fires", () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({ threadId: session.threadId, input: "babysit", attachments: [] });
+
+        const firstFiber = yield* nextTaskEvent(adapter);
+        emitScheduleWakeup(harness, "tool-wakeup-1", { delaySeconds: 600, prompt: "check" });
+        assert.equal((yield* Fiber.join(firstFiber))?.type, "task.started");
+
+        const stoppedFiber = yield* nextTaskEvent(adapter);
+        emitScheduleWakeup(harness, "tool-wakeup-stop", { stop: true });
+        const stopped = yield* Fiber.join(stoppedFiber);
+        assert.equal(stopped?.type, "task.completed");
+        if (stopped?.type === "task.completed") {
+          assert.equal(stopped.payload.status, "stopped");
+        }
+
+        const secondFiber = yield* nextTaskEvent(adapter);
+        emitScheduleWakeup(harness, "tool-wakeup-2", { delaySeconds: 60, prompt: "check" });
+        assert.equal((yield* Fiber.join(secondFiber))?.type, "task.started");
+
+        const backstopFiber = yield* nextTaskEvent(adapter);
+        yield* TestClock.adjust("3 minutes");
+        const backstop = yield* Fiber.join(backstopFiber);
+        assert.equal(backstop?.type, "task.completed");
+        if (backstop?.type === "task.completed") {
+          assert.equal(String(backstop.payload.taskId), "wakeup:tool-wakeup-2");
+          assert.equal(backstop.payload.status, "completed");
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
+  });
+
   it.effect("task.started carries model/effort; subagent snapshots refine the model", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
