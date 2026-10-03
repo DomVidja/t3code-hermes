@@ -163,3 +163,42 @@ it.effect("does not keep credentials of other threads alive", () =>
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );
+
+it.effect("stages replacement credentials and revokes only the rejected or retired process", () =>
+  Effect.gen(function* () {
+    const registry = yield* McpSessionRegistry.McpSessionRegistry;
+    const threadId = ThreadId.make("credential-handoff");
+    const request = {
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      capabilities: new Set<"preview">(["preview"]),
+    };
+    const old = (yield* McpSessionRegistry.issueActiveMcpCredential(request))!;
+    const token = (issued: typeof old) => issued.config.authorizationHeader.slice(7);
+    const rejected = (yield* McpSessionRegistry.issueActiveMcpCredential({
+      ...request,
+      preserveExisting: true,
+    }))!;
+    expect(yield* registry.resolve(token(old))).toBeDefined();
+    expect(yield* registry.resolve(token(rejected))).toBeDefined();
+    yield* McpSessionRegistry.revokeActiveMcpProviderSession(rejected.config.providerSessionId);
+    expect(yield* registry.resolve(token(rejected))).toBeUndefined();
+    expect(yield* registry.resolve(token(old))).toBeDefined();
+    const accepted = (yield* McpSessionRegistry.issueActiveMcpCredential({
+      ...request,
+      preserveExisting: true,
+    }))!;
+    yield* McpSessionRegistry.revokeActiveMcpProviderSession(old.config.providerSessionId);
+    expect(yield* registry.resolve(token(old))).toBeUndefined();
+    expect(yield* registry.resolve(token(accepted))).toBeDefined();
+    // Existing callers retain immediate replace semantics by default.
+    const ordinary = (yield* McpSessionRegistry.issueActiveMcpCredential(request))!;
+    expect(yield* registry.resolve(token(accepted))).toBeUndefined();
+    expect(yield* registry.resolve(token(ordinary))).toBeDefined();
+  }).pipe(
+    Effect.provide(McpSessionRegistry.layer),
+    Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
+    Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+    Effect.provide(NodeServices.layer),
+  ),
+);

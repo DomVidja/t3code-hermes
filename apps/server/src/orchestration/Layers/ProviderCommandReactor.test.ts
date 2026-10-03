@@ -1550,6 +1550,80 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect(
+    "shows a retryable background-work refusal without stopping the live process",
+    () =>
+      Effect.gen(function* () {
+        const detail =
+          "Claude is still running background agents. Wait for them to finish, or press Stop, then send the message again.";
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          }),
+        );
+        const send = (suffix: string, effort: string) =>
+          harness.engine.dispatch({
+            type: "thread.turn.start" as const,
+            commandId: CommandId.make(`cmd-background-${suffix}`),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              messageId: asMessageId(`message-background-${suffix}`),
+              role: "user" as const,
+              text: "continue",
+              attachments: [],
+            },
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-sonnet-4-6",
+              [{ id: "effort", value: effort }],
+            ),
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required" as const,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          });
+        const firstSent = yield* Deferred.make<void>();
+        const attempted = yield* Deferred.make<void>();
+        harness.sendTurn.mockImplementationOnce(() =>
+          Deferred.succeed(firstSent, undefined).pipe(
+            Effect.as({ threadId: ThreadId.make("thread-1"), turnId: asTurnId("turn-1") }),
+          ),
+        );
+        yield* send("first", "medium");
+        yield* Deferred.await(firstSent);
+        yield* Effect.promise(() => harness.drain());
+        harness.startSession.mockImplementationOnce(
+          () =>
+            Deferred.succeed(attempted, undefined).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ProviderAdapterRequestError({
+                    provider: "claudeAgent",
+                    method: "session/replace",
+                    detail,
+                  }),
+                ),
+              ),
+            ) as never,
+        );
+        yield* send("refused", "max");
+        yield* Deferred.await(attempted);
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.stopSession.mock.calls.length).toBe(0);
+        expect(harness.sendTurn.mock.calls.length).toBe(1);
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        expect(thread?.session?.lastError).toBe(detail);
+        const failure = thread?.activities.find(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        );
+        expect(failure?.payload).toMatchObject({ detail });
+      }),
+  );
+
   effectIt.effect("shows the missing workspace message without a provider stack trace", () =>
     Effect.gen(function* () {
       const attempted = yield* Deferred.make<void>();

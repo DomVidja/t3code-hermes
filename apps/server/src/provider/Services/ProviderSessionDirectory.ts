@@ -43,6 +43,8 @@ export type ProviderSessionDirectoryWriteError =
 
 export interface ProviderSessionDirectoryUpsertOptions {
   readonly onConflict?: "update" | "ignore";
+  /** Restore a complete payload snapshot instead of merging partial updates. */
+  readonly runtimePayloadMode?: "merge" | "replace";
 }
 
 export interface ProviderSessionDirectoryShape {

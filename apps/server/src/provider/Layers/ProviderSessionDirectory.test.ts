@@ -145,6 +145,34 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
     }),
   );
 
+  it.effect("restores a complete payload without retaining replacement-only fields", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = ThreadId.make("thread-payload-restore");
+      const binding = {
+        threadId,
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      };
+      const oldPayload = { cwd: "/tmp/original", activeTurnId: null };
+      yield* directory.upsert({ ...binding, runtimePayload: oldPayload });
+      yield* directory.upsert({
+        ...binding,
+        runtimePayload: { cwd: "/tmp/candidate", modelSelection: { model: "candidate" } },
+      });
+      yield* directory.upsert(
+        { ...binding, runtimePayload: oldPayload },
+        { runtimePayloadMode: "replace" },
+      );
+      assert.deepEqual(
+        Option.getOrThrow(yield* directory.getBinding(threadId)).runtimePayload,
+        oldPayload,
+      );
+      yield* directory.upsert({ ...binding }, { runtimePayloadMode: "replace" });
+      assert.isNull(Option.getOrThrow(yield* directory.getBinding(threadId)).runtimePayload);
+    }),
+  );
+
   it.effect("keeps the existing binding when an insert conflicts", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
