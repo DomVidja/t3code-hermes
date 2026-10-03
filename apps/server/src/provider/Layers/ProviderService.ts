@@ -11,6 +11,7 @@
  */
 import {
   EventId,
+  HermesSettings,
   MessageId,
   ModelSelection,
   NonNegativeInt,
@@ -247,6 +248,8 @@ interface PendingCompaction {
  * from `ProviderEventLoggers`. Production wiring leaves this undefined and
  * reads the logger off the tag.
  */
+const decodeHermesDelegationSettings = Schema.decodeUnknownOption(HermesSettings);
+
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
   /**
@@ -969,6 +972,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
       const capabilities = yield* agentAccessCapabilities(threadId);
+      const currentSettings = yield* serverSettings.getSettings.pipe(
+        Effect.orElseSucceed(() => undefined),
+      );
+      const profile = currentSettings?.providerInstances[providerInstanceId];
+      const profileConfig =
+        profile?.config ??
+        (String(providerInstanceId) === "hermes" ? currentSettings?.providers.hermes : undefined);
+      const hermesDelegationSettings = decodeHermesDelegationSettings(profileConfig);
+      if (
+        (profile?.driver ?? String(providerInstanceId)) === "hermes" &&
+        Option.isSome(hermesDelegationSettings) &&
+        (hermesDelegationSettings.value.allowedProfileDelegationTargets?.length ?? 0) > 0
+      ) {
+        capabilities.add("profile-delegation");
+      }
       const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")

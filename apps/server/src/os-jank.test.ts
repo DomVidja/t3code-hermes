@@ -1,7 +1,10 @@
 import * as NodeOS from "node:os";
 import { assert, it } from "vite-plus/test";
 
-import { hydratePosixHome } from "./os-jank.ts";
+import * as NodePath from "@effect/platform-node/NodePath";
+import * as Effect from "effect/Effect";
+import { it as effectIt } from "@effect/vitest";
+import { hydratePosixHome, resolveBaseDir } from "./os-jank.ts";
 
 it("hydrates HOME for minimal service environments from the user account", () => {
   const env: NodeJS.ProcessEnv = {};
@@ -38,3 +41,12 @@ it("preserves an explicitly configured HOME", () => {
 
   assert.equal(env.HOME, "/custom/home");
 });
+
+effectIt.effect("uses an isolated Lab backend home while preserving an explicit directory", () =>
+  Effect.gen(function* () {
+    const implicit = yield* resolveBaseDir(undefined);
+    const explicit = yield* resolveBaseDir("/tmp/lab-custom");
+    assert.equal(implicit, `${NodeOS.homedir()}/.t3-hermes-lab`);
+    assert.equal(explicit, "/tmp/lab-custom");
+  }).pipe(Effect.provide(NodePath.layer)),
+);

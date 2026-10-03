@@ -5,6 +5,10 @@ carries those changes as patches, and the Patches tab of the Hermes panel shows 
 has each one. On web and desktop, the clock button in the sidebar footer opens the panel; Patches
 is the third tab. On mobile, open **Settings → Hermes → Patches**.
 
+On web and desktop, the profile selector chooses which configured Hermes installation the tab
+checks and changes. Profiles using the same installation share its patches. Mobile uses the
+default Hermes installation.
+
 Each patch shows one of three states:
 
 - **Applied**: your Hermes has the change.

@@ -1,3 +1,4 @@
+import * as HermesKanbanService from "./hermes/HermesKanbanService.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -157,6 +158,7 @@ import { requiredScopeForRpcMethod, requiredScopeForDeviceList } from "./auth/Rp
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as HermesProfilesService from "./hermes/HermesProfilesService.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
 import * as HermesSkillsService from "./hermes/HermesSkillsService.ts";
 import * as HermesMemoryService from "./hermes/HermesMemoryService.ts";
@@ -680,6 +682,8 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
+      const hermesKanban = yield* HermesKanbanService.HermesKanbanService;
+      const hermesProfiles = yield* HermesProfilesService.HermesProfilesService;
       const hermesCron = yield* HermesCronService.HermesCronService;
       const hermesSkills = yield* HermesSkillsService.HermesSkillsService;
       const hermesMemory = yield* HermesMemoryService.HermesMemoryService;
@@ -2966,17 +2970,49 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.hermesSkillsList, hermesSkills.list(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.hermesProfilesList]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesProfilesList, hermesProfiles.list(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesProfilesShow]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesProfilesShow, hermesProfiles.show(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesProfilesCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesProfilesCreate, hermesProfiles.create(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesProfilesConfigure]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesProfilesConfigure, hermesProfiles.configure(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesProfilesLink]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesProfilesLink, hermesProfiles.link(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.hermesSkillsGet]: (input) =>
           observeRpcEffect(WS_METHODS.hermesSkillsGet, hermesSkills.get(input), {
             "rpc.aggregate": "server",
           }),
-        [WS_METHODS.hermesMemoryRead]: () =>
-          observeRpcEffect(WS_METHODS.hermesMemoryRead, hermesMemory.read, {
+        [WS_METHODS.hermesMemoryRead]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesMemoryRead, hermesMemory.read(input), {
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.hermesMemoryMutate]: (input) =>
           observeRpcEffect(WS_METHODS.hermesMemoryMutate, hermesMemory.mutate(input), {
             "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.hermesKanbanList]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesKanbanList, hermesKanban.list(input), {
+            "rpc.aggregate": "hermes",
+          }),
+        [WS_METHODS.hermesKanbanGet]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesKanbanGet, hermesKanban.get(input), {
+            "rpc.aggregate": "hermes",
+          }),
+        [WS_METHODS.hermesKanbanMutate]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesKanbanMutate, hermesKanban.mutate(input), {
+            "rpc.aggregate": "hermes",
           }),
         [WS_METHODS.hermesCronGetRunOutput]: (input) =>
           observeRpcEffect(WS_METHODS.hermesCronGetRunOutput, hermesCron.getRunOutput(input), {
@@ -3002,8 +3038,8 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.hermesRunSourceSet, hermesRuns.setSource(input), {
             "rpc.aggregate": "server",
           }),
-        [WS_METHODS.hermesPatchList]: () =>
-          observeRpcEffect(WS_METHODS.hermesPatchList, hermesPatches.list, {
+        [WS_METHODS.hermesPatchList]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesPatchList, hermesPatches.list(input), {
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.hermesPatchApply]: (input) =>
@@ -4162,22 +4198,26 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "server" },
           ),
-        [WS_METHODS.subscribeHermesSkills]: (_input) =>
+        [WS_METHODS.subscribeHermesSkills]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeHermesSkills,
-            Stream.unwrap(hermesSkills.subscribe),
+            Stream.unwrap(hermesSkills.subscribe(input)),
             { "rpc.aggregate": "server" },
           ),
-        [WS_METHODS.subscribeHermesMemory]: () =>
+        [WS_METHODS.subscribeHermesMemory]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeHermesMemory,
-            Stream.unwrap(hermesMemory.subscribe),
+            Stream.unwrap(hermesMemory.subscribe(input)),
             { "rpc.aggregate": "server" },
           ),
-        [WS_METHODS.subscribeHermesCron]: (_input) =>
-          observeRpcStream(WS_METHODS.subscribeHermesCron, Stream.unwrap(hermesCron.subscribe), {
-            "rpc.aggregate": "server",
-          }),
+        [WS_METHODS.subscribeHermesCron]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeHermesCron,
+            Stream.unwrap(hermesCron.subscribe(input)),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
       });
     }),
   );

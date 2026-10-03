@@ -36,6 +36,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as ParentAuthority from "../../hermes/HermesParentSessionAuthority.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
@@ -313,6 +314,9 @@ export function makeHermesAdapter(
   options?: HermesAdapterLiveOptions,
 ) {
   return Effect.gen(function* () {
+    const parentAuthority = yield* Effect.serviceOption(
+      ParentAuthority.HermesParentSessionAuthority,
+    );
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("hermes");
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -897,72 +901,135 @@ export function makeHermesAdapter(
                 }),
             ),
           );
-          const started = yield* Effect.gen(function* () {
-            yield* acp.handleRequestPermission((params) =>
-              mapAcpCallbackFailure(
-                Effect.gen(function* () {
-                  yield* logNative(input.threadId, "session/request_permission", params);
-                  if (input.runtimeMode === "full-access") {
-                    const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
-                    if (autoApprovedOptionId !== undefined) {
-                      return {
-                        outcome: {
-                          outcome: "selected" as const,
-                          optionId: autoApprovedOptionId,
-                        },
-                      };
-                    }
+          const requestPermission = (
+            params: EffectAcpSchema.RequestPermissionRequest,
+            childIdentity?: string,
+          ) =>
+            mapAcpCallbackFailure(
+              Effect.gen(function* () {
+                yield* logNative(input.threadId, "session/request_permission", params);
+                if (input.runtimeMode === "full-access" && childIdentity === undefined) {
+                  const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
+                  if (autoApprovedOptionId !== undefined) {
+                    return {
+                      outcome: {
+                        outcome: "selected" as const,
+                        optionId: autoApprovedOptionId,
+                      },
+                    };
                   }
-                  const permissionRequest = parsePermissionRequest(params);
-                  const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
-                  const runtimeRequestId = RuntimeRequestId.make(requestId);
-                  const decision = yield* Deferred.make<ProviderApprovalDecision>();
-                  const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
-                  pendingApprovals.set(requestId, { decision });
-                  yield* offerRuntimeEvent(
-                    makeAcpRequestOpenedEvent({
-                      stamp: yield* makeEventStamp(),
-                      provider: PROVIDER,
-                      threadId: input.threadId,
-                      turnId,
-                      requestId: runtimeRequestId,
-                      permissionRequest,
-                      detail:
-                        permissionRequest.detail ??
-                        encodeJsonStringForDiagnostics(params)?.slice(0, 2000) ??
-                        "[unserializable params]",
-                      args: params,
-                      source: "acp.jsonrpc",
-                      method: "session/request_permission",
-                      rawPayload: params,
+                }
+                const parsedPermissionRequest = parsePermissionRequest(
+                  childIdentity
+                    ? {
+                        ...params,
+                        toolCall: {
+                          ...params.toolCall,
+                          toolCallId: `${childIdentity}:${params.toolCall.toolCallId}`,
+                          title: `${childIdentity}: ${params.toolCall.title ?? "permission"}`,
+                        },
+                      }
+                    : params,
+                );
+                const permissionRequest = childIdentity
+                  ? {
+                      ...parsedPermissionRequest,
+                      detail: `${childIdentity}: ${parsedPermissionRequest.detail ?? "Permission requested"}`,
+                    }
+                  : parsedPermissionRequest;
+                const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                const runtimeRequestId = RuntimeRequestId.make(requestId);
+                const decision = yield* Deferred.make<ProviderApprovalDecision>();
+                const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+                pendingApprovals.set(requestId, { decision });
+                yield* offerRuntimeEvent(
+                  makeAcpRequestOpenedEvent({
+                    stamp: yield* makeEventStamp(),
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    requestId: runtimeRequestId,
+                    permissionRequest,
+                    detail:
+                      permissionRequest.detail ??
+                      encodeJsonStringForDiagnostics(params)?.slice(0, 2000) ??
+                      "[unserializable params]",
+                    args: params,
+                    source: "acp.jsonrpc",
+                    method: "session/request_permission",
+                    rawPayload: params,
+                  }),
+                );
+                const resolved = yield* Deferred.await(decision).pipe(
+                  Effect.onInterrupt(() =>
+                    Effect.gen(function* () {
+                      yield* offerRuntimeEvent(
+                        makeAcpRequestResolvedEvent({
+                          stamp: yield* makeEventStamp(),
+                          provider: PROVIDER,
+                          threadId: input.threadId,
+                          turnId,
+                          requestId: runtimeRequestId,
+                          permissionRequest,
+                          decision: "cancel",
+                        }),
+                      );
                     }),
-                  );
-                  const resolved = yield* Deferred.await(decision);
-                  pendingApprovals.delete(requestId);
-                  yield* offerRuntimeEvent(
-                    makeAcpRequestResolvedEvent({
-                      stamp: yield* makeEventStamp(),
-                      provider: PROVIDER,
-                      threadId: input.threadId,
-                      turnId,
-                      requestId: runtimeRequestId,
-                      permissionRequest,
-                      decision: resolved,
-                    }),
-                  );
-                  const selectedOptionId =
-                    resolved === "cancel" ? undefined : selectPermissionOptionId(params, resolved);
-                  return {
-                    outcome: selectedOptionId
-                      ? {
-                          outcome: "selected" as const,
-                          optionId: selectedOptionId,
-                        }
-                      : ({ outcome: "cancelled" } as const),
-                  };
-                }),
-              ),
+                  ),
+                  Effect.ensuring(Effect.sync(() => pendingApprovals.delete(requestId))),
+                );
+                pendingApprovals.delete(requestId);
+                yield* offerRuntimeEvent(
+                  makeAcpRequestResolvedEvent({
+                    stamp: yield* makeEventStamp(),
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    requestId: runtimeRequestId,
+                    permissionRequest,
+                    decision: resolved,
+                  }),
+                );
+                const selectedOptionId =
+                  resolved === "cancel" ? undefined : selectPermissionOptionId(params, resolved);
+                return {
+                  outcome: selectedOptionId
+                    ? {
+                        outcome: "selected" as const,
+                        optionId: selectedOptionId,
+                      }
+                    : ({ outcome: "cancelled" } as const),
+                };
+              }),
             );
+          if (
+            mcpSession &&
+            Option.isSome(parentAuthority) &&
+            (hermesSettings.allowedProfileDelegationTargets?.length ?? 0) > 0
+          ) {
+            yield* parentAuthority.value
+              .register({
+                owner: mcpSession,
+                runtimeMode: input.runtimeMode,
+                cwd,
+                allowedTargets: new Set(hermesSettings.allowedProfileDelegationTargets),
+                requestPermission: (childId, target, params) =>
+                  requestPermission(params, `Profile ${target} child ${childId}`),
+              })
+              .pipe(
+                Effect.provideService(Scope.Scope, sessionScope),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterValidationError({
+                      provider: PROVIDER,
+                      operation: "startSession",
+                      issue: cause.message,
+                    }),
+                ),
+              );
+          }
+          const started = yield* Effect.gen(function* () {
+            yield* acp.handleRequestPermission((params) => requestPermission(params));
             yield* acp.handleExtNotification(HERMES_PROCESS_METHOD, HermesProcessReport, (report) =>
               mapAcpCallbackFailure(
                 Effect.gen(function* () {
@@ -1154,6 +1221,8 @@ export function makeHermesAdapter(
                 // Detached children outlive prompts, but cannot report after ACP
                 // disconnects. Handle this even with no active parent turn.
                 if (event._tag === "ConnectionTerminated") {
+                  if (mcpSession && Option.isSome(parentAuthority))
+                    yield* parentAuthority.value.revoke(mcpSession.providerSessionId);
                   yield* finishDelegations(
                     ctx,
                     undefined,
@@ -1855,6 +1924,10 @@ export function makeHermesAdapter(
             }
             const interruptedTurnId =
               observed.interruptedTurnId ?? turnId ?? activeTurnId ?? ctx.session.activeTurnId;
+            const parentMcpSession = McpProviderSession.readMcpProviderSession(threadId);
+            if (parentMcpSession && Option.isSome(parentAuthority)) {
+              yield* parentAuthority.value.cancelChildren(parentMcpSession.providerSessionId);
+            }
             yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
             yield* Effect.ignore(
               ctx.acp.cancel.pipe(

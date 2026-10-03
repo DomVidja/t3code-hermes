@@ -65,7 +65,9 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 });
 
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
-const HERMES_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+// Cold ACP startup includes profile, skills, and tool initialization. Keep the
+// complete discovery bounded without rejecting otherwise valid cold starts.
+const HERMES_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 60_000;
 
 /**
  * Placeholder shown before the ACP handshake reports the models Hermes

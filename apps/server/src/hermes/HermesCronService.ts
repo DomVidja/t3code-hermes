@@ -28,6 +28,8 @@
 import {
   HERMES_CRON_CONTRACT_VERSION,
   HermesCronError,
+  type HermesInstanceScope,
+  ProviderInstanceId,
   type HermesCronJob,
   type HermesCronGetRunOutputInput,
   type HermesCronRunOutput,
@@ -56,6 +58,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import { makeHermesInstanceServices } from "./hermesInstanceServices.ts";
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ServerConfig } from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
@@ -89,9 +92,11 @@ const MUTE_STATE_FILENAME = "hermes-cron-mutes.json";
 const PersistedMuteState = Schema.Struct({
   version: Schema.Literal(1),
   mutedJobIds: Schema.Array(Schema.String),
+  instanceId: Schema.optionalKey(ProviderInstanceId),
 });
 
 const decodeMuteState = Schema.decodeUnknownEffect(Schema.fromJsonString(PersistedMuteState));
+const encodeMuteState = Schema.encodeSync(Schema.fromJsonString(PersistedMuteState));
 
 export class HermesCronService extends Context.Service<
   HermesCronService,
@@ -99,6 +104,7 @@ export class HermesCronService extends Context.Service<
     /** Current snapshot, re-read from Hermes when `refresh` is set. */
     readonly list: (input: {
       readonly refresh?: boolean;
+      readonly instanceId?: ProviderInstanceId;
     }) => Effect.Effect<HermesCronSnapshot, HermesCronError>;
 
     /** Full output is never included in a subscription snapshot. */
@@ -120,11 +126,9 @@ export class HermesCronService extends Context.Service<
      * Snapshot followed by changes. Holding a subscription is what keeps the
      * 60s poll alive; the last unsubscribe stops it.
      */
-    readonly subscribe: Effect.Effect<
-      Stream.Stream<HermesCronStreamEvent>,
-      HermesCronError,
-      Scope.Scope
-    >;
+    readonly subscribe: (
+      input?: HermesInstanceScope,
+    ) => Effect.Effect<Stream.Stream<HermesCronStreamEvent>, HermesCronError, Scope.Scope>;
   }
 >()("t3-hermes/hermes/HermesCronService") {}
 
@@ -196,154 +200,162 @@ function emptySnapshot(
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
-export const make = Effect.gen(function* () {
-  const config = yield* ServerConfig;
-  const settingsService = yield* ServerSettings.ServerSettingsService;
-  const fs = yield* FileSystem.FileSystem;
-  // Captured here so the service's own signature stays free of process
-  // requirements; only `setEnabled` ever spawns anything.
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const path = yield* Path.Path;
+const makeForInstance = (instanceId: ProviderInstanceId, legacyMuteState = false) =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig;
+    const settingsService = yield* ServerSettings.ServerSettingsService;
+    const fs = yield* FileSystem.FileSystem;
+    // Captured here so the service's own signature stays free of process
+    // requirements; only `setEnabled` ever spawns anything.
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
 
-  const changes = yield* Effect.acquireRelease(
-    PubSub.unbounded<HermesCronStreamEvent>(),
-    (pubsub) => PubSub.shutdown(pubsub),
-  );
-  const subscribeMutex = yield* Semaphore.make(1);
-  const pollMutex = yield* Semaphore.make(1);
+    const changes = yield* Effect.acquireRelease(
+      PubSub.unbounded<HermesCronStreamEvent>(),
+      (pubsub) => PubSub.shutdown(pubsub),
+    );
+    const pollMutex = yield* Semaphore.make(1);
 
-  const muteStatePath = path.join(config.stateDir, MUTE_STATE_FILENAME);
-  const mutedRef = yield* Ref.make<ReadonlySet<string>>(new Set());
-  const deliveryReader = createHermesCronDeliveryReader();
-  let observedHome: string | null = null;
-  const snapshotRef = yield* Ref.make<HermesCronSnapshot | null>(null);
-  /** `null` until the first successful poll — see `diffCompletedRuns`. */
-  const ledgerRef = yield* Ref.make<HermesCronRunLedger | null>(null);
-  const subscribersRef = yield* SynchronizedRef.make<{
-    readonly count: number;
-    readonly fiber: Fiber.Fiber<void> | null;
-  }>({ count: 0, fiber: null });
+    const muteStatePath = path.join(
+      config.stateDir,
+      legacyMuteState ? MUTE_STATE_FILENAME : `hermes-cron-mutes-${instanceId}.json`,
+    );
+    const mutedRef = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const deliveryReader = createHermesCronDeliveryReader();
+    let observedHome: string | null = null;
+    const snapshotRef = yield* Ref.make<HermesCronSnapshot | null>(null);
+    /** `null` until the first successful poll — see `diffCompletedRuns`. */
+    const ledgerRef = yield* Ref.make<HermesCronRunLedger | null>(null);
+    const subscribersRef = yield* SynchronizedRef.make<{
+      readonly count: number;
+      readonly fiber: Fiber.Fiber<void> | null;
+    }>({ count: 0, fiber: null });
 
-  const pollerScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
-    Scope.close(scope, Exit.void),
-  );
-
-  // A missing or unreadable mute file means "nothing muted", which is the safe
-  // direction: a user hears about a run they muted rather than missing one.
-  yield* Effect.gen(function* () {
-    const exists = yield* fs.exists(muteStatePath).pipe(Effect.orElseSucceed(() => false));
-    if (!exists) return;
-    const raw = yield* fs.readFileString(muteStatePath).pipe(Effect.orElseSucceed(() => ""));
-    if (raw.trim().length === 0) return;
-    const decoded = yield* decodeMuteState(raw).pipe(Effect.option);
-    if (decoded._tag === "Some") {
-      yield* Ref.set(mutedRef, new Set(decoded.value.mutedJobIds));
-    }
-  });
-
-  const persistMuteState = (mutedJobIds: ReadonlySet<string>) =>
-    writeFileStringAtomically({
-      filePath: muteStatePath,
-      contents: `${JSON.stringify({ version: 1, mutedJobIds: [...mutedJobIds].sort() })}\n`,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      // Mute is a convenience. Losing it across a restart is not worth failing
-      // a user's click over.
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Failed to persist Hermes cron mute state").pipe(
-          Effect.annotateLogs({ cause }),
-        ),
-      ),
+    const pollerScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
     );
 
-  /** The enabled instance, with its env overrides already merged over `process.env`. */
-  const hermesInstance = Effect.map(
-    settingsService.getSettings.pipe(Effect.orElseSucceed(() => null)),
-    (settings) => {
-      const instance = settings === null ? null : resolveEnabledHermesInstance(settings);
-      if (instance === null) return null;
-      return {
-        settings: instance.settings,
-        env: mergeProviderInstanceEnvironment(instance.environment),
-      };
-    },
-  );
+    // A missing or unreadable mute file means "nothing muted", which is the safe
+    // direction: a user hears about a run they muted rather than missing one.
+    yield* Effect.gen(function* () {
+      const exists = yield* fs.exists(muteStatePath).pipe(Effect.orElseSucceed(() => false));
+      if (!exists) return;
+      const raw = yield* fs.readFileString(muteStatePath).pipe(Effect.orElseSucceed(() => ""));
+      if (raw.trim().length === 0) return;
+      const decoded = yield* decodeMuteState(raw).pipe(Effect.option);
+      if (decoded._tag === "Some") {
+        yield* Ref.set(mutedRef, new Set(decoded.value.mutedJobIds));
+      }
+    });
 
-  /** Reads Hermes state. Never fails — availability is part of the snapshot. */
-  const readSnapshot = Effect.gen(function* () {
-    const readAt = DateTime.formatIso(yield* DateTime.now);
-    const instance = yield* hermesInstance;
-
-    if (instance === null) {
-      observedHome = null;
-      yield* Ref.set(ledgerRef, null);
-      return { snapshot: emptySnapshot(readAt, "providerDisabled"), runs: [] } satisfies PollResult;
-    }
-
-    const paths = resolveHermesCronPaths(instance.env);
-    if (observedHome !== paths.home) {
-      observedHome = paths.home;
-      yield* Ref.set(ledgerRef, null);
-    }
-    const exists = yield* fs.exists(paths.jobsFile).pipe(Effect.orElseSucceed(() => false));
-    if (!exists) {
-      return { snapshot: emptySnapshot(readAt, "noCronStore"), runs: [] } satisfies PollResult;
-    }
-
-    const raw = yield* fs.readFileString(paths.jobsFile).pipe(Effect.option);
-    if (raw._tag === "None") {
-      return {
-        snapshot: emptySnapshot(readAt, "unreadable", "The Hermes cron store could not be read."),
-        runs: [],
-      } satisfies PollResult;
-    }
-
-    const parsed = yield* decodeJobsFileJson(raw.value).pipe(
-      Effect.flatMap((json) => Effect.try(() => parseHermesCronJobs(json))),
-      Effect.orElseSucceed(() => null),
-    );
-    if (parsed === null) {
-      return {
-        snapshot: emptySnapshot(
-          readAt,
-          "unreadable",
-          "The Hermes cron store is not valid JSON. Run `hermes cron list` to check it.",
+    const persistMuteState = (mutedJobIds: ReadonlySet<string>) =>
+      writeFileStringAtomically({
+        filePath: muteStatePath,
+        contents: `${encodeMuteState({ version: 1, mutedJobIds: [...mutedJobIds].sort(), ...(legacyMuteState ? { instanceId } : {}) })}\n`,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        // Mute is a convenience. Losing it across a restart is not worth failing
+        // a user's click over.
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to persist Hermes cron mute state").pipe(
+            Effect.annotateLogs({ cause }),
+          ),
         ),
-        runs: [],
-      } satisfies PollResult;
-    }
+      );
 
-    const jobIds = parsed.map((job) => job.id);
-    const rawRuns = yield* Effect.sync(() => readHermesCronRuns(paths.executionsDb, jobIds));
-    const runs =
-      rawRuns === null
-        ? null
-        : (yield* Effect.sync(() => deliveryReader.read(paths, parsed, rawRuns))).runs;
-    const grouped = groupRunsByJob(runs ?? []);
-    const muted = yield* Ref.get(mutedRef);
-
-    return {
-      snapshot: {
-        contractVersion: HERMES_CRON_CONTRACT_VERSION,
-        readAt,
-        availability: "ready" as const,
-        detail: null,
-        runHistoryAvailable: runs !== null,
-        jobs: parsed.map((job) => toContractJob(job, grouped.get(job.id) ?? [], muted.has(job.id))),
+    /** The enabled instance, with its env overrides already merged over `process.env`. */
+    const hermesInstance = Effect.map(
+      settingsService.getSettings.pipe(Effect.orElseSucceed(() => null)),
+      (settings) => {
+        const instance =
+          settings === null ? null : resolveEnabledHermesInstance(settings, instanceId);
+        if (instance === null) return null;
+        return {
+          settings: instance.settings,
+          env: mergeProviderInstanceEnvironment(instance.environment),
+        };
       },
-      runs: runs ?? [],
-    } satisfies PollResult;
-  });
+    );
 
-  /**
-   * One poll: read, publish if changed, notify on newly-terminal runs.
-   *
-   * Serialised so two subscribers cannot both diff against the same ledger
-   * and double-notify.
-   */
-  const poll = pollMutex.withPermits(1)(
-    Effect.gen(function* () {
+    /** Reads Hermes state. Never fails — availability is part of the snapshot. */
+    const readSnapshot = Effect.gen(function* () {
+      const readAt = DateTime.formatIso(yield* DateTime.now);
+      const instance = yield* hermesInstance;
+
+      if (instance === null) {
+        observedHome = null;
+        yield* Ref.set(ledgerRef, null);
+        return {
+          snapshot: emptySnapshot(readAt, "providerDisabled"),
+          runs: [],
+        } satisfies PollResult;
+      }
+
+      const paths = resolveHermesCronPaths(instance.env);
+      if (observedHome !== paths.home) {
+        observedHome = paths.home;
+        yield* Ref.set(ledgerRef, null);
+      }
+      const exists = yield* fs.exists(paths.jobsFile).pipe(Effect.orElseSucceed(() => false));
+      if (!exists) {
+        return { snapshot: emptySnapshot(readAt, "noCronStore"), runs: [] } satisfies PollResult;
+      }
+
+      const raw = yield* fs.readFileString(paths.jobsFile).pipe(Effect.option);
+      if (raw._tag === "None") {
+        return {
+          snapshot: emptySnapshot(readAt, "unreadable", "The Hermes cron store could not be read."),
+          runs: [],
+        } satisfies PollResult;
+      }
+
+      const parsed = yield* decodeJobsFileJson(raw.value).pipe(
+        Effect.flatMap((json) => Effect.try(() => parseHermesCronJobs(json))),
+        Effect.orElseSucceed(() => null),
+      );
+      if (parsed === null) {
+        return {
+          snapshot: emptySnapshot(
+            readAt,
+            "unreadable",
+            "The Hermes cron store is not valid JSON. Run `hermes cron list` to check it.",
+          ),
+          runs: [],
+        } satisfies PollResult;
+      }
+
+      const jobIds = parsed.map((job) => job.id);
+      const rawRuns = yield* Effect.sync(() => readHermesCronRuns(paths.executionsDb, jobIds));
+      const runs =
+        rawRuns === null
+          ? null
+          : (yield* Effect.sync(() => deliveryReader.read(paths, parsed, rawRuns))).runs;
+      const grouped = groupRunsByJob(runs ?? []);
+      const muted = yield* Ref.get(mutedRef);
+
+      return {
+        snapshot: {
+          contractVersion: HERMES_CRON_CONTRACT_VERSION,
+          readAt,
+          availability: "ready" as const,
+          detail: null,
+          runHistoryAvailable: runs !== null,
+          jobs: parsed.map((job) =>
+            toContractJob(job, grouped.get(job.id) ?? [], muted.has(job.id)),
+          ),
+        },
+        runs: runs ?? [],
+      } satisfies PollResult;
+    });
+
+    /**
+     * One poll: read, publish if changed, notify on newly-terminal runs.
+     *
+     * Serialised so two subscribers cannot both diff against the same ledger
+     * and double-notify.
+     */
+    const pollUnlocked = Effect.gen(function* () {
       const result = yield* readSnapshot;
       const previousLedger = yield* Ref.get(ledgerRef);
       const muted = yield* Ref.get(mutedRef);
@@ -390,175 +402,258 @@ export const make = Effect.gen(function* () {
       }
 
       return result.snapshot;
-    }),
-  );
+    });
+    const poll = pollMutex.withPermits(1)(pollUnlocked);
 
-  const currentSnapshot = Effect.gen(function* () {
-    const existing = yield* Ref.get(snapshotRef);
-    if (existing !== null) return existing;
-    return yield* poll;
-  });
+    const currentSnapshot = Effect.gen(function* () {
+      const existing = yield* Ref.get(snapshotRef);
+      if (existing !== null) return existing;
+      return yield* poll;
+    });
 
-  const retainPoller = SynchronizedRef.updateEffect(subscribersRef, (state) =>
-    Effect.gen(function* () {
-      if (state.fiber !== null) return { ...state, count: state.count + 1 };
-      yield* pollMutex.withPermits(1)(Ref.set(ledgerRef, null));
-      const fiber = yield* poll.pipe(
-        Effect.ignore,
-        Effect.repeat(Schedule.spaced(SUBSCRIBED_POLL_INTERVAL)),
-        Effect.asVoid,
-        Effect.forkIn(pollerScope),
-      );
-      return { count: state.count + 1, fiber };
-    }),
-  );
-
-  const releasePoller = SynchronizedRef.updateEffect(subscribersRef, (state) =>
-    Effect.gen(function* () {
-      const count = Math.max(0, state.count - 1);
-      if (count > 0 || state.fiber === null) return { ...state, count };
-      yield* Fiber.interrupt(state.fiber);
-      return { count: 0, fiber: null };
-    }),
-  );
-
-  const requireEnabled = Effect.gen(function* () {
-    const instance = yield* hermesInstance;
-    if (instance === null) {
-      return yield* new HermesCronError({
-        reason: "providerDisabled",
-        detail: "The Hermes provider is not enabled in this environment.",
-      });
-    }
-    return instance;
-  });
-
-  const getRunOutput = (input: HermesCronGetRunOutputInput) =>
-    pollMutex.withPermits(1)(
+    const retainPoller = SynchronizedRef.updateEffect(subscribersRef, (state) =>
       Effect.gen(function* () {
-        const instance = yield* requireEnabled;
-        const paths = resolveHermesCronPaths(instance.env);
-        // Resolve only a retained run belonging to this job. No client filesystem paths.
-        const runs = yield* Effect.sync(() =>
-          readHermesCronRuns(paths.executionsDb, [input.jobId]),
+        if (state.fiber !== null) return { ...state, count: state.count + 1 };
+        yield* pollMutex.withPermits(1)(Ref.set(ledgerRef, null));
+        const fiber = yield* poll.pipe(
+          Effect.ignore,
+          Effect.repeat(Schedule.spaced(SUBSCRIBED_POLL_INTERVAL)),
+          Effect.asVoid,
+          Effect.forkIn(pollerScope),
         );
-        if (runs === null) {
-          return yield* new HermesCronError({
-            reason: "unreadable",
-            detail: "Run history could not be read.",
-          });
-        }
-        const run = runs.find((entry) => entry.id === input.runId);
-        if (run === undefined) {
-          return yield* new HermesCronError({
-            reason: "unknownJob",
-            detail: "That run is no longer in the recent task history.",
-          });
-        }
-        const result = yield* Effect.sync(() => deliveryReader.read(paths, [], [run], true, runs));
-        return result.outputs.get(run.id) ?? { content: null, truncated: false, source: null };
+        return { count: state.count + 1, fiber };
       }),
     );
 
-  /**
-   * Pause/resume goes through the CLI rather than editing `jobs.json`.
-   *
-   * Hermes takes a cross-process file lock around that file and self-heals
-   * contradictory records; writing it from outside would race its scheduler
-   * for no benefit. `pause`/`resume` are stable CLI verbs.
-   */
-  const setEnabled = (input: HermesCronSetEnabledInput) =>
-    Effect.gen(function* () {
-      const instance = yield* requireEnabled;
-      const snapshot = yield* currentSnapshot;
-      if (!snapshot.jobs.some((job) => job.id === input.jobId)) {
-        return yield* new HermesCronError({
-          reason: "unknownJob",
-          detail: "That scheduled task no longer exists.",
-        });
-      }
-      if (/[\r\n]/.test(input.jobId)) {
-        return yield* new HermesCronError({
-          reason: "unknownJob",
-          detail: "The scheduled task id must not contain carriage returns or line feeds.",
-        });
-      }
-
-      const binary = instance.settings.binaryPath || "hermes";
-      const args = ["cron", input.enabled ? "resume" : "pause", input.jobId];
-      const spawnCommand = yield* resolveSpawnCommand(binary, args, { env: instance.env }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new HermesCronError({
-              reason: "commandFailed",
-              detail: "Could not run the hermes CLI.",
-              cause,
-            }),
-        ),
-      );
-      const result = yield* spawnAndCollect(
-        binary,
-        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-          env: instance.env,
-          shell: spawnCommand.shell,
-        }),
-      ).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.mapError(
-          (cause) =>
-            new HermesCronError({
-              reason: "commandFailed",
-              detail: `Could not ${input.enabled ? "resume" : "pause"} the task.`,
-              cause,
-            }),
-        ),
-      );
-      if (result.code !== 0) {
-        return yield* new HermesCronError({
-          reason: "commandFailed",
-          detail: `hermes cron ${input.enabled ? "resume" : "pause"} exited with code ${result.code}.`,
-        });
-      }
-
-      // Re-read rather than patching the cached snapshot: Hermes may also have
-      // cleared a pause marker or recomputed `next_run_at`.
-      return yield* poll;
-    });
-
-  const setMuted = (input: HermesCronSetMutedInput) =>
-    Effect.gen(function* () {
-      yield* requireEnabled;
-      const next = yield* Ref.updateAndGet(mutedRef, (muted) => {
-        const updated = new Set(muted);
-        if (input.muted) updated.add(input.jobId);
-        else updated.delete(input.jobId);
-        return updated;
-      });
-      yield* persistMuteState(next);
-      // Mute is reflected on every job row, so the snapshot genuinely changed.
-      return yield* poll;
-    });
-
-  const subscribe = Effect.gen(function* () {
-    yield* Effect.addFinalizer(() => releasePoller.pipe(Effect.ignore));
-    yield* retainPoller;
-    const subscription = yield* subscribeBeforeSnapshot(
-      changes,
-      Effect.map(
-        currentSnapshot,
-        (snapshot) => ({ _tag: "snapshot", snapshot }) satisfies HermesCronStreamEvent,
-      ),
-      subscribeMutex,
+    const releasePoller = SynchronizedRef.updateEffect(subscribersRef, (state) =>
+      Effect.gen(function* () {
+        const count = Math.max(0, state.count - 1);
+        if (count > 0 || state.fiber === null) return { ...state, count };
+        yield* Fiber.interrupt(state.fiber);
+        return { count: 0, fiber: null };
+      }),
     );
-    return Stream.concat(Stream.make(subscription.latest), subscription.changes);
+
+    const requireEnabled = Effect.gen(function* () {
+      const instance = yield* hermesInstance;
+      if (instance === null) {
+        return yield* new HermesCronError({
+          reason: "providerDisabled",
+          detail: "The Hermes provider is not enabled in this environment.",
+        });
+      }
+      return instance;
+    });
+
+    const getRunOutput = (input: HermesCronGetRunOutputInput) =>
+      pollMutex.withPermits(1)(
+        Effect.gen(function* () {
+          const instance = yield* requireEnabled;
+          const paths = resolveHermesCronPaths(instance.env);
+          // Resolve only a retained run belonging to this job. No client filesystem paths.
+          const runs = yield* Effect.sync(() =>
+            readHermesCronRuns(paths.executionsDb, [input.jobId]),
+          );
+          if (runs === null) {
+            return yield* new HermesCronError({
+              reason: "unreadable",
+              detail: "Run history could not be read.",
+            });
+          }
+          const run = runs.find((entry) => entry.id === input.runId);
+          if (run === undefined) {
+            return yield* new HermesCronError({
+              reason: "unknownJob",
+              detail: "That run is no longer in the recent task history.",
+            });
+          }
+          const result = yield* Effect.sync(() =>
+            deliveryReader.read(paths, [], [run], true, runs),
+          );
+          return result.outputs.get(run.id) ?? { content: null, truncated: false, source: null };
+        }),
+      );
+
+    /**
+     * Pause/resume goes through the CLI rather than editing `jobs.json`.
+     *
+     * Hermes takes a cross-process file lock around that file and self-heals
+     * contradictory records; writing it from outside would race its scheduler
+     * for no benefit. `pause`/`resume` are stable CLI verbs.
+     */
+    const setEnabled = (input: HermesCronSetEnabledInput) =>
+      Effect.gen(function* () {
+        const instance = yield* requireEnabled;
+        const snapshot = yield* currentSnapshot;
+        if (!snapshot.jobs.some((job) => job.id === input.jobId)) {
+          return yield* new HermesCronError({
+            reason: "unknownJob",
+            detail: "That scheduled task no longer exists.",
+          });
+        }
+        if (/[\r\n]/.test(input.jobId)) {
+          return yield* new HermesCronError({
+            reason: "unknownJob",
+            detail: "The scheduled task id must not contain carriage returns or line feeds.",
+          });
+        }
+
+        const binary = instance.settings.binaryPath || "hermes";
+        const args = ["cron", input.enabled ? "resume" : "pause", input.jobId];
+        const spawnCommand = yield* resolveSpawnCommand(binary, args, { env: instance.env }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new HermesCronError({
+                reason: "commandFailed",
+                detail: "Could not run the hermes CLI.",
+                cause,
+              }),
+          ),
+        );
+        const result = yield* spawnAndCollect(
+          binary,
+          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+            env: instance.env,
+            shell: spawnCommand.shell,
+          }),
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.mapError(
+            (cause) =>
+              new HermesCronError({
+                reason: "commandFailed",
+                detail: `Could not ${input.enabled ? "resume" : "pause"} the task.`,
+                cause,
+              }),
+          ),
+        );
+        if (result.code !== 0) {
+          return yield* new HermesCronError({
+            reason: "commandFailed",
+            detail: `hermes cron ${input.enabled ? "resume" : "pause"} exited with code ${result.code}.`,
+          });
+        }
+
+        // Re-read rather than patching the cached snapshot: Hermes may also have
+        // cleared a pause marker or recomputed `next_run_at`.
+        return yield* poll;
+      });
+
+    const setMuted = (input: HermesCronSetMutedInput) =>
+      Effect.gen(function* () {
+        yield* requireEnabled;
+        const next = yield* Ref.updateAndGet(mutedRef, (muted) => {
+          const updated = new Set(muted);
+          if (input.muted) updated.add(input.jobId);
+          else updated.delete(input.jobId);
+          return updated;
+        });
+        yield* persistMuteState(next);
+        // Mute is reflected on every job row, so the snapshot genuinely changed.
+        return yield* poll;
+      });
+
+    const subscribe = Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => releasePoller.pipe(Effect.ignore));
+      yield* retainPoller;
+      const subscription = yield* subscribeBeforeSnapshot(
+        changes,
+        Effect.map(
+          // Refresh and publish outstanding alerts to existing subscribers before
+          // attaching this subscriber. The poll lock closes the snapshot/attach gap.
+          pollUnlocked,
+          (snapshot) => ({ _tag: "snapshot", snapshot }) satisfies HermesCronStreamEvent,
+        ),
+        pollMutex,
+      );
+      return Stream.concat(Stream.make(subscription.latest), subscription.changes);
+    });
+
+    return HermesCronService.of({
+      list: (input) => (input.refresh === true ? poll : currentSnapshot),
+      getRunOutput,
+      setEnabled,
+      setMuted,
+      subscribe: () => subscribe,
+    });
   });
 
+export const make = Effect.gen(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const readDefault = settings.getSettings.pipe(
+    Effect.map((value) => resolveEnabledHermesInstance(value)?.instanceId),
+    Effect.orElseSucceed(() => undefined),
+  );
+  // Bind the existing environment mute file to the startup default. Later default
+  // changes use their own state; explicit selections always keep their exact target.
+  const initialDefaultId = (yield* readDefault) ?? ProviderInstanceId.make("hermes");
+  const config = yield* ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const legacyPath = path.join(config.stateDir, MUTE_STATE_FILENAME);
+  const persistedLegacy = yield* fs
+    .readFileString(legacyPath)
+    .pipe(Effect.flatMap(decodeMuteState), Effect.option);
+  const legacyDefaultId =
+    persistedLegacy._tag === "Some"
+      ? (persistedLegacy.value.instanceId ?? initialDefaultId)
+      : initialDefaultId;
+  // Record ownership before a later default change/restart can reinterpret old mutes.
+  if (persistedLegacy._tag === "Some" && persistedLegacy.value.instanceId === undefined) {
+    yield* writeFileStringAtomically({
+      filePath: legacyPath,
+      contents: `${encodeMuteState({ ...persistedLegacy.value, instanceId: legacyDefaultId })}\n`,
+    }).pipe(Effect.ignoreCause({ log: true }));
+  }
+  const cachedInstance = yield* makeHermesInstanceServices((id) => {
+    const selectedId = id ?? ProviderInstanceId.make("hermes");
+    return makeForInstance(selectedId, selectedId === legacyDefaultId);
+  });
+  const instance = (id?: ProviderInstanceId) =>
+    Effect.flatMap(id === undefined ? readDefault : Effect.succeed(id), (selectedId) =>
+      cachedInstance(selectedId ?? ProviderInstanceId.make("hermes")),
+    );
+  const subscribeDefault = Effect.gen(function* () {
+    // Subscribe before reading, so a default change during acquisition is retained.
+    const changes = yield* settings.subscribeChanges;
+    return Stream.concat(
+      Stream.fromEffect(readDefault),
+      changes.pipe(Stream.map((value) => resolveEnabledHermesInstance(value)?.instanceId)),
+    ).pipe(
+      Stream.map((id) => id ?? ProviderInstanceId.make("hermes")),
+      Stream.changes,
+      Stream.switchMap((id) =>
+        Stream.unwrap(
+          cachedInstance(id).pipe(
+            Effect.flatMap((service) => service.subscribe({ instanceId: id })),
+            Effect.orDie,
+          ),
+        ).pipe(
+          // An old poll may finish before switchMap processes the settings event.
+          // Suppress it as soon as authoritative settings select another instance.
+          Stream.filterEffect(() =>
+            Effect.map(
+              readDefault,
+              (current) => (current ?? ProviderInstanceId.make("hermes")) === id,
+            ),
+          ),
+        ),
+      ),
+    );
+  });
   return HermesCronService.of({
-    list: (input) => (input.refresh === true ? poll : currentSnapshot),
-    getRunOutput,
-    setEnabled,
-    setMuted,
-    subscribe,
+    list: (input = {}) =>
+      Effect.flatMap(instance(input.instanceId), (service) => service.list(input)),
+    getRunOutput: (input) =>
+      Effect.flatMap(instance(input.instanceId), (service) => service.getRunOutput(input)),
+    setEnabled: (input) =>
+      Effect.flatMap(instance(input.instanceId), (service) => service.setEnabled(input)),
+    setMuted: (input) =>
+      Effect.flatMap(instance(input.instanceId), (service) => service.setMuted(input)),
+    subscribe: (input = {}) =>
+      input.instanceId === undefined
+        ? subscribeDefault
+        : Effect.flatMap(instance(input.instanceId), (service) => service.subscribe(input)),
   });
 });
 
@@ -578,6 +673,6 @@ export const layerTest = Layer.succeed(
       Effect.fail(
         new HermesCronError({ reason: "providerDisabled", detail: "Hermes is not enabled." }),
       ),
-    subscribe: Effect.succeed(Stream.empty),
+    subscribe: () => Effect.succeed(Stream.empty),
   }),
 );

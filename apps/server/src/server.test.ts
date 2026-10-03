@@ -1,3 +1,4 @@
+import * as HermesKanbanService from "./hermes/HermesKanbanService.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -195,6 +196,7 @@ import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryR
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as HermesProfilesService from "./hermes/HermesProfilesService.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
 import * as HermesSkillsService from "./hermes/HermesSkillsService.ts";
 import * as HermesMemoryService from "./hermes/HermesMemoryService.ts";
@@ -1094,6 +1096,8 @@ const buildAppUnderTest = (options?: {
     const appLayerWithServices = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
       Layer.provide(UsageService.layerTest),
+      Layer.provide(HermesKanbanService.layerTest),
+      Layer.provide(HermesProfilesService.layerTest),
       Layer.provide(HermesCronService.layerTest),
       Layer.provide(HermesSkillsService.layerTest),
       Layer.provide(HermesMemoryService.layerTest),

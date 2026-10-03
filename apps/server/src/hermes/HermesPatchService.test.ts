@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { HermesPatchId } from "@t3tools/contracts";
+import { HermesPatchId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -40,11 +40,141 @@ const makeHermesCheckout = Effect.gen(function* () {
   return { root, binaryPath };
 });
 
+/** Build only the old-side source fixture; no Hermes process or live install is used. */
+function seedPatchPreimage(root: string, content: string) {
+  const files = new Map<string, string[]>();
+  let file: string[] | null = null;
+  let position = 0;
+  let remaining = 0;
+  for (const line of content.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      file = null;
+      remaining = 0;
+      continue;
+    }
+    if (line.startsWith("--- a/")) {
+      file = [];
+      files.set(line.slice(6), file);
+      continue;
+    }
+    const hunk = /^@@ -(\d+)(?:,(\d+))? \+/.exec(line);
+    if (hunk !== null) {
+      position = Number(hunk[1]) - 1;
+      remaining = Number(hunk[2] ?? 1);
+      continue;
+    }
+    if (file !== null && remaining > 0 && (line.startsWith(" ") || line.startsWith("-"))) {
+      file[position++] = line.slice(1);
+      remaining--;
+    }
+  }
+  for (const [relative, lines] of files) {
+    const target = NodePath.join(root, relative);
+    NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true });
+    NodeFS.writeFileSync(target, lines.join("\n") + "\n");
+  }
+  git(root, "add", ".");
+  git(
+    root,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "--quiet",
+    "-m",
+    "patch fixture",
+  );
+}
+
 describe("HermesPatchService", () => {
+  it.effect(
+    "routes list, apply, remove and retry to the selected checkout without missing/disabled fallback",
+    () =>
+      Effect.gen(function* () {
+        const a = yield* makeHermesCheckout;
+        const b = yield* makeHermesCheckout;
+        const patch = HERMES_PATCHES[0]!;
+        seedPatchPreimage(a.root, patch.content);
+        const aid = ProviderInstanceId.make("hermes-a");
+        const bid = ProviderInstanceId.make("hermes-b");
+        const off = ProviderInstanceId.make("hermes-off");
+        yield* Effect.gen(function* () {
+          const service = yield* HermesPatchService;
+          const state = (instanceId: ProviderInstanceId) =>
+            service
+              .list({ instanceId })
+              .pipe(
+                Effect.map(
+                  (snapshot) => snapshot.patches.find((entry) => entry.id === patch.id)?.state,
+                ),
+              );
+          assert.deepEqual(
+            [yield* state(aid), yield* state(bid), yield* state(aid)],
+            ["notApplied", "doesNotApply", "notApplied"],
+          );
+          assert.equal(
+            (yield* Effect.flip(service.apply({ instanceId: bid, patchId: patch.id }))).reason,
+            "wrongState",
+          );
+          const applied = yield* service.apply({ instanceId: aid, patchId: patch.id });
+          assert.equal(applied.checkoutPath, NodeFS.realpathSync(a.root));
+          assert.equal(yield* state(aid), "applied");
+          assert.equal(yield* state(bid), "doesNotApply");
+          const removed = yield* service.revert({ instanceId: aid, patchId: patch.id });
+          assert.equal(removed.checkoutPath, NodeFS.realpathSync(a.root));
+          assert.equal(yield* state(aid), "notApplied");
+          assert.equal(
+            (yield* Effect.flip(service.revert({ instanceId: bid, patchId: patch.id }))).reason,
+            "wrongState",
+          );
+          for (const instanceId of [off, ProviderInstanceId.make("missing")]) {
+            assert.equal((yield* service.list({ instanceId })).availability, "providerDisabled");
+            assert.equal(
+              (yield* Effect.flip(service.apply({ instanceId, patchId: patch.id }))).reason,
+              "unavailable",
+            );
+            assert.equal(
+              (yield* Effect.flip(service.revert({ instanceId, patchId: patch.id }))).reason,
+              "unavailable",
+            );
+          }
+          assert.equal(git(a.root, "status", "--porcelain"), "");
+          assert.equal(git(b.root, "status", "--porcelain"), "");
+        }).pipe(
+          Effect.provide(
+            Layer.effect(HermesPatchService, make).pipe(
+              Layer.provide(
+                ServerSettings.layerTest({
+                  providerInstances: {
+                    [aid]: {
+                      driver: ProviderDriverKind.make("hermes"),
+                      enabled: true,
+                      config: { binaryPath: a.binaryPath },
+                    },
+                    [bid]: {
+                      driver: ProviderDriverKind.make("hermes"),
+                      enabled: true,
+                      config: { binaryPath: b.binaryPath },
+                    },
+                    [off]: {
+                      driver: ProviderDriverKind.make("hermes"),
+                      enabled: false,
+                      config: { binaryPath: b.binaryPath },
+                    },
+                  },
+                }),
+              ),
+            ),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("says Hermes is disabled rather than failing", () =>
     Effect.gen(function* () {
       const service = yield* HermesPatchService;
-      const snapshot = yield* service.list;
+      const snapshot = yield* service.list({});
       assert.strictEqual(snapshot.availability, "providerDisabled");
       assert.deepStrictEqual(snapshot.patches, []);
       const error = yield* Effect.flip(service.apply({ patchId: HERMES_PATCHES[0]!.id }));
@@ -57,7 +187,7 @@ describe("HermesPatchService", () => {
       const { root, binaryPath } = yield* makeHermesCheckout;
       yield* Effect.gen(function* () {
         const service = yield* HermesPatchService;
-        const snapshot = yield* service.list;
+        const snapshot = yield* service.list({});
         assert.strictEqual(snapshot.availability, "ready");
         assert.strictEqual(snapshot.checkoutPath, NodeFS.realpathSync(root));
         assert.isFalse(snapshot.detachedHead);

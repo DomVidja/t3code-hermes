@@ -9,6 +9,7 @@
  */
 import {
   HermesPatchError,
+  type HermesPatchListInput,
   type HermesPatchChangeInput,
   type HermesPatchesAvailability,
   type HermesPatchesSnapshot,
@@ -36,7 +37,9 @@ import {
 export class HermesPatchService extends Context.Service<
   HermesPatchService,
   {
-    readonly list: Effect.Effect<HermesPatchesSnapshot, HermesPatchError>;
+    readonly list: (
+      input?: HermesPatchListInput,
+    ) => Effect.Effect<HermesPatchesSnapshot, HermesPatchError>;
     readonly apply: (
       input: HermesPatchChangeInput,
     ) => Effect.Effect<HermesPatchesSnapshot, HermesPatchError>;
@@ -75,25 +78,27 @@ export const make = Effect.gen(function* () {
     );
 
   /** The enabled Hermes's checkout, or why there is none. */
-  const locateCheckout = provide(
-    Effect.gen(function* () {
-      const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
-      const instance = settings === null ? null : resolveEnabledHermesInstance(settings);
-      if (instance === null) return { availability: "providerDisabled" } as const;
-      const env = mergeProviderInstanceEnvironment(instance.environment);
-      const commandPath = yield* resolveCommandPath(instance.settings.binaryPath || "hermes", {
-        env,
-      }).pipe(Effect.orElseSucceed(() => null));
-      if (commandPath === null) return { availability: "hermesNotFound" } as const;
-      const realCommandPath = yield* fileSystem
-        .realPath(commandPath)
-        .pipe(Effect.orElseSucceed(() => null));
-      const checkoutRoot =
-        realCommandPath === null ? null : yield* resolveHermesGitCheckout(realCommandPath);
-      if (checkoutRoot === null) return { availability: "notGitCheckout" } as const;
-      return { availability: "ready", checkoutRoot } as const;
-    }),
-  );
+  const locateCheckout = (input: HermesPatchListInput) =>
+    provide(
+      Effect.gen(function* () {
+        const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+        const instance =
+          settings === null ? null : resolveEnabledHermesInstance(settings, input.instanceId);
+        if (instance === null) return { availability: "providerDisabled" } as const;
+        const env = mergeProviderInstanceEnvironment(instance.environment);
+        const commandPath = yield* resolveCommandPath(instance.settings.binaryPath || "hermes", {
+          env,
+        }).pipe(Effect.orElseSucceed(() => null));
+        if (commandPath === null) return { availability: "hermesNotFound" } as const;
+        const realCommandPath = yield* fileSystem
+          .realPath(commandPath)
+          .pipe(Effect.orElseSucceed(() => null));
+        const checkoutRoot =
+          realCommandPath === null ? null : yield* resolveHermesGitCheckout(realCommandPath);
+        if (checkoutRoot === null) return { availability: "notGitCheckout" } as const;
+        return { availability: "ready", checkoutRoot } as const;
+      }),
+    );
 
   const readSnapshot = (checkoutRoot: string) =>
     provide(
@@ -118,11 +123,12 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const list = Effect.gen(function* () {
-    const checkout = yield* locateCheckout;
-    if (checkout.availability !== "ready") return unavailableSnapshot(checkout.availability);
-    return yield* readSnapshot(checkout.checkoutRoot);
-  });
+  const list = (input: HermesPatchListInput = {}) =>
+    Effect.gen(function* () {
+      const checkout = yield* locateCheckout(input);
+      if (checkout.availability !== "ready") return unavailableSnapshot(checkout.availability);
+      return yield* readSnapshot(checkout.checkoutRoot);
+    });
 
   const change = (input: HermesPatchChangeInput, direction: "forward" | "reverse") =>
     Effect.gen(function* () {
@@ -133,7 +139,7 @@ export const make = Effect.gen(function* () {
           detail: "This environment does not ship that patch.",
         });
       }
-      const checkout = yield* locateCheckout;
+      const checkout = yield* locateCheckout(input);
       if (checkout.availability !== "ready") {
         return yield* new HermesPatchError({
           reason: "unavailable",
@@ -191,7 +197,7 @@ export const layer = Layer.effect(HermesPatchService, make);
 export const layerTest = Layer.succeed(
   HermesPatchService,
   HermesPatchService.of({
-    list: Effect.succeed(unavailableSnapshot("providerDisabled")),
+    list: () => Effect.succeed(unavailableSnapshot("providerDisabled")),
     apply: () =>
       Effect.fail(
         new HermesPatchError({ reason: "unavailable", detail: "Hermes is not enabled." }),

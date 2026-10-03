@@ -1,6 +1,8 @@
 /** Read-only window onto the skill library owned by this environment's Hermes. */
 import * as Schema from "effect/Schema";
 
+import { HermesInstanceScope } from "./hermesInstance.ts";
+
 import { ForwardCompatibleArray, IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const HERMES_SKILLS_CONTRACT_VERSION = 1 as const;
@@ -54,8 +56,8 @@ export const HermesSkillsStreamEvent = Schema.Struct({
 });
 export type HermesSkillsStreamEvent = typeof HermesSkillsStreamEvent.Type;
 
-export const HermesSkillsListInput = Schema.Struct({ refresh: Schema.optionalKey(Schema.Boolean) });
-export const HermesSkillsGetInput = Schema.Struct({ path: TrimmedNonEmptyString });
+export const HermesSkillsListInput = Schema.Struct({ ...HermesInstanceScope.fields, refresh: Schema.optionalKey(Schema.Boolean) });
+export const HermesSkillsGetInput = Schema.Struct({ ...HermesInstanceScope.fields, path: TrimmedNonEmptyString });
 export type HermesSkillsGetInput = typeof HermesSkillsGetInput.Type;
 
 export class HermesSkillsError extends Schema.TaggedError<HermesSkillsError>()(

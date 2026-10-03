@@ -1084,6 +1084,22 @@ export function createServerEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
     }),
     // Built-in memory streams only while its tab is mounted.
+    hermesKanbanList: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:hermes-kanban-list",
+      tag: WS_METHODS.hermesKanbanList,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
+    hermesKanbanGet: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:hermes-kanban-get",
+      tag: WS_METHODS.hermesKanbanGet,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
+    hermesKanbanMutate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:hermes-kanban-mutate",
+      tag: WS_METHODS.hermesKanbanMutate,
+    }),
     hermesMemory: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:hermes-memory",
       tag: WS_METHODS.subscribeHermesMemory,
@@ -1112,6 +1128,30 @@ export function createServerEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
       transform: (stream) => stream.pipe(Stream.map((event) => event.snapshot)),
     }),
+    hermesProfilesList: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:hermes-profiles-list",
+      tag: WS_METHODS.hermesProfilesList,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
+    hermesProfilesShow: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:hermes-profiles-show",
+      tag: WS_METHODS.hermesProfilesShow,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
+    hermesProfilesCreate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-profiles-create",
+      tag: WS_METHODS.hermesProfilesCreate,
+    }),
+    hermesProfilesConfigure: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-profiles-configure",
+      tag: WS_METHODS.hermesProfilesConfigure,
+    }),
+    hermesProfilesLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-profiles-link",
+      tag: WS_METHODS.hermesProfilesLink,
+    }),
     hermesSkillsList: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:hermes-skills-list",
       tag: WS_METHODS.hermesSkillsList,
@@ -1122,8 +1162,15 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:hermes-skills-get",
       // Revision is a client-only cache key. A new store or snapshot must not
       // reuse a pending or completed read of the previous Markdown at this path.
-      execute: (input: { readonly path: string; readonly revision: string }) =>
-        request(WS_METHODS.hermesSkillsGet, { path: input.path }),
+      execute: (input: {
+        readonly path: string;
+        readonly revision: string;
+        readonly instanceId?: import("@t3tools/contracts").ProviderInstanceId;
+      }) =>
+        request(WS_METHODS.hermesSkillsGet, {
+          path: input.path,
+          ...(input.instanceId === undefined ? {} : { instanceId: input.instanceId }),
+        }),
       staleTimeMs: 0,
       idleTtlMs: 0,
     }),
@@ -1156,6 +1203,8 @@ export function createServerEnvironmentAtoms<R, E>(
     hermesPatches: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:hermes-patches",
       tag: WS_METHODS.hermesPatchList,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
     }),
     hermesPatchApply: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:hermes-patch-apply",

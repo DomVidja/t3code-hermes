@@ -14,6 +14,8 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -92,6 +94,69 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect(
+    "serializes derived provider patches with credential revocations under the settings write lock",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        const sourceId = ProviderInstanceId.make("hermes-source");
+        const addedId = ProviderInstanceId.make("concurrent-provider");
+        const linkedId = ProviderInstanceId.make("linked-profile");
+        yield* service.updateSettings({
+          providerInstances: {
+            [sourceId]: {
+              driver: ProviderDriverKind.make("hermes"),
+              enabled: true,
+              environment: [
+                { name: "TEST_GRANT", value: "disposable-fixture-grant", sensitive: true },
+              ],
+            },
+          },
+        });
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const revocation = yield* service
+          .updateSettingsWith((current) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+              return {
+                providerInstances: {
+                  ...current.providerInstances,
+                  [sourceId]: { ...current.providerInstances[sourceId]!, environment: [] },
+                  [addedId]: { driver: ProviderDriverKind.make("hermes"), enabled: false },
+                },
+              };
+            }),
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        const link = yield* service
+          .updateSettingsWith((current) =>
+            Effect.sync(() => {
+              assert.isDefined(current.providerInstances[addedId]);
+              assert.deepStrictEqual(current.providerInstances[sourceId]!.environment, []);
+              return {
+                providerInstances: {
+                  ...current.providerInstances,
+                  [linkedId]: { driver: ProviderDriverKind.make("hermes"), enabled: true },
+                },
+              };
+            }),
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(revocation);
+        yield* Fiber.join(link);
+        const saved = yield* service.getSettings;
+        assert.isDefined(saved.providerInstances[addedId]);
+        assert.isDefined(saved.providerInstances[linkedId]);
+        assert.deepStrictEqual(saved.providerInstances[sourceId]!.environment, []);
+        const secretKey = `provider-env-${Buffer.from(sourceId).toString("base64url")}-${Buffer.from("TEST_GRANT").toString("base64url")}`;
+        assert.isTrue(Option.isNone(yield* secretStore.get(secretKey)));
+      }).pipe(Effect.provide(makeServerSettingsLayerWithSecrets())),
+  );
   it.effect("preserves context when reading a provider environment secret fails", () => {
     const platformCause = PlatformError.systemError({
       _tag: "PermissionDenied",

@@ -1,3 +1,5 @@
+import { ProfileDelegationToolkit } from "./toolkits/profileDelegation/tools.ts";
+import { ProfileDelegationToolkitHandlersLive } from "./toolkits/profileDelegation/handlers.ts";
 import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -667,7 +669,12 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
+const ProfileDelegationRegistrationLive = McpServer.toolkit(ProfileDelegationToolkit).pipe(
+  Layer.provide(ProfileDelegationToolkitHandlersLive),
+);
+
 export const layer = Layer.mergeAll(
+  ProfileDelegationRegistrationLive,
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,

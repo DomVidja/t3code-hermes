@@ -54,7 +54,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.nateweav.t3hermes";
+const DESKTOP_APP_ID = "com.dom.t3hermeslab";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -942,7 +942,7 @@ interface StagePackageJson {
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
-  // T3 Hermes always passes the user's installed Claude executable to the SDK,
+  // T3 Hermes Lab always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
@@ -2539,14 +2539,9 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   updateChannel: "latest" | "nightly",
 ) {
   const env = yield* Config.all({
-    updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
-    githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.option),
+    updateRepository: Config.String("T3HERMES_LAB_UPDATE_REPOSITORY").pipe(Config.option),
   });
-  const rawRepo = (
-    Option.getOrUndefined(env.updateRepository)?.trim() ||
-    Option.getOrUndefined(env.githubRepository)?.trim() ||
-    ""
-  ).trim();
+  const rawRepo = (Option.getOrUndefined(env.updateRepository)?.trim() || "").trim();
   if (!rawRepo) return undefined;
 
   const [owner, repo, ...rest] = rawRepo.split("/");
@@ -2615,8 +2610,8 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Hermes (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Hermes");
+    ? "T3 Hermes Lab (Nightly)"
+    : (desktopPackageJson.productName ?? "T3 Hermes Lab");
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2641,7 +2636,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Hermes-${version}-${arch}.${ext}",
+    artifactName: "T3-Hermes-Lab-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2704,12 +2699,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       extendInfo: {
         NSScreenCaptureUsageDescription:
-          "T3 Hermes captures the active window when you use the window capture shortcut.",
+          "T3 Hermes Lab captures the active window when you use the window capture shortcut.",
       },
       protocols: [
         {
-          name: "T3 Hermes",
-          schemes: ["t3code", "t3code-dev"],
+          name: "T3 Hermes Lab",
+          schemes: ["t3hermeslab", "t3hermeslab-dev"],
         },
       ],
       ...(signed ? { sign } : {}),
@@ -2752,7 +2747,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // resources/package-type into the .deb only, so electron-updater updates
       // each install in its own format.
       target: target === "AppImage" ? [target, "deb"] : [target],
-      executableName: "t3-hermes",
+      executableName: "t3-hermes-lab",
       icon: "icons",
       category: "Development",
       synopsis: "Desktop GUI for coding agents",
@@ -2760,16 +2755,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       maintainer: "T3 Tools <hello@t3.codes>",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
       // in the .desktop entry (Exec already gets %U), so browsers can hand
-      // t3-hermes:// OAuth callbacks to the app.
+      // t3hermeslab:// OAuth callbacks to the app.
       protocols: [
         {
-          name: "T3 Hermes",
-          schemes: ["t3code", "t3code-dev"],
+          name: "T3 Hermes Lab",
+          schemes: ["t3hermeslab", "t3hermeslab-dev"],
         },
       ],
       desktop: {
         entry: {
-          StartupWMClass: "t3-hermes",
+          StartupWMClass: "t3-hermes-lab",
         },
       },
     };
@@ -3676,13 +3671,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
-    name: "t3-hermes",
+    name: "t3-hermes-lab",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "T3 Hermes desktop build",
+    description: "T3 Hermes Lab desktop build",
     // Required by the .deb control file.
     homepage: "https://github.com/NateWeav/t3code-hermes",
     author: "T3 Tools",
@@ -3963,7 +3958,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
 }).pipe(
-  Command.withDescription("Build a desktop artifact for T3 Hermes."),
+  Command.withDescription("Build a desktop artifact for T3 Hermes Lab."),
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 

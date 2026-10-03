@@ -28,6 +28,7 @@ export * from "./sourceControl.ts";
 export * from "./hermesCron.ts";
 export * from "./hermesSkills.ts";
 export * from "./hermesMemory.ts";
+export * from "./hermesProfileDelegation.ts";
 export * from "./hermesRuns.ts";
 export * from "./hermesPatches.ts";
 export * from "./hindsight.ts";
@@ -50,3 +51,8 @@ export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
+
+export * from "./hermesInstance.ts";
+
+export * from "./hermesKanban.ts";
+export * from "./hermesProfiles.ts";

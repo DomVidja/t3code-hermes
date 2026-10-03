@@ -258,6 +258,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     start: Effect.void,
     ready: Effect.void,
     getSettings: Ref.get(settings).pipe(Effect.tap((value) => Queue.offer(settingsReads, value))),
+    updateSettingsWith: () =>
+      Effect.die(new Error("Atomic settings mutations are unused in this fixture")),
     updateSettings,
     streamChanges: Stream.fromPubSub(settingsChanges),
     subscribeChanges: PubSub.subscribe(settingsChanges).pipe(

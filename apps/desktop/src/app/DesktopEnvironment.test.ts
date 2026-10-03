@@ -14,9 +14,9 @@ const defaultInput = {
   platform: "darwin",
   processArch: "arm64",
   appVersion: "0.0.22",
-  appPath: "/Applications/T3 Hermes.app/Contents/Resources/app.asar",
+  appPath: "/Applications/T3 Hermes Lab.app/Contents/Resources/app.asar",
   isPackaged: false,
-  resourcesPath: "/Applications/T3 Hermes.app/Contents/Resources",
+  resourcesPath: "/Applications/T3 Hermes Lab.app/Contents/Resources",
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
@@ -46,10 +46,10 @@ describe("DesktopEnvironment", () => {
         { isPackaged: true },
         { T3CODE_HOME: "/Users/alice/.t3", T3CODE_PORT: "3773" },
       );
-      assert.equal(environment.stateDir, "/Users/alice/.t3-hermes/userdata");
-      assert.equal(environment.userDataDirName, "t3-hermes");
-      assert.equal(environment.legacyUserDataDirName, "T3 Hermes (Alpha)");
-      assert.equal(environment.appUserModelId, "com.nateweav.t3hermes");
+      assert.equal(environment.stateDir, "/Users/alice/.t3-hermes-lab/userdata");
+      assert.equal(environment.userDataDirName, "t3-hermes-lab");
+      assert.equal(environment.legacyUserDataDirName, "T3 Hermes Lab (Alpha)");
+      assert.equal(environment.appUserModelId, "com.dom.t3hermeslab");
       assert.deepEqual(environment.configuredBackendPort, Option.none());
     }),
   );
@@ -91,9 +91,9 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.serverRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
-      assert.equal(environment.appUserModelId, "com.nateweav.t3hermes.dev");
-      assert.equal(environment.linuxWmClass, "t3-hermes-dev");
-      assert.equal(environment.linuxDesktopEntryName, "com.nateweav.T3Hermes.Development.desktop");
+      assert.equal(environment.appUserModelId, "com.dom.t3hermeslab.dev");
+      assert.equal(environment.linuxWmClass, "t3-hermes-lab-dev");
+      assert.equal(environment.linuxDesktopEntryName, "com.dom.T3HermesLab.Development.desktop");
       assert.deepEqual(
         Option.map(environment.devServerUrl, (url) => url.href),
         Option.some("http://localhost:5173/"),
@@ -165,7 +165,7 @@ describe("DesktopEnvironment", () => {
         resourcesPath: "/tmp/.mount_t3code/resources",
       });
 
-      assert.equal(environment.linuxDesktopEntryName, "com.nateweav.T3Hermes.desktop");
+      assert.equal(environment.linuxDesktopEntryName, "com.dom.T3HermesLab.desktop");
     }),
   );
 
@@ -177,8 +177,8 @@ describe("DesktopEnvironment", () => {
       );
       const production = yield* makeEnvironment();
 
-      assert.equal(development.stateDir, "/Users/alice/.t3-hermes/dev");
-      assert.equal(production.stateDir, "/Users/alice/.t3-hermes/userdata");
+      assert.equal(development.stateDir, "/Users/alice/.t3-hermes-lab/dev");
+      assert.equal(production.stateDir, "/Users/alice/.t3-hermes-lab/userdata");
     }),
   );
 
@@ -187,12 +187,12 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment(
         {},
         {
-          T3CODE_DESKTOP_APP_USER_MODEL_ID: " com.nateweav.t3hermes.dev.local ",
+          T3CODE_DESKTOP_APP_USER_MODEL_ID: " com.dom.t3hermeslab.dev.local ",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
         },
       );
 
-      assert.equal(environment.appUserModelId, "com.nateweav.t3hermes.dev.local");
+      assert.equal(environment.appUserModelId, "com.dom.t3hermeslab.dev.local");
     }),
   );
 

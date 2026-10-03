@@ -14,6 +14,8 @@
  */
 import * as Schema from "effect/Schema";
 
+import { HermesInstanceScope } from "./hermesInstance.ts";
+
 import { ForwardCompatibleArray, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const HermesPatchId = TrimmedNonEmptyString.pipe(Schema.brand("HermesPatchId"));
@@ -65,10 +67,11 @@ export const HermesPatchesSnapshot = Schema.Struct({
 });
 export type HermesPatchesSnapshot = typeof HermesPatchesSnapshot.Type;
 
-export const HermesPatchListInput = Schema.Struct({});
+export const HermesPatchListInput = Schema.Struct(HermesInstanceScope.fields);
 export type HermesPatchListInput = typeof HermesPatchListInput.Type;
 
 export const HermesPatchChangeInput = Schema.Struct({
+  ...HermesInstanceScope.fields,
   patchId: HermesPatchId,
 });
 export type HermesPatchChangeInput = typeof HermesPatchChangeInput.Type;

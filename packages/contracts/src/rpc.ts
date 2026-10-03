@@ -1,4 +1,23 @@
 import {
+  HermesKanbanError,
+  HermesKanbanListInput,
+  HermesKanbanGetInput,
+  HermesKanbanMutateInput,
+  HermesKanbanSnapshot,
+  HermesKanbanDetail,
+} from "./hermesKanban.ts";
+import {
+  HermesProfile,
+  HermesProfileList,
+  HermesProfileListInput,
+  HermesProfileShowInput,
+  HermesProfileCreateInput,
+  HermesProfileConfigureInput,
+  HermesProfileLinkInput,
+  HermesProfileLinkResult,
+  HermesProfilesError,
+} from "./hermesProfiles.ts";
+import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
   ChatGptImportProfileInput,
@@ -453,11 +472,19 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
+  hermesProfilesList: "hermes.profilesList",
+  hermesProfilesShow: "hermes.profilesShow",
+  hermesProfilesCreate: "hermes.profilesCreate",
+  hermesProfilesConfigure: "hermes.profilesConfigure",
+  hermesProfilesLink: "hermes.profilesLink",
   hermesSkillsList: "hermes.skillsList",
   hermesSkillsGet: "hermes.skillsGet",
   hermesMemoryRead: "hermes.memoryRead",
   hermesMemoryMutate: "hermes.memoryMutate",
   subscribeHermesMemory: "subscribeHermesMemory",
+  hermesKanbanList: "hermes.kanbanList",
+  hermesKanbanGet: "hermes.kanbanGet",
+  hermesKanbanMutate: "hermes.kanbanMutate",
   hermesCronList: "hermes.cronList",
   hermesCronGetRunOutput: "hermes.cronGetRunOutput",
   hermesCronSetEnabled: "hermes.cronSetEnabled",
@@ -768,6 +795,31 @@ const WsHermesSkillsListRpc = Rpc.make(WS_METHODS.hermesSkillsList, {
   error: Schema.Union([EnvironmentAuthorizationError, HermesSkillsError]),
 });
 
+const WsHermesProfilesListRpc = Rpc.make(WS_METHODS.hermesProfilesList, {
+  payload: HermesProfileListInput,
+  success: HermesProfileList,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesProfilesError]),
+});
+const WsHermesProfilesShowRpc = Rpc.make(WS_METHODS.hermesProfilesShow, {
+  payload: HermesProfileShowInput,
+  success: HermesProfile,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesProfilesError]),
+});
+const WsHermesProfilesCreateRpc = Rpc.make(WS_METHODS.hermesProfilesCreate, {
+  payload: HermesProfileCreateInput,
+  success: HermesProfile,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesProfilesError]),
+});
+const WsHermesProfilesConfigureRpc = Rpc.make(WS_METHODS.hermesProfilesConfigure, {
+  payload: HermesProfileConfigureInput,
+  success: HermesProfile,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesProfilesError]),
+});
+const WsHermesProfilesLinkRpc = Rpc.make(WS_METHODS.hermesProfilesLink, {
+  payload: HermesProfileLinkInput,
+  success: HermesProfileLinkResult,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesProfilesError]),
+});
 const WsHermesSkillsGetRpc = Rpc.make(WS_METHODS.hermesSkillsGet, {
   payload: HermesSkillsGetInput,
   success: HermesSkillDetail,
@@ -775,7 +827,7 @@ const WsHermesSkillsGetRpc = Rpc.make(WS_METHODS.hermesSkillsGet, {
 });
 
 const WsSubscribeHermesSkillsRpc = Rpc.make(WS_METHODS.subscribeHermesSkills, {
-  payload: Schema.Struct({}),
+  payload: HermesSkillsListInput,
   success: HermesSkillsStreamEvent,
   error: Schema.Union([EnvironmentAuthorizationError, HermesSkillsError]),
   stream: true,
@@ -796,6 +848,22 @@ const WsSubscribeHermesMemoryRpc = Rpc.make(WS_METHODS.subscribeHermesMemory, {
   success: HermesMemorySnapshot,
   error: Schema.Union([EnvironmentAuthorizationError, HermesMemoryError]),
   stream: true,
+});
+
+const WsHermesKanbanListRpc = Rpc.make(WS_METHODS.hermesKanbanList, {
+  payload: HermesKanbanListInput,
+  success: HermesKanbanSnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesKanbanError]),
+});
+const WsHermesKanbanGetRpc = Rpc.make(WS_METHODS.hermesKanbanGet, {
+  payload: HermesKanbanGetInput,
+  success: HermesKanbanDetail,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesKanbanError]),
+});
+const WsHermesKanbanMutateRpc = Rpc.make(WS_METHODS.hermesKanbanMutate, {
+  payload: HermesKanbanMutateInput,
+  success: HermesKanbanSnapshot,
+  error: Schema.Union([EnvironmentAuthorizationError, HermesKanbanError]),
 });
 
 const WsHermesCronGetRunOutputRpc = Rpc.make(WS_METHODS.hermesCronGetRunOutput, {
@@ -1691,11 +1759,19 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
   WsHermesSkillsListRpc,
+  WsHermesProfilesListRpc,
+  WsHermesProfilesShowRpc,
+  WsHermesProfilesCreateRpc,
+  WsHermesProfilesConfigureRpc,
+  WsHermesProfilesLinkRpc,
   WsHermesSkillsGetRpc,
   WsSubscribeHermesSkillsRpc,
   WsHermesMemoryReadRpc,
   WsHermesMemoryMutateRpc,
   WsSubscribeHermesMemoryRpc,
+  WsHermesKanbanListRpc,
+  WsHermesKanbanGetRpc,
+  WsHermesKanbanMutateRpc,
   WsHermesCronListRpc,
   WsHermesCronGetRunOutputRpc,
   WsHermesCronSetEnabledRpc,

@@ -62,7 +62,7 @@ export class DesktopEnvironment extends Context.Service<
     // extracts on demand (see DesktopWslServerTree).
     readonly serverRoot: string;
     readonly backendEntryPath: string;
-    // Built web client the packaged renderer is served from over t3code://app.
+    // Built web client the packaged renderer is served from over t3hermeslab://app.
     readonly clientAssetsDir: string;
     readonly backendCwd: string;
     readonly preloadPath: string;
@@ -95,7 +95,7 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Hermes";
+const APP_BASE_NAME = "T3 Hermes Lab";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -188,8 +188,8 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3-hermes-dev" : "t3-hermes";
-  const legacyUserDataDirName = isDevelopment ? "T3 Hermes (Dev)" : "T3 Hermes (Alpha)";
+  const userDataDirName = isDevelopment ? "t3-hermes-lab-dev" : "t3-hermes-lab";
+  const legacyUserDataDirName = isDevelopment ? "T3 Hermes Lab (Dev)" : "T3 Hermes Lab (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -240,10 +240,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.nateweav.t3hermes.dev" : "com.nateweav.t3hermes",
+      isDevelopment ? "com.dom.t3hermeslab.dev" : "com.dom.t3hermeslab",
     ),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
-    linuxWmClass: isDevelopment ? "t3-hermes-dev" : "t3-hermes",
+    linuxWmClass: isDevelopment ? "t3-hermes-lab-dev" : "t3-hermes-lab",
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     userDataDirName,

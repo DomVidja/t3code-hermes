@@ -922,6 +922,13 @@ export function ProviderInstanceCard({
             </div>
           }
         />
+        {instance.driver === "hermes" ? (
+          <SettingsRow
+            title="Profile instance ID"
+            description="Use this ID in another Hermes profile's allowed delegation profiles."
+            control={<code className="select-all text-xs">{String(instanceId)}</code>}
+          />
+        ) : null}
       </SettingsSection>
 
       {setup ? <SettingsSection title="Setup">{setup}</SettingsSection> : null}

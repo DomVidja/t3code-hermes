@@ -299,6 +299,8 @@ describe("makeManagedServerProvider", () => {
             start: Effect.void,
             ready: Effect.void,
             getSettings: Ref.get(serverSettingsRef),
+            updateSettingsWith: () =>
+              Effect.die(new Error("Atomic settings mutations are unused in this fixture")),
             updateSettings: () => Effect.die(new Error("unused in this test")),
             streamChanges: Stream.empty,
             subscribeChanges: PubSub.subscribe(serverSettingsChanges).pipe(

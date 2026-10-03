@@ -232,6 +232,11 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /** Build a patch against the latest settings while holding the persistence write lock. */
+    readonly updateSettingsWith: <E>(
+      makePatch: (current: ServerSettings) => Effect.Effect<ServerSettingsPatch, E>,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError | E>;
+
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
 
@@ -262,20 +267,30 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+    const changes = yield* PubSub.unbounded<ServerSettings>();
+    const writeSemaphore = yield* Semaphore.make(1);
+    const updateSettingsWith = <E>(
+      makePatch: (current: ServerSettings) => Effect.Effect<ServerSettingsPatch, E>,
+    ) =>
+      writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* Ref.get(currentSettingsRef);
+          const patch = yield* makePatch(current);
+          const next = yield* normalizeServerSettings(applyServerSettingsPatch(current, patch));
+          yield* Ref.set(currentSettingsRef, next);
+          yield* PubSub.publish(changes, next);
+          return resolveTextGenerationProvider(next);
+        }),
+      );
 
     return {
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
-      updateSettings: (patch) =>
-        Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
-          Effect.flatMap(normalizeServerSettings),
-          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-          Effect.map(resolveTextGenerationProvider),
-        ),
-      streamChanges: Stream.empty,
-      subscribeChanges: Effect.succeed(Stream.empty),
+      updateSettings: (patch) => updateSettingsWith(() => Effect.succeed(patch)),
+      updateSettingsWith,
+      streamChanges: Stream.fromPubSub(changes),
+      subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
     } satisfies ServerSettingsService["Service"];
   });
 
@@ -1079,12 +1094,13 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const updateSettings = (
-    patch: ServerSettingsPatch,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+  const updateSettingsWith = <E>(
+    makePatch: (current: ServerSettings) => Effect.Effect<ServerSettingsPatch, E>,
+  ): Effect.Effect<ServerSettings, ServerSettingsError | E> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
+        const patch = yield* makePatch(current);
         const updated = applyServerSettingsPatch(current, patch);
         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
@@ -1113,6 +1129,9 @@ const make = Effect.gen(function* () {
         return resolveTextGenerationProvider(materialized);
       }),
     );
+
+  const updateSettings = (patch: ServerSettingsPatch) =>
+    updateSettingsWith(() => Effect.succeed(patch));
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
@@ -1190,6 +1209,7 @@ const make = Effect.gen(function* () {
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings,
+    updateSettingsWith,
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));
     },

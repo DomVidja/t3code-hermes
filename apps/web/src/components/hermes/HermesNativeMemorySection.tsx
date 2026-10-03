@@ -7,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/hermes-memory";
 import type {
   EnvironmentId,
+  ProviderInstanceId,
   HermesMemoryFile,
   HermesMemoryMutateInput,
   HermesMemoryTarget,
@@ -14,6 +15,7 @@ import type {
 import { AlertTriangleIcon } from "lucide-react";
 import { useId, useRef, useState } from "react";
 
+import { useHermesPanelScope } from "../../state/hermesInstanceScope";
 import { useHermesEnvironmentId } from "../../state/hermesCron";
 import { useHermesMemory } from "../../state/hermesMemory";
 import { Button } from "../ui/button";
@@ -288,8 +290,14 @@ function MemoryFileCard({
   );
 }
 
-function NativeMemoryContent({ environmentId }: { environmentId: EnvironmentId | null }) {
-  const { data, error, isPending, refresh, mutate } = useHermesMemory(environmentId);
+function NativeMemoryContent({
+  environmentId,
+  instanceId,
+}: {
+  environmentId: EnvironmentId | null;
+  instanceId?: ProviderInstanceId | undefined;
+}) {
+  const { data, error, isPending, refresh, mutate } = useHermesMemory(environmentId, instanceId);
   const unavailable =
     environmentId === null || data?.availability === "providerDisabled"
       ? "Enable the Hermes provider to view and edit native memory."
@@ -331,7 +339,16 @@ function NativeMemoryContent({ environmentId }: { environmentId: EnvironmentId |
 }
 
 export function HermesNativeMemorySection() {
-  const environmentId = useHermesEnvironmentId();
+  const automaticEnvironmentId = useHermesEnvironmentId();
+  const scope = useHermesPanelScope();
+  const environmentId = scope === null ? automaticEnvironmentId : scope.environmentId;
+  const instanceId = scope?.instanceId;
   // A new environment must never inherit another host's draft or revision.
-  return <NativeMemoryContent key={environmentId ?? "disabled"} environmentId={environmentId} />;
+  return (
+    <NativeMemoryContent
+      key={`${environmentId}:${instanceId ?? "default"}`}
+      environmentId={environmentId}
+      instanceId={instanceId}
+    />
+  );
 }

@@ -8,17 +8,26 @@ import {
 } from "@t3tools/client-runtime/state/hermes-skills";
 import { useMemo, useState } from "react";
 
+import { useHermesPanelScope } from "./hermesInstanceScope";
 import { useHermesEnvironmentId } from "./hermesCron";
 import { useEnvironmentQuery } from "./query";
 import { serverEnvironment } from "./server";
 
 export function useHermesSkills() {
-  const environmentId = useHermesEnvironmentId();
+  const automaticEnvironmentId = useHermesEnvironmentId();
+  const scope = useHermesPanelScope();
+  const environmentId = scope === null ? automaticEnvironmentId : scope.environmentId;
+  const instanceId = scope?.instanceId;
   const [search, setSearch] = useState("");
   const [origin, setOrigin] = useState<HermesSkillOriginFilter>("all");
   const [selection, setSelection] = useState<HermesSkillSelection | null>(null);
   const query = useEnvironmentQuery(
-    environmentId === null ? null : serverEnvironment.hermesSkills({ environmentId, input: {} }),
+    environmentId === null
+      ? null
+      : serverEnvironment.hermesSkills({
+          environmentId,
+          input: instanceId === undefined ? {} : { instanceId },
+        }),
   );
   const snapshot = query.data;
   const selectedSkill = resolveHermesSkillSelection(selection, environmentId, snapshot);
@@ -29,7 +38,10 @@ export function useHermesSkills() {
       ? null
       : serverEnvironment.hermesSkillsGet({
           environmentId,
-          input: hermesSkillDetailInput(selectedSkill.path, snapshot),
+          input: {
+            ...hermesSkillDetailInput(selectedSkill.path, snapshot),
+            ...(instanceId === undefined ? {} : { instanceId }),
+          },
         }),
   );
   const list = useMemo(

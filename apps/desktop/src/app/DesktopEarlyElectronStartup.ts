@@ -32,7 +32,7 @@ export interface EarlyLinuxElectronOptions {
 }
 
 export const resolveLinuxDesktopEntryName = (isDevelopment: boolean): string =>
-  isDevelopment ? "com.nateweav.T3Hermes.Development.desktop" : "com.nateweav.T3Hermes.desktop";
+  isDevelopment ? "com.dom.T3HermesLab.Development.desktop" : "com.dom.T3HermesLab.desktop";
 
 const trimNonEmpty = (value: string | undefined): string | null => {
   const trimmed = value?.trim();
@@ -88,7 +88,7 @@ export function resolveEarlyLinuxElectronOptions(
   const isDevelopment = isDevelopmentEnvironment(input.env);
   return {
     isDevelopment,
-    linuxWmClass: isDevelopment ? "t3-hermes-dev" : "t3-hermes",
+    linuxWmClass: isDevelopment ? "t3-hermes-lab-dev" : "t3-hermes-lab",
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,

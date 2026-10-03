@@ -202,6 +202,22 @@ it("bounds metadata and rejects malformed YAML", () => {
   expect(parseSkillsUsage('{"skill":{"use_count":-2}}').get("skill")).toBe(0);
 });
 
+it("lists and opens Hermes skills with multiple authors", async () => {
+  await withDirectory(async (root) => {
+    const directory = NodePath.join(root, "multi-author");
+    await NodeFSP.mkdir(directory);
+    await NodeFSP.writeFile(
+      NodePath.join(directory, "SKILL.md"),
+      "---\nname: multi-author\ndescription: Shared procedure\nauthor: [Alice, Bob]\n---\n# Procedure\n",
+    );
+    const snapshot = await readHermesSkills(root);
+    expect(snapshot.availability).toBe("ready");
+    expect(snapshot.detail).toBeNull();
+    expect(snapshot.skills.map((skill) => skill.name)).toEqual(["multi-author"]);
+    expect((await readHermesSkillDetail(root, "multi-author")).metadata.author).toBe("Alice, Bob");
+  });
+});
+
 it("distinguishes missing, empty and unreadable stores; skips archives and broken skills", async () => {
   await withDirectory(async (root) => {
     expect((await readHermesSkills(NodePath.join(root, "missing"))).availability).toBe(

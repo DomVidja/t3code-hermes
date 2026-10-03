@@ -1,9 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { HermesSettings } from "@t3tools/contracts";
 
 import { HERMES_BUILT_IN_SLASH_COMMANDS } from "../acp/HermesAcpSupport.ts";
@@ -20,6 +25,8 @@ const encodeJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.U
  */
 const writeFakeHermesAcpBinary = Effect.fn("writeFakeHermesAcpBinary")(function* (options: {
   readonly prefix: string;
+  readonly holdSession?: boolean;
+  readonly failAt?: "initialize" | "authenticate";
   readonly availableModels: ReadonlyArray<{ readonly modelId: string; readonly name: string }>;
   readonly availableCommands?: ReadonlyArray<{
     readonly name: string;
@@ -34,6 +41,9 @@ const writeFakeHermesAcpBinary = Effect.fn("writeFakeHermesAcpBinary")(function*
   const script = `#!/usr/bin/env node
 const models = ${encodeJsonString(options.availableModels)};
 const commands = ${encodeJsonString(options.availableCommands ?? null)};
+const holdSession = ${encodeJsonString(options.holdSession ?? false)};
+const failAt = ${encodeJsonString(options.failAt ?? null)};
+let releaseSession;
 if (process.argv[2] !== "acp") {
   process.stdout.write("hermes 0.20.0\\n");
   process.exit(0);
@@ -48,7 +58,15 @@ process.stdin.on("data", (chunk) => {
     buffer = buffer.slice(newline + 1);
     if (!line) continue;
     const request = JSON.parse(line);
+    if (request.method === "fixture/release") {
+      releaseSession?.();
+      continue;
+    }
     if (request.id === undefined) continue;
+    if (request.method === failAt) {
+      send({ jsonrpc: "2.0", id: request.id, error: { code: -32603, message: "fixture-secret-auth-error" } });
+      continue;
+    }
     if (request.method === "initialize") {
       send({
         jsonrpc: "2.0",
@@ -58,26 +76,34 @@ process.stdin.on("data", (chunk) => {
     } else if (request.method === "authenticate") {
       send({ jsonrpc: "2.0", id: request.id, result: {} });
     } else if (request.method === "session/new") {
-      send({
-        jsonrpc: "2.0",
-        id: request.id,
-        result: {
-          sessionId: "fake-session",
-          models:
-            models.length > 0
-              ? { currentModelId: models[0].modelId, availableModels: models }
-              : undefined,
-        },
-      });
-      if (commands) {
+      const reply = () => {
         send({
           jsonrpc: "2.0",
-          method: "session/update",
-          params: {
+          id: request.id,
+          result: {
             sessionId: "fake-session",
-            update: { sessionUpdate: "available_commands_update", availableCommands: commands },
+            models:
+              models.length > 0
+                ? { currentModelId: models[0].modelId, availableModels: models }
+                : undefined,
           },
         });
+        if (commands) {
+          send({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "fake-session",
+              update: { sessionUpdate: "available_commands_update", availableCommands: commands },
+            },
+          });
+        }
+      };
+      if (holdSession) {
+        releaseSession = reply;
+        process.stderr.write("T3_FIXTURE_SESSION_WAIT\\n");
+      } else {
+        reply();
       }
     } else {
       send({ jsonrpc: "2.0", id: request.id, result: {} });
@@ -295,3 +321,115 @@ it.live("replaces the seed with the commands Hermes advertises", () =>
     ]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+/** Observe a real child reaching session/new before advancing the virtual clock. */
+const observePendingSession = Effect.fn("observePendingSession")(function* () {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const pending = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+  const observedSpawner = ChildProcessSpawner.make((command) =>
+    spawner.spawn(command).pipe(
+      Effect.map((child) => {
+        let stderr = "";
+        return ChildProcessSpawner.makeHandle({
+          ...child,
+          stderr: child.stderr.pipe(
+            Stream.tap((chunk) => {
+              stderr += new TextDecoder().decode(chunk);
+              return stderr.includes("T3_FIXTURE_SESSION_WAIT")
+                ? Deferred.succeed(pending, child)
+                : Effect.void;
+            }),
+          ),
+        });
+      }),
+    ),
+  );
+  return { pending, spawner: observedSpawner };
+});
+
+it.effect("accepts a valid cold ACP startup that takes 20 seconds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const hermesPath = yield* writeFakeHermesAcpBinary({
+        prefix: "t3code-hermes-slow-",
+        holdSession: true,
+        availableModels: [{ modelId: "openai/test-model", name: "Test Model" }],
+        availableCommands: [],
+      });
+      const observed = yield* observePendingSession();
+      const probe = yield* checkHermesProviderStatus(
+        decodeHermesSettings({ enabled: true, binaryPath: hermesPath }),
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observed.spawner),
+        Effect.forkScoped,
+      );
+      const child = yield* Deferred.await(observed.pending);
+      yield* TestClock.adjust("20 seconds");
+      yield* Stream.make(
+        new TextEncoder().encode('{"jsonrpc":"2.0","method":"fixture/release"}\n'),
+      ).pipe(Stream.run(child.stdin));
+      const snapshot = yield* Fiber.join(probe);
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.auth.status).toBe("authenticated");
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["openai/test-model"]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("bounds an unresponsive ACP startup at 60 seconds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const hermesPath = yield* writeFakeHermesAcpBinary({
+        prefix: "t3code-hermes-stalled-",
+        holdSession: true,
+        availableModels: [],
+        availableCommands: [],
+      });
+      const observed = yield* observePendingSession();
+      const probe = yield* checkHermesProviderStatus(
+        decodeHermesSettings({ enabled: true, binaryPath: hermesPath }),
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observed.spawner),
+        Effect.forkScoped,
+      );
+      const child = yield* Deferred.await(observed.pending);
+      yield* TestClock.adjust("59 seconds");
+      expect(yield* child.isRunning).toBe(true);
+      yield* TestClock.adjust("1 second");
+      const snapshot = yield* Fiber.join(probe);
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.auth.status).toBe("unknown");
+      expect(snapshot.message).toBe(
+        "Hermes CLI is installed but ACP startup timed out after 60000ms.",
+      );
+      expect(yield* child.isRunning).toBe(false);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const failAt of ["initialize", "authenticate"] as const) {
+  it.live(`keeps explicit ACP ${failAt} errors distinct from startup timeout`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const hermesPath = yield* writeFakeHermesAcpBinary({
+          prefix: "t3code-hermes-failed-",
+          failAt,
+          availableModels: [],
+          availableCommands: [],
+        });
+        const snapshot = yield* checkHermesProviderStatus(
+          decodeHermesSettings({ enabled: true, binaryPath: hermesPath }),
+        );
+        expect(snapshot.status).toBe("error");
+        expect(snapshot.installed).toBe(true);
+        expect(snapshot.auth.status).toBe("unknown");
+        expect(snapshot.message).toBe(
+          "Hermes CLI is installed but ACP startup failed. Check server logs for details.",
+        );
+        expect(snapshot.message).not.toContain("fixture-secret-auth-error");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}

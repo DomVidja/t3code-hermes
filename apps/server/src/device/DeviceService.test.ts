@@ -144,6 +144,8 @@ const fixture = Effect.fn("fixture")(function* (
         start: Effect.void,
         ready: Effect.void,
         getSettings: Ref.get(settings),
+        updateSettingsWith: () =>
+          Effect.die(new Error("Atomic settings mutations are unused in this fixture")),
         updateSettings: (patch) =>
           Ref.updateAndGet(settings, (current) => ({
             ...current,

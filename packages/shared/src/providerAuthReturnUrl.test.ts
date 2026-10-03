@@ -24,3 +24,10 @@ describe("provider auth return destinations", () => {
     "javascript:alert(1)",
   ])("rejects %s", (url) => expect(providerAuthReturnUrl(url)).toBeUndefined());
 });
+
+it("returns provider authentication to the Lab desktop scheme without accepting an external host", () => {
+  expect(providerAuthReturnUrl("t3hermeslab://app/settings/providers?instanceId=hermes")).toBe(
+    "t3hermeslab://app/settings/providers?instanceId=hermes",
+  );
+  expect(providerAuthReturnUrl("t3hermeslab://other/settings")).toBeUndefined();
+});

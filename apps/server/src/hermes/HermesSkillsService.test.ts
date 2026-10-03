@@ -82,6 +82,60 @@ const harness = Effect.gen(function* () {
 });
 
 describe("HermesSkillsService", () => {
+  it.effect("keeps A to B to A library and detail reads in the selected instance", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const a = yield* fs.makeTempDirectoryScoped({ prefix: "t3-skills-a-" });
+      const b = yield* fs.makeTempDirectoryScoped({ prefix: "t3-skills-b-" });
+      const aid = ProviderInstanceId.make("hermes-a");
+      const bid = ProviderInstanceId.make("hermes-b");
+      for (const [root, name] of [
+        [a, "A"],
+        [b, "B"],
+      ] as const) {
+        yield* fs.makeDirectory(`${root}/skills/example`, { recursive: true });
+        yield* fs.writeFileString(`${root}/skills/example/SKILL.md`, body(name));
+      }
+      yield* Effect.gen(function* () {
+        const service = yield* HermesSkillsService;
+        for (const [instanceId, expected] of [
+          [aid, "A"],
+          [bid, "B"],
+          [aid, "A"],
+        ] as const) {
+          expect((yield* service.list({ instanceId })).skills[0]?.name).toBe(expected);
+          expect((yield* service.get({ instanceId, path: "example" })).markdown).toContain(
+            `# ${expected}`,
+          );
+        }
+        expect(
+          (yield* service.list({ instanceId: ProviderInstanceId.make("missing") })).availability,
+        ).toBe("providerDisabled");
+      }).pipe(
+        Effect.provide(
+          layer.pipe(
+            Layer.provide(
+              ServerSettings.layerTest({
+                providerInstances: {
+                  [aid]: {
+                    driver: ProviderDriverKind.make("hermes"),
+                    enabled: true,
+                    environment: [{ name: "HERMES_HOME", value: a, sensitive: false }],
+                  },
+                  [bid]: {
+                    driver: ProviderDriverKind.make("hermes"),
+                    enabled: true,
+                    environment: [{ name: "HERMES_HOME", value: b, sensitive: false }],
+                  },
+                },
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "reads instance env and refreshes before the first snapshot, including after reopening",
     () =>
@@ -91,7 +145,7 @@ describe("HermesSkillsService", () => {
           const service = yield* HermesSkillsService;
           expect((yield* service.list({})).skills[0]?.name).toBe("original");
           yield* h.fs.writeFileString(`${h.root}/skills/example/SKILL.md`, body("reopened"));
-          const snapshot = yield* service.subscribe.pipe(Effect.flatMap(Stream.runHead));
+          const snapshot = yield* service.subscribe({}).pipe(Effect.flatMap(Stream.runHead));
           expect(snapshot).toMatchObject({
             value: { snapshot: { skills: [{ name: "reopened" }] } },
           });
@@ -111,8 +165,8 @@ describe("HermesSkillsService", () => {
           const service = yield* HermesSkillsService;
           const scope = yield* Scope.make();
           const secondScope = yield* Scope.make();
-          const stream = yield* service.subscribe.pipe(Scope.provide(scope));
-          yield* service.subscribe.pipe(Scope.provide(secondScope), Effect.asVoid);
+          const stream = yield* service.subscribe({}).pipe(Scope.provide(scope));
+          yield* service.subscribe({}).pipe(Scope.provide(secondScope), Effect.asVoid);
           const seen = yield* Queue.unbounded<HermesSkillsStreamEvent>();
           const collector = yield* Stream.runForEach(stream, (event) =>
             Queue.offer(seen, event),
@@ -153,7 +207,7 @@ describe("HermesSkillsService", () => {
       expect((yield* service.get({ path: "anything" }).pipe(Effect.flip)).reason).toBe(
         "providerDisabled",
       );
-      const snapshot = yield* service.subscribe.pipe(Effect.flatMap(Stream.runHead));
+      const snapshot = yield* service.subscribe({}).pipe(Effect.flatMap(Stream.runHead));
       expect(snapshot).toMatchObject({ value: { snapshot: { availability: "providerDisabled" } } });
     }).pipe(
       Effect.provide(
@@ -222,7 +276,7 @@ describe("HermesSkillsService", () => {
         yield* Effect.gen(function* () {
           const service = yield* HermesSkillsService;
           const seen = yield* Queue.unbounded<HermesSkillsStreamEvent>();
-          const stream = yield* service.subscribe;
+          const stream = yield* service.subscribe({});
           yield* Stream.runForEach(stream, (event) => Queue.offer(seen, event)).pipe(
             Effect.forkScoped,
           );

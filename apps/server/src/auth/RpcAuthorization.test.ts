@@ -109,3 +109,22 @@ it("allows Hermes memory reads but requires operate permission for edits", () =>
     AuthOrchestrationOperateScope,
   );
 });
+
+it("Kanban reads use read scope and explicit changes need operate scope", () => {
+  expect(requiredScopeForRpcMethod(WS_METHODS.hermesKanbanList)).toBe(AuthOrchestrationReadScope);
+  expect(requiredScopeForRpcMethod(WS_METHODS.hermesKanbanGet)).toBe(AuthOrchestrationReadScope);
+  expect(requiredScopeForRpcMethod(WS_METHODS.hermesKanbanMutate)).toBe(
+    AuthOrchestrationOperateScope,
+  );
+});
+
+it("keeps profile reads read-only and requires operate permission for writes and linking", () => {
+  for (const method of [WS_METHODS.hermesProfilesList, WS_METHODS.hermesProfilesShow])
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+  for (const method of [
+    WS_METHODS.hermesProfilesCreate,
+    WS_METHODS.hermesProfilesConfigure,
+    WS_METHODS.hermesProfilesLink,
+  ])
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+});

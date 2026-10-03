@@ -106,6 +106,9 @@ export function HermesPatchesTab() {
 
   return (
     <div className="flex flex-col gap-3">
+      <p className="text-xs text-muted-foreground">
+        Patches change this Hermes installation and affect every profile using it.
+      </p>
       <div className="flex items-center gap-2">
         <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           Hermes checkout: <span className="font-mono">{snapshot.checkoutPath}</span>

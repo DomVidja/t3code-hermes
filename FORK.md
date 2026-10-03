@@ -11,7 +11,7 @@ Upstream is MIT licensed; that license is retained verbatim in [LICENSE](./LICEN
 
 | Change                                                                                        | Where                                                                                                                                                                                                   |
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Separate install: T3 Hermes app, CLI, and data                                                | `t3-hermes` CLI, `~/.t3-hermes` / `T3HERMES_HOME` (`apps/server/src/os-jank.ts`), `apps/desktop/package.json`, `apps/mobile/app.config.ts`, `assets/hermes/`                                            |
+| Separate install: T3 Hermes app, CLI, and data                                                | `t3-hermes` CLI, `~/.t3-hermes-lab` / `T3HERMES_HOME` (`apps/server/src/os-jank.ts`), `apps/desktop/package.json`, `apps/mobile/app.config.ts`, `assets/hermes/`                                        |
 | `hermes` provider driver (ACP over stdio)                                                     | `apps/server/src/provider/{Drivers,Layers,Services,acp}/Hermes*.ts`                                                                                                                                     |
 | Hermes delegated child agents                                                                 | `apps/server/src/provider/acp/HermesDelegation.ts`, optional live-progress patch in `infra/hermes/`                                                                                                     |
 | Hermes text generation (titles, commit messages, …)                                           | `apps/server/src/textGeneration/HermesTextGeneration.ts`                                                                                                                                                |
@@ -47,6 +47,13 @@ The Hermes driver reuses the existing ACP runtime (`apps/server/src/provider/acp
 backs Cursor and Grok, so it inherits streaming, tool-call cards, approvals, session resume, and
 model switching. See [docs/internals/providers.md](./docs/internals/providers.md).
 
+## Local Lab build
+
+Launch **T3 Hermes Lab** alongside your existing T3 apps. It starts with an independent data store
+and provider settings; select your Hermes executable in Settings. `T3HERMES_HOME` still selects
+an explicit data directory. Lab uses its own desktop links and has automatic release updates off
+by default. Local macOS artifacts are not notarized; macOS may require its per-app launch approval.
+
 ## Requirements
 
 - **A host the CLI is built for:** Linux x64/arm64, Apple Silicon macOS, or Windows. The CLI is a
@@ -81,10 +88,10 @@ npx t3-hermes@nightly pair --tailscale  # publish it on your tailnet and print a
 Always ask for `@nightly`. The fork publishes only nightlies, and npm's `latest` tag for
 `t3-hermes` is an old build that nothing updates.
 
-`service install` downloads the matching CLI release into `~/.t3-hermes/runtime/versions/`,
+`service install` downloads the matching CLI release into `~/.t3-hermes-lab/runtime/versions/`,
 writes a `t3-hermes.service` systemd user unit (a launchd agent on macOS), enables lingering so it
 survives logout and reboot, and starts it. It runs the release, not the npx cache, so nothing else
-needs to stay installed. State lives in `~/.t3-hermes/userdata`, separate from upstream T3 Code's
+needs to stay installed. State lives in `~/.t3-hermes-lab/userdata`, separate from upstream T3 Code's
 `~/.t3`.
 
 | Task                    | Command                                   |
@@ -119,7 +126,7 @@ design. Bind to a private interface: a Tailscale address, or loopback behind a r
 Do not bind `0.0.0.0` on a machine with a public IP, and do not put it behind Tailscale Funnel.
 
 **Migrating from a source-checkout unit.** Older versions of this file had you hand-roll a
-`t3code.service` that ran `apps/server/src/bin.ts`. It uses the same `~/.t3-hermes` data, so
+`t3code.service` that ran `apps/server/src/bin.ts`. It uses the same `~/.t3-hermes-lab` data, so
 threads carry over:
 
 ```bash
@@ -134,7 +141,7 @@ npx t3-hermes@nightly service install
 **The driver ships disabled.** It does not probe for a Hermes binary until you turn it on. From any
 connected client, open **Settings → Providers**, enable **Hermes**, and set **Binary path** if
 `hermes` is not on the host's login-shell `PATH`. On a host with no client yet, write
-`~/.t3-hermes/userdata/settings.json` instead. The server picks up edits without a restart:
+`~/.t3-hermes-lab/userdata/settings.json` instead. The server picks up edits without a restart:
 
 ```json
 {
@@ -148,7 +155,7 @@ connected client, open **Settings → Providers**, enable **Hermes**, and set **
 ```
 
 A working setup shows the Hermes version and a populated model list on the provider card; the same
-probe result is cached in `~/.t3-hermes/caches/hermes.json`.
+probe result is cached in `~/.t3-hermes-lab/caches/hermes.json`.
 
 Models are discovered over ACP from Hermes's own configuration, so whatever providers you have
 credentials for in `~/.hermes/.env` are what appear in the picker. Until the first ACP handshake

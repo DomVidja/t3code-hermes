@@ -161,6 +161,10 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as HermesProfilesService from "./hermes/HermesProfilesService.ts";
+import * as HermesKanbanService from "./hermes/HermesKanbanService.ts";
+import * as HermesParentAuthority from "./hermes/HermesParentSessionAuthority.ts";
+import * as HermesProfileDelegation from "./hermes/HermesProfileDelegationService.ts";
 import * as HermesCronService from "./hermes/HermesCronService.ts";
 import * as HermesSkillsService from "./hermes/HermesSkillsService.ts";
 import * as HermesMemoryService from "./hermes/HermesMemoryService.ts";
@@ -237,6 +241,12 @@ const HermesSkillsLayerLive = HermesSkillsService.layer.pipe(
   Layer.provide(ServerSettingsLayerLive),
 );
 const HermesMemoryLayerLive = HermesMemoryService.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+);
+const HermesKanbanLayerLive = HermesKanbanService.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+);
+const HermesProfilesLayerLive = HermesProfilesService.layer.pipe(
   Layer.provide(ServerSettingsLayerLive),
 );
 const HermesCronLayerLive = HermesCronService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
@@ -555,6 +565,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  Layer.provideMerge(HermesProfileDelegation.layer.pipe(Layer.provide(ServerSettingsLayerLive))),
+  Layer.provideMerge(HermesParentAuthority.layer),
 ).pipe(
   Layer.provideMerge(Layer.mergeAll(AntigravityInstallation.layer, CodexInstallation.layer)),
   // Shared native/canonical NDJSON writers used by both the per-instance
@@ -596,6 +608,8 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
   Layer.provideMerge(UsageLayerLive),
+  Layer.provideMerge(HermesKanbanLayerLive),
+  Layer.provideMerge(HermesProfilesLayerLive),
   Layer.provideMerge(HermesCronLayerLive),
   Layer.provideMerge(HermesSkillsLayerLive),
   Layer.provideMerge(HermesMemoryLayerLive),

@@ -93,13 +93,13 @@ describe("DesktopPreReadyPlatform", () => {
         let desktopEntry = previousEntry;
         let iconInstalled = false;
         copyFileSyncMock.mockImplementation((_source: string, destination: string) => {
-          iconInstalled = destination === "/xdg/icons/com.nateweav.T3Hermes.desktop.png";
+          iconInstalled = destination === "/xdg/icons/com.dom.T3HermesLab.desktop.png";
         });
         setDesktopNameMock.mockImplementation((name: string) => {
           desktopName = name;
         });
         writeFileSyncMock.mockImplementation((path: string, contents: string) => {
-          if (path === "/xdg/applications/com.nateweav.T3Hermes.desktop") desktopEntry = contents;
+          if (path === "/xdg/applications/com.dom.T3HermesLab.desktop") desktopEntry = contents;
         });
 
         return Effect.scoped(
@@ -115,13 +115,13 @@ describe("DesktopPreReadyPlatform", () => {
               ),
             );
             const identity = yield* Effect.promise(() => portalIdentity);
-            assert.equal(identity.desktopName, "com.nateweav.T3Hermes.desktop");
+            assert.equal(identity.desktopName, "com.dom.T3HermesLab.desktop");
             assert.include(identity.desktopEntry ?? "", 'Exec="/Applications/current.AppImage" %U');
-            assert.include(identity.desktopEntry ?? "", "Name=T3 Hermes (Alpha)");
-            assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/t3code;");
+            assert.include(identity.desktopEntry ?? "", "Name=T3 Hermes Lab (Alpha)");
+            assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/t3hermeslab;");
             assert.include(
               identity.desktopEntry ?? "",
-              "Icon=/xdg/icons/com.nateweav.T3Hermes.desktop.png",
+              "Icon=/xdg/icons/com.dom.T3HermesLab.desktop.png",
             );
             assert.isTrue(identity.iconInstalled);
           }),
@@ -150,7 +150,7 @@ describe("DesktopPreReadyPlatform", () => {
     return Effect.gen(function* () {
       yield* DesktopPreReadyPlatform.make;
       const contents = writeFileSyncMock.mock.calls[0]?.[1];
-      assert.include(contents, "MimeType=x-scheme-handler/t3code;");
+      assert.include(contents, "MimeType=x-scheme-handler/t3hermeslab;");
       assert.include(contents, "Icon=");
       assert.equal(setDesktopNameMock.mock.calls.length, 1);
     }).pipe(Effect.provideService(HostProcessPlatform, "linux"));

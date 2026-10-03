@@ -70,6 +70,33 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("persists Hermes delegation targets as explicit IDs and allows clearing the grant", () => {
+    const hermes = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("hermes")];
+    expect(hermes).toBeDefined();
+    const field = deriveProviderSettingsFields(hermes!).find(
+      (entry) => entry.key === "allowedProfileDelegationTargets",
+    );
+    expect(field).toMatchObject({ control: "string-list", label: "Allowed delegation profiles" });
+    expect(
+      nextProviderConfigWithFieldValue(
+        { binaryPath: "hermes", forkOwned: 1 },
+        field!,
+        " researcher, builder, researcher ",
+      ),
+    ).toEqual({
+      binaryPath: "hermes",
+      forkOwned: 1,
+      allowedProfileDelegationTargets: ["researcher", "builder"],
+    });
+    expect(
+      nextProviderConfigWithFieldValue(
+        { binaryPath: "hermes", allowedProfileDelegationTargets: ["researcher"] },
+        field!,
+        " ",
+      ),
+    ).toEqual({ binaryPath: "hermes" });
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

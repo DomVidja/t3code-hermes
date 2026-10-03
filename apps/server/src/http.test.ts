@@ -6,10 +6,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import * as ServerConfig from "./config.ts";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
 import {
+  browserApiCorsLayer,
   assetResponseHeaders,
   assetFileResponse,
   downloadContentDisposition,
@@ -468,4 +470,77 @@ describe("downloadContentDisposition", () => {
       `attachment; filename="bad_name.pdf"; filename*=UTF-8''bad%EF%BF%BDname.pdf`,
     );
   });
+});
+
+describe("Lab desktop development CORS", () => {
+  it.effect("accepts exact Lab renderer origins and keeps unrelated origins blocked", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig.pipe(
+        Effect.provide(ServerConfig.layerTest("/tmp", { prefix: "t3-lab-cors-" })),
+      );
+      const app = Layer.mergeAll(
+        Layer.effectDiscard(
+          Effect.gen(function* () {
+            const router = yield* HttpRouter.HttpRouter;
+            yield* router.add("GET", "/api/check", HttpServerResponse.text("ok"));
+          }),
+        ),
+        browserApiCorsLayer,
+      ).pipe(
+        Layer.provide(
+          Layer.succeed(ServerConfig.ServerConfig, {
+            ...config,
+            devUrl: new URL("http://127.0.0.1:5173/"),
+            devAllowedOrigins: [],
+          }),
+        ),
+      );
+      yield* Effect.acquireUseRelease(
+        Effect.sync(() => HttpRouter.toWebHandler(app, { disableLogger: true })),
+        ({ handler }) =>
+          Effect.gen(function* () {
+            for (const origin of ["t3hermeslab://app", "t3hermeslab-dev://app"]) {
+              const response = yield* Effect.promise(() =>
+                handler(new Request("http://localhost/api/check", { headers: { origin } })),
+              );
+              expect(response.status).toBe(200);
+              expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+              expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+              const preflight = yield* Effect.promise(() =>
+                handler(
+                  new Request("http://localhost/api/check", {
+                    method: "OPTIONS",
+                    headers: {
+                      origin,
+                      "access-control-request-method": "POST",
+                      "access-control-request-headers": "authorization,content-type",
+                    },
+                  }),
+                ),
+              );
+              expect(preflight.headers.get("access-control-allow-origin")).toBe(origin);
+              expect(preflight.headers.get("access-control-allow-credentials")).toBe("true");
+              expect(preflight.headers.get("access-control-allow-methods")).toContain("POST");
+            }
+            for (const origin of [
+              "https://untrusted.example",
+              "t3hermeslab://other",
+              "t3code://app",
+              "t3code-dev://app",
+            ]) {
+              const response = yield* Effect.promise(() =>
+                handler(
+                  new Request("http://localhost/api/check", {
+                    method: "OPTIONS",
+                    headers: { origin, "access-control-request-method": "POST" },
+                  }),
+                ),
+              );
+              expect(response.headers.get("access-control-allow-origin")).toBeNull();
+            }
+          }),
+        ({ dispose }) => Effect.promise(dispose),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

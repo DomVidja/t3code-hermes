@@ -2,6 +2,8 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  ProviderDriverKind,
   type HermesMemorySnapshot,
   type ServerSettings as Settings,
 } from "@t3tools/contracts";
@@ -36,7 +38,7 @@ function enabledSettings(home: string): Settings {
 const watch = Effect.gen(function* () {
   const service = yield* Memory.HermesMemoryService;
   const seen = yield* Queue.unbounded<HermesMemorySnapshot>();
-  const stream = yield* service.subscribe;
+  const stream = yield* service.subscribe({});
   yield* Stream.runForEach(stream, (snapshot) => Queue.offer(seen, snapshot)).pipe(
     Effect.forkScoped,
   );
@@ -44,6 +46,64 @@ const watch = Effect.gen(function* () {
 });
 
 describe("HermesMemoryService", () => {
+  it.live("isolates simultaneous A and B subscriptions and A to B to A reads", () =>
+    Effect.gen(function* () {
+      const a = yield* withHome;
+      const b = yield* withHome;
+      for (const [store, value] of [
+        [a, "A"],
+        [b, "B"],
+      ] as const) {
+        yield* store.fs.makeDirectory(store.directory);
+        yield* store.fs.writeFileString(store.memoryPath, value);
+      }
+      const aid = ProviderInstanceId.make("hermes-a");
+      const bid = ProviderInstanceId.make("hermes-b");
+      const settings: Settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [aid]: {
+            driver: ProviderDriverKind.make("hermes"),
+            enabled: true,
+            environment: [{ name: "HERMES_HOME", value: a.home, sensitive: false }],
+          },
+          [bid]: {
+            driver: ProviderDriverKind.make("hermes"),
+            enabled: true,
+            environment: [{ name: "HERMES_HOME", value: b.home, sensitive: false }],
+          },
+        },
+      };
+      yield* Effect.gen(function* () {
+        const service = yield* Memory.HermesMemoryService;
+        const read = (instanceId: ProviderInstanceId) =>
+          service.read({ instanceId }).pipe(Effect.map((snapshot) => snapshot.files[0]?.entries));
+        assert.deepEqual(
+          [yield* read(aid), yield* read(bid), yield* read(aid)],
+          [["A"], ["B"], ["A"]],
+        );
+        const qa = yield* Queue.unbounded<HermesMemorySnapshot>();
+        const qb = yield* Queue.unbounded<HermesMemorySnapshot>();
+        yield* Stream.runForEach(yield* service.subscribe({ instanceId: aid }), (snapshot) =>
+          Queue.offer(qa, snapshot),
+        ).pipe(Effect.forkScoped);
+        yield* Stream.runForEach(yield* service.subscribe({ instanceId: bid }), (snapshot) =>
+          Queue.offer(qb, snapshot),
+        ).pipe(Effect.forkScoped);
+        assert.deepEqual((yield* Queue.take(qa)).files[0]?.entries, ["A"]);
+        assert.deepEqual((yield* Queue.take(qb)).files[0]?.entries, ["B"]);
+        yield* b.fs.writeFileString(`${b.directory}/staged`, "B changed");
+        yield* b.fs.rename(`${b.directory}/staged`, b.memoryPath);
+        assert.deepEqual((yield* Queue.take(qb)).files[0]?.entries, ["B changed"]);
+        assert.equal(yield* Queue.size(qa), 0);
+        assert.equal(
+          (yield* service.read({ instanceId: ProviderInstanceId.make("missing") })).availability,
+          "providerDisabled",
+        );
+      }).pipe(Effect.provide(Memory.layer.pipe(Layer.provide(ServerSettings.layerTest(settings)))));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live(
     "emits an initial snapshot then atomic external changes, including creation of a missing store",
     () =>
@@ -65,7 +125,7 @@ describe("HermesMemoryService", () => {
           const changed = yield* Queue.take(seen);
           assert.deepEqual(changed.files[0]?.entries, ["Remember this", "And this"]);
           // A fresh read of identical state publishes nothing.
-          yield* service.read;
+          yield* service.read({});
           assert.equal(yield* Queue.size(seen), 0);
           yield* fs.writeFileString(staging, "A replacement from Hermes");
           yield* fs.rename(staging, memoryPath);
@@ -208,11 +268,11 @@ describe("HermesMemoryService", () => {
       const { fs, home, directory, memoryPath } = yield* withHome;
       yield* Effect.gen(function* () {
         const service = yield* Memory.HermesMemoryService;
-        const first = yield* Effect.scoped(Effect.flatMap(service.subscribe, Stream.runHead));
+        const first = yield* Effect.scoped(Effect.flatMap(service.subscribe({}), Stream.runHead));
         assert.equal(first._tag, "Some");
         yield* fs.makeDirectory(directory);
         yield* fs.writeFileString(memoryPath, "Changed while closed");
-        const second = yield* Effect.scoped(Effect.flatMap(service.subscribe, Stream.runHead));
+        const second = yield* Effect.scoped(Effect.flatMap(service.subscribe({}), Stream.runHead));
         assert.equal(second._tag, "Some");
         if (second._tag === "Some")
           assert.deepEqual(second.value.files[0]?.entries, ["Changed while closed"]);

@@ -9,6 +9,7 @@ import type { EnvironmentId, HermesCronJobId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
+import { useHermesPanelScope } from "./hermesInstanceScope";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { environmentPresentations } from "./presentation";
 import { useEnvironmentQuery } from "./query";
@@ -87,11 +88,22 @@ export interface HermesCronState {
 
 export function useHermesCron(targetEnvironmentId?: EnvironmentId | null) {
   const automaticEnvironmentId = useHermesEnvironmentId();
+  const scope = useHermesPanelScope();
+  const instanceId = scope?.instanceId;
   // An explicit target must never silently fall back to another host.
   const environmentId =
-    targetEnvironmentId === undefined ? automaticEnvironmentId : targetEnvironmentId;
+    targetEnvironmentId === undefined
+      ? scope === null
+        ? automaticEnvironmentId
+        : scope.environmentId
+      : targetEnvironmentId;
   const query = useEnvironmentQuery(
-    environmentId === null ? null : serverEnvironment.hermesCron({ environmentId, input: {} }),
+    environmentId === null
+      ? null
+      : serverEnvironment.hermesCron({
+          environmentId,
+          input: instanceId === undefined ? {} : { instanceId },
+        }),
   );
   const view = query.data ?? emptyHermesCronView;
   const state: HermesCronState = {
@@ -110,17 +122,23 @@ export function useHermesCron(targetEnvironmentId?: EnvironmentId | null) {
   const setEnabled = useCallback(
     (jobId: HermesCronJobId, enabled: boolean) => {
       if (environmentId === null) return;
-      void setEnabledCommand({ environmentId, input: { jobId, enabled } });
+      void setEnabledCommand({
+        environmentId,
+        input: { jobId, enabled, ...(instanceId === undefined ? {} : { instanceId }) },
+      });
     },
-    [environmentId, setEnabledCommand],
+    [environmentId, instanceId, setEnabledCommand],
   );
 
   const setMuted = useCallback(
     (jobId: HermesCronJobId, muted: boolean) => {
       if (environmentId === null) return;
-      void setMutedCommand({ environmentId, input: { jobId, muted } });
+      void setMutedCommand({
+        environmentId,
+        input: { jobId, muted, ...(instanceId === undefined ? {} : { instanceId }) },
+      });
     },
-    [environmentId, setMutedCommand],
+    [environmentId, instanceId, setMutedCommand],
   );
 
   const jobs = useMemo(() => state.view.snapshot?.jobs ?? [], [state.view.snapshot]);

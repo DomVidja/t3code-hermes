@@ -31,7 +31,7 @@ export function resolveHermesSkillsPath(environment: NodeJS.ProcessEnv = process
 const Frontmatter = Schema.Struct({
   name: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
-  author: Schema.optional(Schema.String),
+  author: Schema.optional(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
   license: Schema.optional(Schema.String),
   platforms: Schema.optional(Schema.Array(Schema.String)),
   version: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
@@ -401,7 +401,9 @@ export async function readHermesSkillDetail(
     path: relative,
     markdown: body,
     metadata: {
-      author: data.author?.slice(0, 160) ?? null,
+      author:
+        (typeof data.author === "string" ? data.author : data.author?.join(", "))?.slice(0, 160) ??
+        null,
       license: data.license?.slice(0, 160) ?? null,
       platforms: (data.platforms ?? []).slice(0, 16).map((value) => value.slice(0, 64)),
       relatedSkills: (data.metadata?.hermes?.related_skills ?? [])

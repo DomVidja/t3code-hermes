@@ -19,6 +19,8 @@
  */
 import * as Schema from "effect/Schema";
 
+import { HermesInstanceScope } from "./hermesInstance.ts";
+
 import { ForwardCompatibleArray, IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
@@ -85,6 +87,7 @@ export const HermesCronDelivery = Schema.Struct({
 export type HermesCronDelivery = typeof HermesCronDelivery.Type;
 
 export const HermesCronGetRunOutputInput = Schema.Struct({
+  ...HermesInstanceScope.fields,
   jobId: HermesCronJobId,
   runId: TrimmedNonEmptyString,
 });
@@ -208,6 +211,7 @@ export type HermesCronStreamEvent = typeof HermesCronStreamEvent.Type;
  * one client holds a subscription.
  */
 export const HermesCronListInput = Schema.Struct({
+  ...HermesInstanceScope.fields,
   /**
    * When true the environment re-reads Hermes state before replying instead of
    * serving the cached snapshot.
@@ -218,6 +222,7 @@ export type HermesCronListInput = typeof HermesCronListInput.Type;
 
 /** Pause or resume a job. Reversible, and the panel shows both directions. */
 export const HermesCronSetEnabledInput = Schema.Struct({
+  ...HermesInstanceScope.fields,
   jobId: HermesCronJobId,
   enabled: Schema.Boolean,
 });
@@ -231,6 +236,7 @@ export type HermesCronSetEnabledInput = typeof HermesCronSetEnabledInput.Type;
  * other consumer of the cron store see exactly what they saw before.
  */
 export const HermesCronSetMutedInput = Schema.Struct({
+  ...HermesInstanceScope.fields,
   jobId: HermesCronJobId,
   muted: Schema.Boolean,
 });

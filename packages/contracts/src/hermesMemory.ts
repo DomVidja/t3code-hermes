@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { HermesInstanceScope } from "./hermesInstance.ts";
+
 /** Built-in Hermes files, independent of the optional Hindsight service. */
 export const HermesMemoryTarget = Schema.Literals(["memory", "user"]);
 export type HermesMemoryTarget = typeof HermesMemoryTarget.Type;
@@ -23,7 +25,7 @@ export const HermesMemorySnapshot = Schema.Struct({
 });
 export type HermesMemorySnapshot = typeof HermesMemorySnapshot.Type;
 
-const mutationBase = { target: HermesMemoryTarget, revision: Schema.String };
+const mutationBase = { ...HermesInstanceScope.fields, target: HermesMemoryTarget, revision: Schema.String };
 export const HermesMemoryMutateInput = Schema.Union([
   Schema.Struct({ ...mutationBase, action: Schema.Literal("add"), content: Schema.String }),
   Schema.Struct({
@@ -35,8 +37,8 @@ export const HermesMemoryMutateInput = Schema.Union([
   Schema.Struct({ ...mutationBase, action: Schema.Literal("remove"), oldText: Schema.String }),
 ]);
 export type HermesMemoryMutateInput = typeof HermesMemoryMutateInput.Type;
-export const HermesMemoryReadInput = Schema.Struct({});
-export const HermesMemorySubscribeInput = Schema.Struct({});
+export const HermesMemoryReadInput = Schema.Struct(HermesInstanceScope.fields);
+export const HermesMemorySubscribeInput = Schema.Struct(HermesInstanceScope.fields);
 
 export class HermesMemoryError extends Schema.TaggedError<HermesMemoryError>()(
   "HermesMemoryError",

@@ -107,11 +107,14 @@ export interface EnabledHermesInstance {
  * default `false`, so the legacy blob alone reports a switched-on Hermes as
  * disabled. The default slot is preferred over custom instances.
  *
+ * An explicit instance id never falls back to another enabled instance.
+ *
  * The instance `environment` matters: it can point `HERMES_HOME` at a
  * different store, and cron reads and CLI calls must follow it.
  */
 export function resolveEnabledHermesInstance(
   settings: ServerSettings,
+  instanceId?: ProviderInstanceId,
 ): EnabledHermesInstance | null {
   const defaultId = defaultInstanceIdForDriver(HERMES_DRIVER_KIND);
   const candidates: Array<readonly [ProviderInstanceId, ProviderInstanceConfig]> = [
@@ -127,14 +130,16 @@ export function resolveEnabledHermesInstance(
     if (instanceId !== defaultId) candidates.push([ProviderInstanceId.make(instanceId), instance]);
   }
   const enabled = candidates.find(
-    ([, instance]) =>
-      instance.driver === HERMES_DRIVER_KIND && resolveProviderInstanceEnabled(instance),
+    ([candidateId, instance]) =>
+      (instanceId === undefined || candidateId === instanceId) &&
+      instance.driver === HERMES_DRIVER_KIND &&
+      resolveProviderInstanceEnabled(instance),
   );
   if (enabled === undefined) return null;
-  const [instanceId, instance] = enabled;
+  const [selectedId, instance] = enabled;
   const decoded = decodeHermesSettings(instance.config ?? {});
   if (Option.isNone(decoded)) return null;
-  return { instanceId, settings: decoded.value, environment: instance.environment };
+  return { instanceId: selectedId, settings: decoded.value, environment: instance.environment };
 }
 
 /** A job as it appears on disk, after normalisation but before contract encoding. */

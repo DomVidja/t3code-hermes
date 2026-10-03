@@ -13,14 +13,14 @@ import * as Scope from "effect/Scope";
 import * as Electron from "electron";
 
 export const DESKTOP_HOST = "app";
-const DESKTOP_PRODUCTION_SCHEME = "t3code";
-const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
+const DESKTOP_PRODUCTION_SCHEME = "t3hermeslab";
+const DESKTOP_DEVELOPMENT_SCHEME = "t3hermeslab-dev";
 
 export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
 }
 
-/** Upstream Clerk accepts these callbacks; the OS handler is shared with upstream T3. */
+/** Lab callbacks use a separate OS handler from existing T3 installs. */
 export function getDesktopCallbackScheme(isDevelopment: boolean): string {
   return getDesktopScheme(isDevelopment);
 }

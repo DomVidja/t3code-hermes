@@ -13,15 +13,19 @@ import type { HermesPatchId } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
+import { useHermesPanelScope } from "./hermesInstanceScope";
 import { useHermesEnvironmentId } from "./hermesCron";
 import { useEnvironmentQuery } from "./query";
 import { serverEnvironment } from "./server";
 import { useAtomCommand } from "./use-atom-command";
 
 export function useHermesPatches() {
-  const environmentId = useHermesEnvironmentId();
+  const automaticEnvironmentId = useHermesEnvironmentId();
+  const scope = useHermesPanelScope();
+  const environmentId = scope === null ? automaticEnvironmentId : scope.environmentId;
+  const input = scope?.instanceId === undefined ? {} : { instanceId: scope.instanceId };
   const query = useEnvironmentQuery(
-    environmentId === null ? null : serverEnvironment.hermesPatches({ environmentId, input: {} }),
+    environmentId === null ? null : serverEnvironment.hermesPatches({ environmentId, input }),
   );
   const applyCommand = useAtomCommand(serverEnvironment.hermesPatchApply);
   const revertCommand = useAtomCommand(serverEnvironment.hermesPatchRevert);
@@ -33,7 +37,7 @@ export function useHermesPatches() {
     setChangingPatchId(patchId);
     try {
       const command = direction === "apply" ? applyCommand : revertCommand;
-      const result = await command({ environmentId, input: { patchId } });
+      const result = await command({ environmentId, input: { ...input, patchId } });
       if (result._tag === "Success") {
         toastManager.add({
           type: "success",

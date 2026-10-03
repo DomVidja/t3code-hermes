@@ -545,7 +545,13 @@ const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
-export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch" | "select";
+export type ProviderSettingsFormControl =
+  | "text"
+  | "password"
+  | "textarea"
+  | "switch"
+  | "select"
+  | "string-list";
 
 export interface ProviderSettingsFormOption {
   readonly value: string;
@@ -786,6 +792,18 @@ export const HermesSettings = makeProviderSettingsSchema(
         title: "Binary path",
         description: "Path to the Hermes Agent CLI binary.",
         providerSettingsForm: { placeholder: "hermes", clearWhenEmpty: "omit" },
+      }),
+    ),
+    allowedProfileDelegationTargets: Schema.optionalKey(Schema.Array(ProviderInstanceId)).pipe(
+      Schema.annotateKey({
+        title: "Allowed delegation profiles",
+        description:
+          "Comma-separated Hermes instance IDs this profile may delegate to. Empty disables delegation. Each target must be enabled and have an explicit HERMES_HOME. Changes restart this profile’s sessions.",
+        providerSettingsForm: {
+          control: "string-list",
+          placeholder: "researcher, builder",
+          clearWhenEmpty: "omit",
+        },
       }),
     ),
     customModels: Schema.Array(Schema.String).pipe(

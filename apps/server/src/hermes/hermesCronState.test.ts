@@ -91,6 +91,20 @@ describe("resolveEnabledHermesInstance", () => {
     providerInstances: ServerSettings["providerInstances"],
   ): ServerSettings => ({ ...DEFAULT_SERVER_SETTINGS, providerInstances });
 
+  it("routes A to B to A without falling back for missing or disabled ids", () => {
+    const a = ProviderInstanceId.make("hermes-a");
+    const b = ProviderInstanceId.make("hermes-b");
+    const off = ProviderInstanceId.make("hermes-off");
+    const settings = withInstances({
+      [a]: { driver: hermes, enabled: true, environment: [{ name: "HERMES_HOME", value: "/a", sensitive: false }] },
+      [b]: { driver: hermes, enabled: true, environment: [{ name: "HERMES_HOME", value: "/b", sensitive: false }] },
+      [off]: { driver: hermes, enabled: false },
+    });
+    expect([a, b, a].map((id) => resolveEnabledHermesInstance(settings, id)?.environment?.[0]?.value)).toEqual(["/a", "/b", "/a"]);
+    expect(resolveEnabledHermesInstance(settings, off)).toBeNull();
+    expect(resolveEnabledHermesInstance(settings, ProviderInstanceId.make("missing"))).toBeNull();
+  });
+
   it("is null when Hermes was never switched on", () => {
     expect(resolveEnabledHermesInstance(DEFAULT_SERVER_SETTINGS)).toBeNull();
   });

@@ -12,9 +12,14 @@
  * whether the thing they just configured is working.
  */
 import { HERMES_NEW_TASK_TEMPLATE } from "@t3tools/client-runtime/state/hermes-cron";
+import { useAtomValue } from "@effect/atom-react";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 
+import { HermesPanelScope } from "../../state/hermesInstanceScope";
+import { serverEnvironment } from "../../state/server";
+import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { requestComposerTemplate } from "../../composerTemplateBus";
 import { cn } from "../../lib/utils";
 import { markHermesTasksSeen } from "../../state/hermesCronSeen";
@@ -25,16 +30,20 @@ import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadc
 import { HermesMemoryTab } from "./HermesMemoryTab";
 import { HermesPatchesTab } from "./HermesPatchesTab";
 import { HermesTasksTab } from "./HermesTasksTab";
+import { HermesProfilesTab } from "./HermesProfilesTab";
 import { HermesSkillsTab } from "./HermesSkillsTab";
+import { HermesKanbanTab } from "./HermesKanbanTab";
 import { EMPTY_HERMES_SEARCH, type HermesSearch } from "./hermesNavigation";
 
-type HermesTab = "tasks" | "memory" | "patches" | "skills";
+type HermesTab = "tasks" | "kanban" | "memory" | "patches" | "skills" | "profiles";
 
 const TABS: ReadonlyArray<{ readonly value: HermesTab; readonly label: string }> = [
   { value: "tasks", label: "Tasks" },
+  { value: "kanban", label: "Kanban" },
   { value: "memory", label: "Memory" },
   { value: "patches", label: "Patches" },
   { value: "skills", label: "Skills" },
+  { value: "profiles", label: "Profiles" },
 ];
 
 export function HermesPanel({ target = EMPTY_HERMES_SEARCH }: { readonly target?: HermesSearch }) {
@@ -42,6 +51,15 @@ export function HermesPanel({ target = EMPTY_HERMES_SEARCH }: { readonly target?
   const [tab, setTab] = useState<HermesTab>("tasks");
   const automaticEnvironmentId = useHermesEnvironmentId();
   const environmentId = target.environmentId ?? automaticEnvironmentId;
+
+  const [instanceId, setInstanceId] = useState<ProviderInstanceId | undefined>();
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const instances = deriveProviderInstanceEntries(config?.providers ?? []).filter(
+    (entry) => entry.driverKind === "hermes" && entry.enabled,
+  );
+
+  const selectedInstanceId =
+    instanceId ?? (instances.find((entry) => entry.isDefault) ?? instances[0])?.instanceId;
 
   const targetKey = JSON.stringify([target.environmentId, target.jobId, target.runId]);
   const [previousTarget, setPreviousTarget] = useState(targetKey);
@@ -67,6 +85,30 @@ export function HermesPanel({ target = EMPTY_HERMES_SEARCH }: { readonly target?
           <WorkspaceBreadcrumb ariaLabel="Hermes breadcrumb">
             <WorkspaceBreadcrumbItem current>Hermes</WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
+          <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+            Hermes profile
+            <select
+              aria-label="Hermes profile"
+              value={instanceId ?? ""}
+              onChange={(event) =>
+                setInstanceId(
+                  event.target.value ? ProviderInstanceId.make(event.target.value) : undefined,
+                )
+              }
+              className="rounded-md border border-border bg-background px-2 py-1 text-foreground"
+            >
+              <option value="">Environment default</option>
+              {instances.map((entry) => (
+                <option key={entry.instanceId} value={entry.instanceId}>
+                  {entry.displayName}
+                </option>
+              ))}
+              {instanceId !== undefined &&
+              !instances.some((entry) => entry.instanceId === instanceId) ? (
+                <option value={instanceId}>Unavailable profile ({instanceId})</option>
+              ) : null}
+            </select>
+          </label>
         </header>
 
         <nav
@@ -91,19 +133,36 @@ export function HermesPanel({ target = EMPTY_HERMES_SEARCH }: { readonly target?
           ))}
         </nav>
 
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-5">
-            {tab === "tasks" ? (
-              <HermesTasksTab onNewTask={handleNewTask} target={target} />
-            ) : tab === "memory" ? (
-              <HermesMemoryTab />
-            ) : tab === "patches" ? (
-              <HermesPatchesTab />
-            ) : (
-              <HermesSkillsTab key={environmentId} />
-            )}
-          </div>
-        </ScrollArea>
+        <HermesPanelScope
+          value={{ environmentId, instanceId: selectedInstanceId }}
+          key={`${environmentId}:${selectedInstanceId ?? "default"}`}
+        >
+          <ScrollArea className="min-h-0 flex-1">
+            <div
+              className={cn(
+                "mx-auto flex w-full flex-col gap-4 px-6 py-5",
+                tab === "kanban" ? "max-w-7xl" : "max-w-3xl",
+              )}
+            >
+              {tab === "tasks" ? (
+                <HermesTasksTab onNewTask={handleNewTask} target={target} />
+              ) : tab === "kanban" ? (
+                <HermesKanbanTab
+                  {...(selectedInstanceId !== undefined ? { instanceId: selectedInstanceId } : {})}
+                  environmentId={environmentId}
+                />
+              ) : tab === "memory" ? (
+                <HermesMemoryTab />
+              ) : tab === "patches" ? (
+                <HermesPatchesTab />
+              ) : tab === "profiles" ? (
+                <HermesProfilesTab />
+              ) : (
+                <HermesSkillsTab key={environmentId} />
+              )}
+            </div>
+          </ScrollArea>
+        </HermesPanelScope>
       </div>
     </SidebarInset>
   );

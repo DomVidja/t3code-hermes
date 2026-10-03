@@ -6,6 +6,7 @@ import type { EnvironmentId, HermesCronRun, HermesCronRunOutput } from "@t3tools
 import { ChevronRightIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { useHermesPanelScope } from "../../state/hermesInstanceScope";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -22,6 +23,7 @@ function HermesRunOutput({
   readonly run: HermesCronRun;
   readonly onRetry: () => void;
 }) {
+  const instanceId = useHermesPanelScope()?.instanceId;
   const getOutput = useAtomCommand(serverEnvironment.hermesCronGetRunOutput, {
     reportFailure: false,
   });
@@ -31,15 +33,20 @@ function HermesRunOutput({
   useEffect(() => {
     if (!available) return;
     let active = true;
-    void getOutput({ environmentId, input: { jobId: run.jobId, runId: run.id } }).then(
-      (response) => {
-        if (active) setResult(response._tag === "Success" ? response.value : "error");
+    void getOutput({
+      environmentId,
+      input: {
+        jobId: run.jobId,
+        runId: run.id,
+        ...(instanceId === undefined ? {} : { instanceId }),
       },
-    );
+    }).then((response) => {
+      if (active) setResult(response._tag === "Success" ? response.value : "error");
+    });
     return () => {
       active = false;
     };
-  }, [available, environmentId, getOutput, run.id, run.jobId]);
+  }, [available, environmentId, instanceId, getOutput, run.id, run.jobId]);
 
   if (!available)
     return <p className="text-muted-foreground">No recorded output is available for this run.</p>;

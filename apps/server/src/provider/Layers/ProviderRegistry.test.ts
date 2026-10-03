@@ -337,6 +337,8 @@ function makeMutableServerSettingsService(
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
+      updateSettingsWith: () =>
+        Effect.die(new Error("Atomic settings mutations are unused in this fixture")),
       updateSettings: (patch) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);
