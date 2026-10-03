@@ -251,6 +251,10 @@ interface PendingCompaction {
 const decodeHermesDelegationSettings = Schema.decodeUnknownOption(HermesSettings);
 
 interface PendingSessionStartup {
+  readonly instanceId: ProviderInstanceId;
+  readonly lifecycleEvents: ProviderRuntimeEvent[];
+  bufferLifecycleEvents: boolean;
+  committed: boolean;
   cancelled: boolean;
   stopFinished?: Deferred.Deferred<void>;
   stoppedBinding?: ProviderSessionDirectory.ProviderRuntimeBinding;
@@ -1135,18 +1139,30 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
+  const startingThreads = new Map<ThreadId, PendingSessionStartup>();
+
   const processRuntimeEvent = (
     source: {
       readonly instanceId: ProviderInstanceId;
       readonly provider: ProviderDriverKind;
     },
     event: ProviderRuntimeEvent,
+    replayStartup = false,
   ): Effect.Effect<void> =>
     Effect.gen(function* () {
       const canonicalEvent = yield* Effect.sync(() =>
         correlateRuntimeEventWithInstance(source, event),
       );
       if (canonicalEvent.type.startsWith("session.")) {
+        const startup = startingThreads.get(canonicalEvent.threadId);
+        if (
+          !replayStartup &&
+          startup?.bufferLifecycleEvents &&
+          startup.instanceId === source.instanceId
+        ) {
+          startup.lifecycleEvents.push(canonicalEvent);
+          return;
+        }
         const binding = Option.getOrUndefined(
           yield* directory
             .getBinding(canonicalEvent.threadId)
@@ -1477,8 +1493,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
-  const startingThreads = new Map<ThreadId, PendingSessionStartup>();
-
   const startSession: ProviderServiceMethod<"startSession"> = Effect.fn("startSession")(
     function* (threadId, rawInput) {
       const parsed = yield* decodeInputOrValidationError({
@@ -1497,7 +1511,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "A replacement session is still starting. Wait for it to finish, then retry.",
         );
       }
-      const startup: PendingSessionStartup = { cancelled: false };
+      const startup: PendingSessionStartup = {
+        instanceId: resolvedInstanceId,
+        lifecycleEvents: [],
+        bufferLifecycleEvents: false,
+        committed: false,
+        cancelled: false,
+      };
       startingThreads.set(threadId, startup);
       let metricProvider = parsed.provider ?? String(resolvedInstanceId);
       yield* Effect.annotateCurrentSpan({
@@ -1528,6 +1548,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        startup.bufferLifecycleEvents =
+          persistedBinding?.providerInstanceId !== undefined &&
+          persistedBinding.providerInstanceId !== resolvedInstanceId;
         if (
           persistedBinding?.provider === resolvedProvider &&
           persistedBinding.providerInstanceId !== resolvedInstanceId &&
@@ -1713,6 +1736,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           }
 
           yield* assertNotStopped;
+          // The handoff has committed. Keep buffering while draining so newer
+          // candidate lifecycle receipts cannot overtake its startup receipts.
+          startup.committed = true;
+          while (startup.lifecycleEvents.length > 0) {
+            const event = startup.lifecycleEvents.shift()!;
+            yield* processRuntimeEvent(
+              { instanceId: resolvedInstanceId, provider: resolvedProvider },
+              event,
+              true,
+            );
+          }
+          startup.bufferLifecycleEvents = false;
           return sessionWithInstance;
         }).pipe(
           Effect.onError(() =>
@@ -2244,7 +2279,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         payload: rawInput,
       });
       // Stop stays responsive while startup or old-owner cleanup is pending.
-      const startup = startingThreads.get(input.threadId);
+      const pendingStartup = startingThreads.get(input.threadId);
+      const startup = pendingStartup?.committed ? undefined : pendingStartup;
       const stopFinished = startup ? yield* Deferred.make<void>() : undefined;
       if (startup) {
         startup.cancelled = true;

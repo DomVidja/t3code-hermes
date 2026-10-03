@@ -426,6 +426,7 @@ function makeProviderServiceLayer(
     readonly settingsLayer?: typeof defaultServerSettingsLayer;
     readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
     readonly mcpRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    readonly liveOptions?: Parameters<typeof makeProviderServiceLive>[0];
   } = {},
 ) {
   const codex = makeFakeCodexAdapter(CODEX_DRIVER, input.supportsConversationRollback);
@@ -453,7 +454,7 @@ function makeProviderServiceLayer(
 
   const layer = it.layer(
     Layer.mergeAll(
-      makeProviderServiceLive().pipe(
+      makeProviderServiceLive(input.liveOptions).pipe(
         Layer.provideMerge(input.mcpRegistryLayer ?? Layer.empty),
         Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
@@ -5473,7 +5474,13 @@ describe("independent review: background work during replacement startup", () =>
     [claudeAgentInstanceId, { ...claude.adapter, assertSessionCanBeReplaced: assertReplacement }],
     [targetClaudeInstanceId, targetClaude.adapter],
   ]);
+  const canonicalLogger = {
+    filePath: "memory://replacement-lifecycle-receipts",
+    write: vi.fn((_event: unknown) => Effect.void),
+    close: () => Effect.void,
+  };
   const harness = makeProviderServiceLayer({
+    liveOptions: { canonicalEventLogger: canonicalLogger },
     mcpRegistryLayer,
     registry: {
       ...baseRegistry,
@@ -5610,6 +5617,199 @@ describe("independent review: background work during replacement startup", () =>
         assert.isUndefined(yield* registry.resolve(token(candidateMcp!)));
       }),
     );
+    for (const outcome of ["success", "refused", "stopped", "drain-stopped"] as const) {
+      it.effect(`replacement startup receipts: ${outcome}`, () =>
+        Effect.gen(function* () {
+          blocked = false;
+          const provider = yield* ProviderService.ProviderService;
+          const threadId = asThreadId(`replacement-startup-receipts-${outcome}`);
+          yield* provider.startSession(threadId, {
+            provider: CLAUDE_AGENT_DRIVER,
+            providerInstanceId: claudeAgentInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          });
+          const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+          const drainStarted = yield* Deferred.make<void>();
+          const continueDrain = yield* Deferred.make<void>();
+          const liveConsumed = yield* Deferred.make<void>();
+          let paused = false;
+          const write =
+            outcome === "drain-stopped"
+              ? vi.spyOn(canonicalLogger, "write").mockImplementation((event) =>
+                  Effect.gen(function* () {
+                    const receipt = event as ProviderRuntimeEvent;
+                    if (
+                      receipt.threadId === threadId &&
+                      receipt.eventId === "candidate-started" &&
+                      !paused
+                    ) {
+                      paused = true;
+                      yield* Deferred.succeed(drainStarted, undefined);
+                      yield* Deferred.await(continueDrain);
+                    }
+                  }),
+                )
+              : undefined;
+          const consumed = yield* Deferred.make<void>();
+          const continueBoot = yield* Deferred.make<void>();
+          const publications = yield* provider.streamEvents.pipe(
+            Stream.tap((event) =>
+              event.eventId === "candidate-consumed"
+                ? Deferred.succeed(consumed, undefined)
+                : event.eventId === "live-consumed"
+                  ? Deferred.succeed(liveConsumed, undefined)
+                  : Effect.void,
+            ),
+            Stream.takeUntil((event) => event.eventId === "after-handoff"),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          const common = {
+            threadId,
+            provider: CLAUDE_AGENT_DRIVER,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          };
+          const originalStart = targetClaude.startSession.getMockImplementation()!;
+          targetClaude.startSession.mockImplementationOnce((input) =>
+            Effect.gen(function* () {
+              const session = yield* originalStart(input);
+              targetClaude.emit({
+                ...common,
+                type: "session.started",
+                eventId: asEventId("candidate-started"),
+                payload: {},
+              });
+              targetClaude.emit({
+                ...common,
+                type: "session.configured",
+                eventId: asEventId("candidate-configured"),
+                payload: { config: { model: "candidate-model" } },
+              });
+              targetClaude.emit({
+                ...common,
+                type: "session.state.changed",
+                eventId: asEventId("candidate-ready"),
+                payload: { state: "ready" },
+              });
+              // The same adapter stream processes this barrier after all startup receipts.
+              targetClaude.emit({
+                ...common,
+                type: "turn.started",
+                eventId: asEventId("candidate-consumed"),
+                payload: {},
+              });
+              yield* Deferred.await(continueBoot);
+              return session;
+            }),
+          );
+          const replacement = yield* provider
+            .startSession(threadId, {
+              provider: CLAUDE_AGENT_DRIVER,
+              providerInstanceId: targetClaudeInstanceId,
+              threadId,
+              runtimeMode: "full-access",
+            })
+            .pipe(Effect.result, Effect.forkChild);
+          yield* Deferred.await(consumed);
+          const candidateToken = McpProviderSession.readMcpProviderSession(
+            threadId,
+          )!.authorizationHeader.slice("Bearer ".length);
+          if (outcome === "refused") blocked = true;
+          if (outcome === "stopped") yield* provider.stopSession({ threadId });
+          if (outcome !== "success") {
+            const originalStop = targetClaude.stopSession.getMockImplementation()!;
+            targetClaude.stopSession.mockImplementationOnce((id) =>
+              Effect.gen(function* () {
+                targetClaude.emit({
+                  ...common,
+                  type: "session.exited",
+                  eventId: asEventId("candidate-exited"),
+                  payload: {},
+                });
+                yield* originalStop(id);
+              }),
+            );
+          }
+          yield* Effect.gen(function* () {
+            yield* Deferred.succeed(continueBoot, undefined);
+            if (outcome === "drain-stopped") {
+              yield* Deferred.await(drainStarted);
+              targetClaude.emit({
+                ...common,
+                type: "session.configured",
+                eventId: asEventId("candidate-live"),
+                payload: { config: { model: "later-model" } },
+              });
+              targetClaude.emit({
+                ...common,
+                type: "turn.started",
+                eventId: asEventId("live-consumed"),
+                payload: {},
+              });
+              yield* Deferred.await(liveConsumed);
+              yield* provider.stopSession({ threadId });
+              yield* Deferred.succeed(continueDrain, undefined);
+            }
+            assert.equal(
+              (yield* Fiber.join(replacement))._tag,
+              outcome === "success" || outcome === "drain-stopped" ? "Success" : "Failure",
+            );
+            targetClaude.emit({
+              ...common,
+              type: "turn.started",
+              eventId: asEventId("after-handoff"),
+              payload: {},
+            });
+            const events = Array.from(yield* Fiber.join(publications));
+            assert.deepEqual(
+              events
+                .filter((event) => event.type.startsWith("session."))
+                .map((event) => event.eventId),
+              outcome === "success"
+                ? ["candidate-started", "candidate-configured", "candidate-ready"]
+                : outcome === "drain-stopped"
+                  ? [
+                      "candidate-started",
+                      "candidate-configured",
+                      "candidate-ready",
+                      "candidate-live",
+                      "candidate-exited",
+                    ]
+                  : [],
+            );
+            assert.isTrue(
+              events.every((event) => event.providerInstanceId === targetClaudeInstanceId),
+            );
+            assert.deepEqual(
+              canonicalLogger.write.mock.calls
+                .map(([event]) => event as ProviderRuntimeEvent)
+                .filter((event) => event.threadId === threadId && event.type.startsWith("session."))
+                .map((event) => event.eventId),
+              events
+                .filter((event) => event.type.startsWith("session."))
+                .map((event) => event.eventId),
+            );
+            if (outcome === "stopped" || outcome === "drain-stopped") {
+              const registry = Option.getOrThrow(
+                yield* Effect.serviceOption(McpSessionRegistry.McpSessionRegistry),
+              );
+              assert.isUndefined(yield* registry.resolve(candidateToken));
+              assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+            }
+            if (outcome === "drain-stopped") {
+              assert.equal(
+                Option.getOrThrow(yield* directory.getBinding(threadId)).status,
+                "stopped",
+              );
+              assert.isFalse(yield* targetClaude.adapter.hasSession(threadId));
+              assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+            }
+          }).pipe(Effect.ensuring(Effect.sync(() => write?.mockRestore())));
+        }).pipe(Effect.timeout("5 seconds")),
+      );
+    }
     it.effect("independent review: Stop during old-owner close wins over the pending handoff", () =>
       Effect.gen(function* () {
         blocked = false;
