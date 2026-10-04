@@ -78,6 +78,11 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import { HttpServer } from "effect/unstable/http";
+import * as NetAddress from "effect/unstable/net/NetAddress";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
@@ -420,6 +425,8 @@ function makeProviderServiceLayer(
     readonly analyticsLayer?: Layer.Layer<AnalyticsService.AnalyticsService>;
     readonly settingsLayer?: typeof defaultServerSettingsLayer;
     readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
+    readonly mcpRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    readonly liveOptions?: Parameters<typeof makeProviderServiceLive>[0];
   } = {},
 ) {
   const codex = makeFakeCodexAdapter(CODEX_DRIVER, input.supportsConversationRollback);
@@ -447,7 +454,8 @@ function makeProviderServiceLayer(
 
   const layer = it.layer(
     Layer.mergeAll(
-      makeProviderServiceLive().pipe(
+      makeProviderServiceLive(input.liveOptions).pipe(
+        Layer.provideMerge(input.mcpRegistryLayer ?? Layer.empty),
         Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
@@ -475,6 +483,69 @@ function makeProviderServiceLayer(
     layer,
   };
 }
+
+describe("background process replacement preflight", () => {
+  const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+  const codex = makeFakeCodexAdapter();
+  let blocked = false;
+  const assertReplacement = vi.fn(() =>
+    blocked
+      ? Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: CLAUDE_AGENT_DRIVER,
+            method: "session/replace",
+            detail: "Wait or press Stop, then retry.",
+          }),
+        )
+      : Effect.void,
+  );
+  const harness = makeProviderServiceLayer({
+    registry: makeStaticInstanceRegistry([
+      [claudeAgentInstanceId, { ...claude.adapter, assertSessionCanBeReplaced: assertReplacement }],
+      [codexInstanceId, codex.adapter],
+    ]),
+  });
+  harness.layer("replacement preflight", (it) => {
+    it.effect("refuses instance replacement before opening or stopping either process", () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("thread-background-preflight");
+        blocked = false;
+        yield* provider.startSession(threadId, {
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: claudeAgentInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        blocked = true;
+        const refused = yield* provider
+          .startSession(threadId, {
+            provider: CODEX_DRIVER,
+            providerInstanceId: codexInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.flip);
+        assert.equal(refused._tag, "ProviderAdapterRequestError");
+        assert.equal(codex.startSession.mock.calls.length, 0);
+        assert.equal(claude.stopSession.mock.calls.length, 0);
+        const binding =
+          yield* (yield* ProviderSessionDirectory.ProviderSessionDirectory).getBinding(threadId);
+        assert(Option.isSome(binding));
+        assert.equal(binding.value.providerInstanceId, claudeAgentInstanceId);
+        blocked = false;
+        yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        assert.equal(codex.startSession.mock.calls.length, 1);
+        assert.equal(claude.stopSession.mock.calls.length, 1);
+      }),
+    );
+  });
+});
 
 for (const [enabled, completed] of [
   [false, false],
@@ -5358,4 +5429,603 @@ chatGptTelemetry.layer("ChatGPT connector turn analytics", (it) => {
       });
     }),
   );
+});
+
+describe("independent review: background work during replacement startup", () => {
+  const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+  const targetClaude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+  const targetClaudeInstanceId = ProviderInstanceId.make("claude-replacement");
+  let blocked = false;
+  const assertReplacement = vi.fn(() =>
+    Effect.suspend(() =>
+      blocked
+        ? Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: CLAUDE_AGENT_DRIVER,
+              method: "session/replace",
+              detail: "Old owner acquired live background work while replacement booted.",
+            }),
+          )
+        : Effect.void,
+    ),
+  );
+  const mcpRegistryLayer = McpSessionRegistry.layer.pipe(
+    Layer.provide(
+      Layer.succeed(
+        HttpServer.HttpServer,
+        HttpServer.HttpServer.of({
+          address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+          serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+        }),
+      ),
+    ),
+    Layer.provide(
+      Layer.succeed(
+        ServerEnvironment.ServerEnvironment,
+        ServerEnvironment.ServerEnvironment.of({
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("replacement-test")),
+          getDescriptor: Effect.die("unused"),
+        }),
+      ),
+    ),
+    Layer.provide(NodeServices.layer),
+  );
+  const baseRegistry = makeStaticInstanceRegistry([
+    [claudeAgentInstanceId, { ...claude.adapter, assertSessionCanBeReplaced: assertReplacement }],
+    [targetClaudeInstanceId, targetClaude.adapter],
+  ]);
+  const canonicalLogger = {
+    filePath: "memory://replacement-lifecycle-receipts",
+    write: vi.fn((_event: unknown) => Effect.void),
+    close: () => Effect.void,
+  };
+  const harness = makeProviderServiceLayer({
+    liveOptions: { canonicalEventLogger: canonicalLogger },
+    mcpRegistryLayer,
+    registry: {
+      ...baseRegistry,
+      getInstanceInfo: (id) =>
+        baseRegistry.getInstanceInfo(id).pipe(
+          Effect.map((info) => ({
+            ...info,
+            continuationIdentity: {
+              ...info.continuationIdentity,
+              continuationKey: "claude-compatible-test-config",
+            },
+          })),
+        ),
+    },
+  });
+  harness.layer("race harness", (it) => {
+    it.effect("keeps background work that starts while a new provider is booting", () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("review-background-race");
+        yield* provider.startSession(threadId, {
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: claudeAgentInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const previousMcp = McpProviderSession.readMcpProviderSession(threadId)!;
+        const registry = Option.getOrThrow(
+          yield* Effect.serviceOption(McpSessionRegistry.McpSessionRegistry),
+        );
+        const token = (config: McpProviderSession.McpProviderSessionConfig) =>
+          config.authorizationHeader.slice("Bearer ".length);
+        assert.isDefined(yield* registry.resolve(token(previousMcp)));
+        let candidateMcp: McpProviderSession.McpProviderSessionConfig | undefined;
+        const bootStarted = yield* Deferred.make<void>();
+        const continueBoot = yield* Deferred.make<void>();
+        const originalStart = targetClaude.startSession.getMockImplementation()!;
+        targetClaude.startSession.mockImplementationOnce((input) =>
+          Effect.gen(function* () {
+            candidateMcp = McpProviderSession.readMcpProviderSession(threadId);
+            yield* Deferred.succeed(bootStarted, undefined);
+            yield* Deferred.await(continueBoot);
+            return yield* originalStart(input);
+          }),
+        );
+        const replacement = yield* provider
+          .startSession(threadId, {
+            provider: CLAUDE_AGENT_DRIVER,
+            providerInstanceId: targetClaudeInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(bootStarted);
+        blocked = true;
+        const publications = yield* provider.streamEvents.pipe(
+          Stream.takeUntil(
+            (event) =>
+              event.type === "session.state.changed" &&
+              event.payload.reason === "old-owner-barrier",
+          ),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        targetClaude.emit({
+          type: "session.state.changed",
+          eventId: asEventId("candidate-ready"),
+          threadId,
+          provider: CLAUDE_AGENT_DRIVER,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          payload: { state: "ready", reason: "candidate-ready" },
+        });
+        targetClaude.emit({
+          type: "session.exited",
+          eventId: asEventId("candidate-exited"),
+          threadId,
+          provider: CLAUDE_AGENT_DRIVER,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          payload: { reason: "rejected replacement" },
+        });
+        claude.emit({
+          type: "session.state.changed",
+          eventId: asEventId("old-owner-barrier"),
+          threadId,
+          provider: CLAUDE_AGENT_DRIVER,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          payload: { state: "running", reason: "old-owner-barrier" },
+        });
+        const events = Array.from(yield* Fiber.join(publications));
+        assert.isFalse(
+          events.some(
+            (event) => event.eventId === "candidate-ready" || event.eventId === "candidate-exited",
+          ),
+        );
+        const overlap = yield* provider
+          .startSession(threadId, {
+            provider: CLAUDE_AGENT_DRIVER,
+            providerInstanceId: targetClaudeInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result);
+        assert.equal(overlap._tag, "Failure");
+        assert.equal(targetClaude.startSession.mock.calls.length, 1);
+        yield* Deferred.succeed(continueBoot, undefined);
+        const result = yield* Fiber.join(replacement);
+        assert.equal(result._tag, "Failure");
+        assert.equal(claude.stopSession.mock.calls.length, 0);
+        assert.equal(targetClaude.stopSession.mock.calls.length, 1);
+        assert.deepEqual(yield* targetClaude.adapter.listSessions(), []);
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const binding = yield* directory.getBinding(threadId);
+        assert(Option.isSome(binding));
+        assert.equal(binding.value.providerInstanceId, claudeAgentInstanceId);
+        assert.strictEqual(McpProviderSession.readMcpProviderSession(threadId), previousMcp);
+        assert.isDefined(yield* registry.resolve(token(previousMcp)));
+        assert.isDefined(candidateMcp);
+        assert.isUndefined(yield* registry.resolve(token(candidateMcp!)));
+
+        // Completion releases the guard, and a retry completes the handoff.
+        blocked = false;
+        yield* provider.startSession(threadId, {
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: targetClaudeInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        assert.equal(claude.stopSession.mock.calls.length, 1);
+        assert.isUndefined(yield* registry.resolve(token(previousMcp)));
+        const committedMcp = McpProviderSession.readMcpProviderSession(threadId)!;
+        assert.equal(committedMcp.providerInstanceId, targetClaudeInstanceId);
+        assert.isDefined(yield* registry.resolve(token(committedMcp)));
+        assert.isUndefined(yield* registry.resolve(token(candidateMcp!)));
+      }),
+    );
+    for (const outcome of ["success", "refused", "stopped", "drain-stopped"] as const) {
+      it.effect(`replacement startup receipts: ${outcome}`, () =>
+        Effect.gen(function* () {
+          blocked = false;
+          const provider = yield* ProviderService.ProviderService;
+          const threadId = asThreadId(`replacement-startup-receipts-${outcome}`);
+          yield* provider.startSession(threadId, {
+            provider: CLAUDE_AGENT_DRIVER,
+            providerInstanceId: claudeAgentInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          });
+          const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+          const drainStarted = yield* Deferred.make<void>();
+          const continueDrain = yield* Deferred.make<void>();
+          const liveConsumed = yield* Deferred.make<void>();
+          let paused = false;
+          const write =
+            outcome === "drain-stopped"
+              ? vi.spyOn(canonicalLogger, "write").mockImplementation((event) =>
+                  Effect.gen(function* () {
+                    const receipt = event as ProviderRuntimeEvent;
+                    if (
+                      receipt.threadId === threadId &&
+                      receipt.eventId === "candidate-started" &&
+                      !paused
+                    ) {
+                      paused = true;
+                      yield* Deferred.succeed(drainStarted, undefined);
+                      yield* Deferred.await(continueDrain);
+                    }
+                  }),
+                )
+              : undefined;
+          const consumed = yield* Deferred.make<void>();
+          const continueBoot = yield* Deferred.make<void>();
+          const publications = yield* provider.streamEvents.pipe(
+            Stream.tap((event) =>
+              event.eventId === "candidate-consumed"
+                ? Deferred.succeed(consumed, undefined)
+                : event.eventId === "live-consumed"
+                  ? Deferred.succeed(liveConsumed, undefined)
+                  : Effect.void,
+            ),
+            Stream.takeUntil((event) => event.eventId === "after-handoff"),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          const common = {
+            threadId,
+            provider: CLAUDE_AGENT_DRIVER,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          };
+          const originalStart = targetClaude.startSession.getMockImplementation()!;
+          targetClaude.startSession.mockImplementationOnce((input) =>
+            Effect.gen(function* () {
+              const session = yield* originalStart(input);
+              targetClaude.emit({
+                ...common,
+                type: "session.started",
+                eventId: asEventId("candidate-started"),
+                payload: {},
+              });
+              targetClaude.emit({
+                ...common,
+                type: "session.configured",
+                eventId: asEventId("candidate-configured"),
+                payload: { config: { model: "candidate-model" } },
+              });
+              targetClaude.emit({
+                ...common,
+                type: "session.state.changed",
+                eventId: asEventId("candidate-ready"),
+                payload: { state: "ready" },
+              });
+              // The same adapter stream processes this barrier after all startup receipts.
+              targetClaude.emit({
+                ...common,
+                type: "turn.started",
+                eventId: asEventId("candidate-consumed"),
+                payload: {},
+              });
+              yield* Deferred.await(continueBoot);
+              return session;
+            }),
+          );
+          const replacement = yield* provider
+            .startSession(threadId, {
+              provider: CLAUDE_AGENT_DRIVER,
+              providerInstanceId: targetClaudeInstanceId,
+              threadId,
+              runtimeMode: "full-access",
+            })
+            .pipe(Effect.result, Effect.forkChild);
+          yield* Deferred.await(consumed);
+          const candidateToken = McpProviderSession.readMcpProviderSession(
+            threadId,
+          )!.authorizationHeader.slice("Bearer ".length);
+          if (outcome === "refused") blocked = true;
+          if (outcome === "stopped") yield* provider.stopSession({ threadId });
+          if (outcome !== "success") {
+            const originalStop = targetClaude.stopSession.getMockImplementation()!;
+            targetClaude.stopSession.mockImplementationOnce((id) =>
+              Effect.gen(function* () {
+                targetClaude.emit({
+                  ...common,
+                  type: "session.exited",
+                  eventId: asEventId("candidate-exited"),
+                  payload: {},
+                });
+                yield* originalStop(id);
+              }),
+            );
+          }
+          yield* Effect.gen(function* () {
+            yield* Deferred.succeed(continueBoot, undefined);
+            if (outcome === "drain-stopped") {
+              yield* Deferred.await(drainStarted);
+              targetClaude.emit({
+                ...common,
+                type: "session.configured",
+                eventId: asEventId("candidate-live"),
+                payload: { config: { model: "later-model" } },
+              });
+              targetClaude.emit({
+                ...common,
+                type: "turn.started",
+                eventId: asEventId("live-consumed"),
+                payload: {},
+              });
+              yield* Deferred.await(liveConsumed);
+              yield* provider.stopSession({ threadId });
+              yield* Deferred.succeed(continueDrain, undefined);
+            }
+            assert.equal(
+              (yield* Fiber.join(replacement))._tag,
+              outcome === "success" || outcome === "drain-stopped" ? "Success" : "Failure",
+            );
+            targetClaude.emit({
+              ...common,
+              type: "turn.started",
+              eventId: asEventId("after-handoff"),
+              payload: {},
+            });
+            const events = Array.from(yield* Fiber.join(publications));
+            assert.deepEqual(
+              events
+                .filter((event) => event.type.startsWith("session."))
+                .map((event) => event.eventId),
+              outcome === "success"
+                ? ["candidate-started", "candidate-configured", "candidate-ready"]
+                : outcome === "drain-stopped"
+                  ? [
+                      "candidate-started",
+                      "candidate-configured",
+                      "candidate-ready",
+                      "candidate-live",
+                      "candidate-exited",
+                    ]
+                  : [],
+            );
+            assert.isTrue(
+              events.every((event) => event.providerInstanceId === targetClaudeInstanceId),
+            );
+            assert.deepEqual(
+              canonicalLogger.write.mock.calls
+                .map(([event]) => event as ProviderRuntimeEvent)
+                .filter((event) => event.threadId === threadId && event.type.startsWith("session."))
+                .map((event) => event.eventId),
+              events
+                .filter((event) => event.type.startsWith("session."))
+                .map((event) => event.eventId),
+            );
+            if (outcome === "stopped" || outcome === "drain-stopped") {
+              const registry = Option.getOrThrow(
+                yield* Effect.serviceOption(McpSessionRegistry.McpSessionRegistry),
+              );
+              assert.isUndefined(yield* registry.resolve(candidateToken));
+              assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+            }
+            if (outcome === "drain-stopped") {
+              assert.equal(
+                Option.getOrThrow(yield* directory.getBinding(threadId)).status,
+                "stopped",
+              );
+              assert.isFalse(yield* targetClaude.adapter.hasSession(threadId));
+              assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+            }
+          }).pipe(Effect.ensuring(Effect.sync(() => write?.mockRestore())));
+        }).pipe(Effect.timeout("5 seconds")),
+      );
+    }
+    it.effect("independent review: Stop during old-owner close wins over the pending handoff", () =>
+      Effect.gen(function* () {
+        blocked = false;
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("review-stop-during-handoff");
+        yield* provider.startSession(threadId, {
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: claudeAgentInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const oldClosed = yield* Deferred.make<void>();
+        const finishClose = yield* Deferred.make<void>();
+        const originalStop = claude.stopSession.getMockImplementation()!;
+        claude.stopSession.mockImplementationOnce((id) =>
+          Effect.gen(function* () {
+            yield* originalStop(id);
+            yield* Deferred.succeed(oldClosed, undefined);
+            yield* Deferred.await(finishClose);
+          }),
+        );
+        const replacement = yield* provider
+          .startSession(threadId, {
+            provider: CLAUDE_AGENT_DRIVER,
+            providerInstanceId: targetClaudeInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(oldClosed);
+        yield* provider.stopSession({ threadId });
+        yield* Deferred.succeed(finishClose, undefined);
+        const result = yield* Fiber.join(replacement);
+        const binding = Option.getOrThrow(
+          yield* (yield* ProviderSessionDirectory.ProviderSessionDirectory).getBinding(threadId),
+        );
+        assert.equal(result._tag, "Failure");
+        assert.equal(binding.status, "stopped");
+        assert.isFalse(yield* targetClaude.adapter.hasSession(threadId));
+      }),
+    );
+    it.effect("Stop during binding persistence wins over the pending handoff", () =>
+      Effect.gen(function* () {
+        blocked = false;
+        const provider = yield* ProviderService.ProviderService;
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const threadId = asThreadId("stop-during-binding-persistence");
+        yield* provider.startSession(threadId, {
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: claudeAgentInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const writeStarted = yield* Deferred.make<void>();
+        const continueWrite = yield* Deferred.make<void>();
+        const originalUpsert = directory.upsert;
+        let paused = false;
+        const upsert = vi.spyOn(directory, "upsert").mockImplementation((binding, options) =>
+          Effect.gen(function* () {
+            if (
+              binding.threadId === threadId &&
+              binding.providerInstanceId === targetClaudeInstanceId &&
+              binding.status === "running" &&
+              !paused
+            ) {
+              paused = true;
+              yield* Deferred.succeed(writeStarted, undefined);
+              yield* Deferred.await(continueWrite);
+            }
+            yield* originalUpsert(binding, options);
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const replacement = yield* provider
+            .startSession(threadId, {
+              provider: CLAUDE_AGENT_DRIVER,
+              providerInstanceId: targetClaudeInstanceId,
+              cwd: "/private/tmp",
+              modelSelection: createModelSelection(targetClaudeInstanceId, "candidate-model"),
+              threadId,
+              runtimeMode: "full-access",
+            })
+            .pipe(Effect.result, Effect.forkChild);
+          yield* Deferred.await(writeStarted);
+          const advancedCursor = { opaque: "latest-native-boundary-during-handoff" };
+          yield* originalUpsert({
+            threadId,
+            provider: CLAUDE_AGENT_DRIVER,
+            providerInstanceId: claudeAgentInstanceId,
+            resumeCursor: advancedCursor,
+          });
+          yield* provider.stopSession({ threadId });
+          const stoppedBinding = Option.getOrThrow(yield* directory.getBinding(threadId));
+          yield* Deferred.succeed(continueWrite, undefined);
+          assert.equal((yield* Fiber.join(replacement))._tag, "Failure");
+          const binding = Option.getOrThrow(yield* directory.getBinding(threadId));
+          assert.equal(binding.status, "stopped");
+          assert.deepEqual(binding, stoppedBinding);
+          assert.deepEqual(binding.resumeCursor, advancedCursor);
+          assert.equal(binding.providerInstanceId, claudeAgentInstanceId);
+          assert.isFalse(yield* targetClaude.adapter.hasSession(threadId));
+          assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+        }).pipe(Effect.ensuring(Effect.sync(() => upsert.mockRestore())));
+      }),
+    );
+    it.effect(
+      "independent review: cancelled replacement retains the cursor persisted by Stop",
+      () =>
+        Effect.gen(function* () {
+          blocked = false;
+          const provider = yield* ProviderService.ProviderService;
+          const threadId = asThreadId("review-advanced-stop-cursor");
+          yield* provider.startSession(threadId, {
+            provider: CLAUDE_AGENT_DRIVER,
+            providerInstanceId: claudeAgentInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          });
+          const oldMcp = McpProviderSession.readMcpProviderSession(threadId)!;
+          const registry = Option.getOrThrow(
+            yield* Effect.serviceOption(McpSessionRegistry.McpSessionRegistry),
+          );
+          const bootStarted = yield* Deferred.make<void>();
+          const continueBoot = yield* Deferred.make<void>();
+          let candidateMcp: McpProviderSession.McpProviderSessionConfig | undefined;
+          const originalStart = targetClaude.startSession.getMockImplementation()!;
+          targetClaude.startSession.mockImplementationOnce((input) =>
+            Effect.gen(function* () {
+              candidateMcp = McpProviderSession.readMcpProviderSession(threadId);
+              yield* Deferred.succeed(bootStarted, undefined);
+              yield* Deferred.await(continueBoot);
+              return yield* originalStart(input);
+            }),
+          );
+          const replacement = yield* provider
+            .startSession(threadId, {
+              provider: CLAUDE_AGENT_DRIVER,
+              providerInstanceId: targetClaudeInstanceId,
+              threadId,
+              runtimeMode: "full-access",
+            })
+            .pipe(Effect.result, Effect.forkChild);
+          yield* Deferred.await(bootStarted);
+          const advancedCursor = { opaque: "latest-native-boundary-before-stop" };
+          const oldSession = (yield* claude.adapter.listSessions()).find(
+            (session) => session.threadId === threadId,
+          )!;
+          Object.assign(oldSession, { resumeCursor: advancedCursor });
+          yield* provider.stopSession({ threadId });
+          const stoppedBinding = Option.getOrThrow(
+            yield* (yield* ProviderSessionDirectory.ProviderSessionDirectory).getBinding(threadId),
+          );
+          assert.deepEqual(stoppedBinding.resumeCursor, advancedCursor);
+          yield* Deferred.succeed(continueBoot, undefined);
+          assert.equal((yield* Fiber.join(replacement))._tag, "Failure");
+          assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+          assert.isUndefined(yield* registry.resolve(oldMcp.authorizationHeader.slice(7)));
+          assert.isUndefined(yield* registry.resolve(candidateMcp!.authorizationHeader.slice(7)));
+          const binding =
+            yield* (yield* ProviderSessionDirectory.ProviderSessionDirectory).getBinding(threadId);
+          assert(Option.isSome(binding));
+          assert.equal(binding.value.status, "stopped");
+          assert.deepEqual(binding.value.resumeCursor, stoppedBinding.resumeCursor);
+          assert.equal(binding.value.providerInstanceId, claudeAgentInstanceId);
+          assert.isFalse(yield* targetClaude.adapter.hasSession(threadId));
+        }),
+    );
+    it.effect("does not undo Stop while a replacement is starting", () =>
+      Effect.gen(function* () {
+        blocked = false;
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("stop-during-replacement");
+        yield* provider.startSession(threadId, {
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: claudeAgentInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const oldMcp = McpProviderSession.readMcpProviderSession(threadId)!;
+        const registry = Option.getOrThrow(
+          yield* Effect.serviceOption(McpSessionRegistry.McpSessionRegistry),
+        );
+        const bootStarted = yield* Deferred.make<void>();
+        const continueBoot = yield* Deferred.make<void>();
+        let candidateMcp: McpProviderSession.McpProviderSessionConfig | undefined;
+        const originalStart = targetClaude.startSession.getMockImplementation()!;
+        targetClaude.startSession.mockImplementationOnce((input) =>
+          Effect.gen(function* () {
+            candidateMcp = McpProviderSession.readMcpProviderSession(threadId);
+            yield* Deferred.succeed(bootStarted, undefined);
+            yield* Deferred.await(continueBoot);
+            return yield* originalStart(input);
+          }),
+        );
+        const replacement = yield* provider
+          .startSession(threadId, {
+            provider: CLAUDE_AGENT_DRIVER,
+            providerInstanceId: targetClaudeInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(bootStarted);
+        yield* provider.stopSession({ threadId });
+        yield* Deferred.succeed(continueBoot, undefined);
+        assert.equal((yield* Fiber.join(replacement))._tag, "Failure");
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+        assert.isUndefined(yield* registry.resolve(oldMcp.authorizationHeader.slice(7)));
+        assert.isUndefined(yield* registry.resolve(candidateMcp!.authorizationHeader.slice(7)));
+        const binding =
+          yield* (yield* ProviderSessionDirectory.ProviderSessionDirectory).getBinding(threadId);
+        assert(Option.isSome(binding));
+        assert.equal(binding.value.status, "stopped");
+        assert.equal(binding.value.providerInstanceId, claudeAgentInstanceId);
+        assert.isFalse(yield* targetClaude.adapter.hasSession(threadId));
+      }),
+    );
+  });
 });

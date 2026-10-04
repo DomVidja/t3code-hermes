@@ -141,10 +141,13 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
             binding.resumeCursor !== undefined
               ? binding.resumeCursor
               : (existingRuntime?.resumeCursor ?? null),
-          runtimePayload: mergeRuntimePayload(
-            existingRuntime?.runtimePayload ?? null,
-            binding.runtimePayload,
-          ),
+          runtimePayload:
+            options?.runtimePayloadMode === "replace"
+              ? (binding.runtimePayload ?? null)
+              : mergeRuntimePayload(
+                  existingRuntime?.runtimePayload ?? null,
+                  binding.runtimePayload,
+                ),
         },
         options,
       )

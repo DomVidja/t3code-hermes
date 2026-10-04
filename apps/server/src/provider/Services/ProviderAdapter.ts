@@ -116,6 +116,11 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, TError>;
 
+  /** Refuse destructive replacement while this process owns live background work. */
+  readonly assertSessionCanBeReplaced?: (threadId: ThreadId) => Effect.Effect<void, TError>;
+  /** Recheck liveness at the destructive close, rather than only before async startup. */
+  readonly stopSessionForReplacement?: (threadId: ThreadId) => Effect.Effect<void, TError>;
+
   /**
    * List currently active provider sessions for this adapter.
    */
